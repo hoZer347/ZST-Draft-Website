@@ -1,79 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokedex from CSV</title>
-    <style>
-        table
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Pokedex from CSV</title>	
+	<style>
+		table
 		{
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        th, td
+			width: 100%;
+			border-collapse: collapse;
+			margin-top: 20px;
+		}
+		th, td
 		{
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }
-        th
+			border: 1px solid #ddd;
+			padding: 8px;
+			text-align: left;
+		}
+		th
 		{
-            background-color: #f4f4f4;
-        }
-    </style>
+			background-color: #f4f4f4;
+		}
+	</style>
 </head>
 <body>
-    <h1>Pokedex Data</h1>
-    <table id="pokedex-table"></table>
+	<h1>Pokedex Data</h1>
+	<table id="pokedex-table"></table>
 
-    <script>
-        async function fetchPokedex()
+	<script>
+		async function fetchPokedex()
 		{
-            try
-			{
-                const response = await fetch("Data/Pokedex.csv"); // Path to your CSV file
-                if (!response.ok) throw new Error("Failed to load Pokedex data.");
+			const cachedCSV = localStorage.getItem("pokedexData");
 
-                const csvText = await response.text();
-                displayCSV(csvText);
-            }
+			if (cachedCSV)
+			{
+				console.log("Loading cached Pokedex data.");
+				displayCSV(cachedCSV);
+				return;
+			};
+
+			try
+			{
+				console.log("Fetching new Pokedex data...");
+				const response = await fetch("Data/Pokedex.csv", { cache: "force-cache" });
+				if (!response.ok)
+					throw new Error("Failed to load Pokedex data.");
+
+				const csvText = await response.text();
+				localStorage.setItem("pokedexData", csvText); // Cache data
+				displayCSV(csvText);
+			}
 			catch (error)
 			{
-                console.error("Error fetching Pokedex:", error);
-                document.body.innerHTML += "<p>Error loading Pokedex data.</p>";
-            }
-        };
+				console.error("Error fetching Pokedex:", error);
+				document.body.innerHTML += "<p>Error loading Pokedex data.</p>";
+			};
+		};
 
-        function displayCSV(csvText)
+		function displayCSV(csvText)
 		{
-            const rows = csvText.trim().split("\n").map(row => row.split(","));
-            const table = document.getElementById("pokedex-table");
+			const rows = csvText.trim().split("\n").map(row => row.split(","));
+			const table = document.getElementById("pokedex-table");
 
-            // Generate table headers
-            let thead = "<tr>";
-            rows[0].forEach(
+			// Generate table headers
+			let thead = "<tr>";
+			rows[0].forEach(
 				header =>
 				{
-                	thead += `<th>${header.trim()}</th>`;
-            	});
+					thead += `<th>${header.trim()}</th>`;
+				});
 			
-            thead += "</tr>";
-            table.innerHTML = thead;
+			thead += "</tr>";
+			table.innerHTML = thead;
 
-            // Generate table rows
-            let tbody = "";
-            rows.slice(1).forEach(
+			// Generate table rows
+			let tbody = "";
+			rows.slice(1).forEach(
 				row =>
 				{
 					tbody += "<tr>";
 					row.forEach(cell => { tbody += `<td>${cell.trim()}</td>`; });
 					tbody += "</tr>";
 				});
-            table.innerHTML += tbody;
-        };
+			table.innerHTML += tbody;
+		};
 
-        fetchPokedex();
-    </script>
+		fetchPokedex();
+	</script>
 </body>
 </html>
