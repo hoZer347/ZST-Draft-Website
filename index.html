@@ -27,6 +27,26 @@
 	<h1>Pokedex Data</h1>
 	<table id="pokedex-table"></table>
 
+	<h1>Replay Parser Test</h1>
+    <button onclick="callGump()">Call Gump</button>
+
+    <script src="Bindings/hello.js"></script>
+    <script>
+        // Load the WebAssembly module
+        Module().then(
+			(instance) =>
+			{
+				console.log("WASM Module Loaded");
+
+				// Create function references
+				window.callGump =
+					function()
+					{
+						instance._Gump();
+					};
+			});
+    </script>
+
 	<script>
 		async function fetchPokedex()
 		{
@@ -84,8 +104,6 @@
 				});
 			table.innerHTML += tbody;
 		};
-
-		fetchPokedex();
 	</script>
 </body>
 </html>
