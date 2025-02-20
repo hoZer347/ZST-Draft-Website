@@ -33,73 +33,8 @@
 	</script>
 	<button onclick="callGump()">Call Gump</button>
 
-
 	<!-- Discord Implementation -->
-    <h2>Login with Discord</h2>
-    <button id="login" style="background-color: #5865F2; color: white; padding: 10px; border: none; border-radius: 5px; cursor: pointer;">
-        Login with Discord
-    </button>
-    <div id="user-info" style="display: none; margin-top: 20px;">
-        <h3>Welcome, <span id="username"></span>!</h3>
-        <img id="avatar" src="" alt="Avatar" width="100">
-        <p>Your Discord ID: <span id="user-id"></span></p>
-        <button id="logout">Logout</button>
-    </div>
-    <script>
-        const CLIENT_ID = "1342220973679579138";
-        const REDIRECT_URI = "https://hozer347.github.io/ZST-Draft-Website/"; // Must match Discord Developer Portal
-        const AUTH_URL = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=identify`;
-
-        document.getElementById("login")
-			.addEventListener("click",
-				() =>
-				{
-            		window.location.href = AUTH_URL;
-        		});
-
-        function getAccessToken()
-		{
-            const hash = window.location.hash.substring(1);
-            const params = new URLSearchParams(hash);
-            return params.get("access_token");
-        };
-
-        async function fetchUserInfo(token)
-		{
-            const response = await fetch("https://discord.com/api/users/@me",
-			{
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            
-			return response.json();
-        };
-
-        async function handleLogin()
-		{
-            const token = getAccessToken();
-            if (!token) return;
-
-            const user = await fetchUserInfo(token);
-            document.getElementById("username").textContent = user.username;
-            document.getElementById("user-id").textContent = user.id;
-            document.getElementById("avatar").src = `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`;
-
-            document.getElementById("login").style.display = "none";
-            document.getElementById("user-info").style.display = "block";
-        };
-
-        document.getElementById("logout")
-			.addEventListener("click",
-				() =>
-				{
-					window.location.hash = "";
-					window.location.reload();
-				});
-
-        handleLogin();
-    </script>
-	<!-- Discord Implementation -->
-
+	<script src="Scripts/discord_login.js"></script>
 
 	<!-- Raw Table Accessors -->
 	<h1>Select a Table</h1>

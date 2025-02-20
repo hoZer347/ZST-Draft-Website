@@ -34,7 +34,7 @@
 
 			try
 			{
-				const response = await fetch(`Data/${tableName}.csv`);
+				const response = await fetch(`../Data/${tableName}.csv`);
 				if (!response.ok) throw new Error(`Failed to load ${tableName} data.`);
 				
 				const csvText = await response.text();
