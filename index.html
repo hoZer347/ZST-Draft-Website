@@ -3,107 +3,34 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Pokedex from CSV</title>	
-	<style>
-		table
-		{
-			width: 100%;
-			border-collapse: collapse;
-			margin-top: 20px;
-		}
-		th, td
-		{
-			border: 1px solid #ddd;
-			padding: 8px;
-			text-align: left;
-		}
-		th
-		{
-			background-color: #f4f4f4;
-		}
-	</style>
+	<title>CSV Table Selector</title>
 </head>
 <body>
-	<h1>Pokedex Data</h1>
-	<table id="pokedex-table"></table>
-
-	<h1>Replay Parser Test</h1>
-    <button onclick="callGump()">Call Gump</button>
-
-    <script src="Bindings/hello.js"></script>
-    <script>
-        // Load the WebAssembly module
-        Module().then(
-			(instance) =>
-			{
-				console.log("WASM Module Loaded");
-
-				// Create function references
-				window.callGump =
-					function()
-					{
-						instance._Gump();
-					};
-			});
-    </script>
+	<h1>Select a Table</h1>
+	<div id="buttons-container"></div>
 
 	<script>
-		async function fetchPokedex()
+		// Manually define available tables (CSV filenames without ".csv")
+		const tables = ["Pokedex", "Draft"]; // Add more as needed
+
+		// Generate buttons dynamically
+		function createButtons()
 		{
-			const cachedCSV = localStorage.getItem("pokedexData");
+			const container = document.getElementById("buttons-container");
+			container.innerHTML = ""; // Clear existing buttons
 
-			if (cachedCSV)
-			{
-				console.log("Loading cached Pokedex data.");
-				displayCSV(cachedCSV);
-				return;
-			};
-
-			try
-			{
-				console.log("Fetching new Pokedex data...");
-				const response = await fetch("Data/Pokedex.csv", { cache: "force-cache" });
-				if (!response.ok)
-					throw new Error("Failed to load Pokedex data.");
-
-				const csvText = await response.text();
-				localStorage.setItem("pokedexData", csvText); // Cache data
-				displayCSV(csvText);
-			}
-			catch (error)
-			{
-				console.error("Error fetching Pokedex:", error);
-				document.body.innerHTML += "<p>Error loading Pokedex data.</p>";
-			};
+			tables.forEach(
+				table =>
+				{
+					const button = document.createElement("button");
+					button.textContent = table;
+					button.onclick = () => window.location.href = `Html/RawTableViewer.html?table=${table}`;
+					container.appendChild(button);
+				});
 		};
 
-		function displayCSV(csvText)
-		{
-			const rows = csvText.trim().split("\n").map(row => row.split(","));
-			const table = document.getElementById("pokedex-table");
-
-			// Generate table headers
-			let thead = "<tr>";
-			rows[0].forEach(
-				header =>
-				{
-					thead += `<th>${header.trim()}</th>`;
-				});
-			
-			thead += "</tr>";
-			table.innerHTML = thead;
-
-			// Generate table rows
-			let tbody = "";
-			rows.slice(1).forEach(
-				row =>
-				{
-					tbody += "<tr>";
-					row.forEach(cell => { tbody += `<td>${cell.trim()}</td>`; });
-					tbody += "</tr>";
-				});
-			table.innerHTML += tbody;
-		};
+		// Load buttons on page load
+		createButtons();
 	</script>
 </body>
 </html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Raw Table Viewer</title>
+</head>
+<body>
+	<h1 id="table-title"></h1>
+	<table id="data-table"></table>
+
+	<script>
+		// Function to get query parameters
+		function getQueryParam(param)
+		{
+			const urlParams = new URLSearchParams(window.location.search);
+			return urlParams.get(param);
+		};
+
+		// Get table name from URL
+		const tableName = getQueryParam("table");
+
+		// Display the table name
+		document.getElementById("table-title").innerText = `Viewing: ${tableName}`;
+
+		// Fetch CSV file based on table name
+		async function fetchTableData()
+		{
+			if (!tableName)
+			{
+				document.body.innerHTML += "<p>Error: No table specified.</p>";
+				return;
+			};
+
+			try
+			{
+				const response = await fetch(`Data/${tableName}.csv`);
+				if (!response.ok) throw new Error(`Failed to load ${tableName} data.`);
+				
+				const csvText = await response.text();
+				displayCSV(csvText);
+			}
+			catch (error)
+			{
+				console.error("Error fetching data:", error);
+				document.body.innerHTML += `<p>Error loading ${tableName} data.</p>`;
+			};
+		};
+
+		// Function to display CSV data in a table
+		function displayCSV(csvText)
+		{
+			const rows = csvText.trim().split("\n").map(row => row.split(","));
+			const table = document.getElementById("data-table");
+
+			// Generate table headers
+			let thead = "<tr>";
+			rows[0].forEach(header => { thead += `<th>${header.trim()}</th>`; });
+			thead += "</tr>";
+			table.innerHTML = thead;
+
+			// Generate table rows
+			let tbody = "";
+			rows.slice(1).forEach(
+				row =>
+				{
+					tbody += "<tr>";
+					row.forEach(cell => { tbody += `<td>${cell.trim()}</td>`; });
+					tbody += "</tr>";
+				});
+			table.innerHTML += tbody;
+		};
+
+		// Load the table data
+		fetchTableData();
+	</script>
+</body>
+</html>
