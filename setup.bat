@@ -34,3 +34,4 @@ if exist "Scripts\import_data.py" (
 )
 
 echo [INFO] Setup completed.
+pause
