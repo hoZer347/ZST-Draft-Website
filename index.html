@@ -5,56 +5,16 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>CSV Table Selector</title>
 </head>
-<body>
-
+<body>	
 	<!-- C++ Bindings -->
-	<h1>Replay Parser Test</h1>
-	<script type="module">
-		import Module from "./Bindings/Debug Testing.js";
-		Module().then(instance => {
-			console.log("Buh Module Loaded");
-			window.callBuh = async () => instance._Buh();
-		});
-	</script>
-	<button onclick="callBuh()">Call Buh</button>
-
-	<script type="module">
-		import Module from "./Bindings/Replay Parser.js";
-		Module().then(instance => {
-			console.log("Gump Module Loaded");
-			window.callGump = async () => instance._Gump();
-		});
-	</script>
-	<button onclick="callGump()">Call Gump</button>
+	<script type="module", src="C++ Bindings/Bindings.js"></script>
 
 	<!-- Discord Implementation -->
-	<script src="Scripts/discord_login.js"></script>
+	<script src="Scripts/discord_login.js" defer></script>
+	<!-- <script src="Scripts/showdown_login.js" defer></script> -->
 
-	<!-- Raw Table Accessors -->
-	<h1>Select a Table</h1>
-	<div id="buttons-container"></div>
-	<script>
-		const tables = ["Pokedex", "Draft"]; // Add more as needed
-
-		// Generate buttons dynamically
-		function createButtons()
-		{
-			const container = document.getElementById("buttons-container");
-			container.innerHTML = ""; // Clear existing buttons
-
-			tables.forEach(
-				table =>
-				{
-					const button = document.createElement("button");
-					button.textContent = table;
-					button.onclick = () => window.location.href = `Html/RawTableViewer.html?table=${table}`;
-					container.appendChild(button);
-				});
-		};
-
-		// Load buttons on page load
-		createButtons();
-	</script>
+	<h1>Commands</h1>
+	<button onclick="ListResources()">List Resources</button>
 
 </body>
 </html>
