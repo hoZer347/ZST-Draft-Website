@@ -5,31 +5,37 @@
 #define EMSCRIPTEN_KEEPALIVE
 #endif
 
-#include "Data.h"
-
 #include <iostream>
+#include <memory>
 
 
 void LoadResource(
-	const std::string& data_name,
+	const std::string& name,
 	const std::string& data)
 {
-	std::cout << "Loaded: " << data_name << std::endl;
-	data_map[data_name] = data;
+	std::cout << "ListResources: " << name << ": " << data << std::endl;
 };
+
 
 void ListResources()
 {
-	std::cout << "Resources: " << std::endl;
-	for (auto& [i, _] : data_map)
-		std::cout << i << std::endl;
+	std::cout << "ListResources: " << std::endl;
 };
+
 
 void AcquireData(
 	const std::string& file_name)
 {
-	
+	std::cout << "AcquireData:   " << file_name << std::endl;
 };
+
+
+void ExecuteSQLCommand(
+	const std::string& command)
+{
+	std::cout << "AcquireData:   " << command << std::endl;
+};
+
 
 #ifdef __EMSCRIPTEN__
 // Register functions for JavaScript
@@ -38,5 +44,6 @@ EMSCRIPTEN_BINDINGS(my_module)
 	emscripten::function("LoadResource", &LoadResource);
 	emscripten::function("ListResources", &ListResources);
 	emscripten::function("AcquireData", &AcquireData);
+	emscripten::function("ExecuteSQLCommand", &ExecuteSQLCommand);
 };
 #endif
