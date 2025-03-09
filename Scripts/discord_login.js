@@ -13,7 +13,7 @@ const CLIENT_ID = "1342220973679579138";
 const REDIRECT_URI =
 	window.location.hostname === "localhost"
 		? "http://localhost:8000/"
-		: "https://hozer347.github.io/ZST-Draft-Website/";
+		: "https://zst-league.netlify.app";
 
 const AUTH_URL = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=identify`;
 
