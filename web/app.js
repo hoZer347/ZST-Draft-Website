@@ -577,9 +577,10 @@ function render(s) {
   el.rollback.hidden = !canUndo;
   // Abort is admin-only and only meaningful once the draft has begun.
   el.abort.hidden = !(isAdmin && s.state !== 'NotStarted');
-  // Dev-only season simulator: same context as Start (admin, pre-start), and
-  // only on localhost since the endpoint is Development-only.
-  el.simSeason.hidden = !(isLocal && isAdmin && s.state === 'NotStarted');
+  // Season simulator: admin-only, pre-start (same context as Start). Shown on
+  // the live site too — the server runs in Development so the endpoint exists,
+  // and it's admin-gated server-side.
+  el.simSeason.hidden = !(isAdmin && s.state === 'NotStarted');
 
   renderTurn(mine, isAdmin, s);
   renderPicks(s);
@@ -1245,7 +1246,6 @@ function showView(name) {
   closeTeam(); // a view switch drops the team overlay
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
   for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.view === name);
-  if (name === 'teambuilder') openTeambuilder();
   if (name === 'tierlist') ensureTierList();
   if (name === 'schedule') ensureSchedule();
   if (name === 'stats') ensureStats();
@@ -1398,8 +1398,14 @@ function openTeambuilder() {
   window.open(teambuilderUrl(), 'draft-teambuilder', 'noopener');
 }
 
-document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => showView(t.dataset.view); });
-{ const b = $('tb-open'); if (b) b.onclick = openTeambuilder; }
+document.querySelectorAll('.tab').forEach((t) => {
+  t.onclick = () => {
+    // Teambuilder isn't an in-app view — it launches the external Showdown
+    // builder in a new browser tab and leaves the user on their current view.
+    if (t.dataset.view === 'teambuilder') { openTeambuilder(); return; }
+    showView(t.dataset.view);
+  };
+});
 
 // ── boot ───────────────────────────────────────────────────────────────
 
