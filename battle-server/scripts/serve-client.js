@@ -47,7 +47,7 @@ function load(file) {
 
 http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
-  if (url.endsWith('/')) url += 'index-new.html';
+  if (url.endsWith('/')) url += 'index-old.html';
   const file = path.join(ROOT, url);
   if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
 
@@ -55,9 +55,9 @@ http.createServer((req, res) => {
   try { entry = load(file); }
   catch {
     // Extensionless paths (e.g. /teambuilder) are client-side routes → serve the
-    // SPA (index-new.html). Missing assets (with an extension) are a real 404.
+    // SPA (index-old.html). Missing assets (with an extension) are a real 404.
     if (!path.extname(url)) {
-      try { entry = load(path.join(ROOT, 'index-new.html')); }
+      try { entry = load(path.join(ROOT, 'index-old.html')); }
       catch { res.writeHead(404).end(); return; }
     } else {
       res.writeHead(404).end(); return;
