@@ -44,7 +44,7 @@ public static class AuthApi
 
         auth.MapPost("/discord", async (
             ExchangeRequest req, IDiscordAuth discord, TokenService tokens,
-            AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
+            AppDbContext db, IDraftNotifier notifier, IConfiguration config, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.CodeVerifier))
                 return Results.BadRequest(new { error = "code and codeVerifier are required" });
@@ -52,6 +52,12 @@ public static class AuthApi
             var identity = await discord.ExchangeCodeAsync(req.Code, req.CodeVerifier, req.RedirectUri, ct);
             if (identity is null)
                 return Results.Unauthorized();
+
+            // Configured Discord ids are admins. Applied on every sign-in so a
+            // promotion takes effect on the next login without a DB edit; only
+            // promotes — it never demotes anyone set admin by other means.
+            var adminIds = config.GetSection("Admin:DiscordIds").Get<string[]>() ?? [];
+            var shouldBeAdmin = adminIds.Contains(identity.Id);
 
             var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == identity.Id, ct);
             var isNew = user is null;
@@ -62,6 +68,7 @@ public static class AuthApi
                     DiscordId = identity.Id,
                     Username = identity.Username,
                     AvatarHash = identity.Avatar,
+                    IsAdmin = shouldBeAdmin,
                 };
                 db.Users.Add(user);
             }
@@ -71,6 +78,7 @@ public static class AuthApi
                 user.Username = identity.Username;
                 user.AvatarHash = identity.Avatar;
                 user.LastLoginAt = DateTimeOffset.UtcNow;
+                if (shouldBeAdmin) user.IsAdmin = true;
             }
             await db.SaveChangesAsync(ct);
 
