@@ -4,11 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=168">
-  <link rel="stylesheet" href="style.css?v=168">
+  <link rel="icon" href="favicon.ico?v=177">
+  <link rel="stylesheet" href="style.css?v=177">
 </head>
 <body>
   <header>
+    <!-- Mobile-only hamburger. Hidden on desktop (base .nav-toggle is display:none;
+         a max-width media query reveals it). app.js manages the `hidden` attribute
+         on sign-in/out exactly like #tabs. -->
+    <button id="nav-toggle" class="nav-toggle" type="button"
+            aria-label="Open menu" aria-controls="tabs" aria-expanded="false" hidden>
+      <span></span><span></span><span></span>
+    </button>
     <h1>Draft League</h1>
     <a class="kofi" href="https://ko-fi.com/zstdraftleague" target="_blank" rel="noopener" title="Support the league on Ko-fi">
       <span class="kofi-cup" aria-hidden="true">☕</span>
@@ -16,6 +23,7 @@
     </a>
     <nav id="tabs" class="tabs" hidden>
       <button class="tab active" data-view="draft">Draft</button>
+      <button class="tab" data-view="myteam">My team</button>
       <button class="tab" data-view="schedule">Schedule</button>
       <button class="tab" data-view="stats">Stats</button>
       <button class="tab" data-view="tierlist">Tier list</button>
@@ -30,6 +38,10 @@
       </div>
     </div>
   </header>
+
+  <!-- Tap-outside-to-close scrim for the mobile nav drawer. Inert on desktop
+       (only shown inside the mobile media query when .open). -->
+  <div id="nav-backdrop" class="nav-backdrop"></div>
 
   <main>
     <!-- Signed out -->
@@ -153,7 +165,23 @@
       </div>
 
       <div id="view-stats" class="view stats-view" hidden>
-        <div id="stats-summary" class="label"></div>
+        <div class="stats-head">
+          <div id="stats-summary" class="label"></div>
+          <div class="stats-filters">
+            <label class="stats-filter">Tier
+              <select id="stats-filter-tier">
+                <option value="all">All</option>
+                <option value="S">S</option>
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+              </select>
+            </label>
+            <label class="stats-filter">Trainer
+              <select id="stats-filter-trainer"><option value="all">All</option></select>
+            </label>
+          </div>
+        </div>
         <div id="stats-body"><p class="muted">Loading…</p></div>
       </div>
 
@@ -187,9 +215,6 @@
 
       <!-- Own-team customisation form, revealed by the Edit button. -->
       <form id="team-edit-form" class="team-edit-form card" hidden>
-        <label class="setting">Team name
-          <input id="tp-name" type="text" maxlength="40" placeholder="e.g. The Thunderbolts">
-        </label>
         <label class="setting">Team icon URL <span class="muted">(square image)</span>
           <input id="tp-icon" type="url" maxlength="500" placeholder="https://…">
         </label>
@@ -207,10 +232,10 @@
     </div>
   </main>
 
-  <script src="config.js?v=168"></script>
-  <script src="auth.js?v=168"></script>
+  <script src="config.js?v=177"></script>
+  <script src="auth.js?v=177"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=168"></script>
-  <script src="app.js?v=168"></script>
+  <script src="pool-logic.js?v=177"></script>
+  <script src="app.js?v=177"></script>
 </body>
 </html>

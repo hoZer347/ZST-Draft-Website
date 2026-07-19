@@ -6,6 +6,7 @@ const el = {
   signin: $('signin'), signinError: $('signin-error'), app: $('app'),
   account: $('account'), avatar: $('avatar'), username: $('username'),
   tabs: $('tabs'), ready: $('ready'), playerList: $('player-list'),
+  navToggle: $('nav-toggle'), navBackdrop: $('nav-backdrop'),
   // draft
   onClock: $('on-clock'), onClockBox: $('on-clock-box'), pickNo: $('pick-no'), timer: $('timer'),
   play: $('play'), rollback: $('rollback'), abort: $('abort'), simSeason: $('sim-season'), banner: $('state-banner'),
@@ -16,7 +17,7 @@ const el = {
   // team page
   teamPage: $('team-page'), teamTitle: $('team-title'), teamBody: $('team-body'), teamClose: $('team-close'),
   teamIcon: $('team-icon'), teamShowdown: $('team-showdown'), teamEdit: $('team-edit'),
-  teamEditForm: $('team-edit-form'), tpName: $('tp-name'), tpIcon: $('tp-icon'), tpShowdown: $('tp-showdown'),
+  teamEditForm: $('team-edit-form'), tpIcon: $('tp-icon'), tpShowdown: $('tp-showdown'),
   tpCancel: $('tp-cancel'), tpMsg: $('tp-msg'),
   // tier list
   tlSearch: $('tl-search'), tlTiers: $('tl-tiers'), tlType1: $('tl-type1'), tlType2: $('tl-type2'), tlRoles: $('tl-roles'),
@@ -33,6 +34,8 @@ function signedOut() {
   el.tabs.hidden = true;
   el.ready.hidden = true;
   el.account.hidden = true;
+  el.navToggle.hidden = true;
+  setNav(false); // ensure the mobile drawer isn't left open across sign-out
   // Drop the identity itself, not just the container. Leaving it would show
   // the previous user's portrait for a frame on the next sign-in.
   el.avatar.hidden = true;
@@ -49,6 +52,7 @@ async function signedIn() {
   el.app.hidden = false;
   el.tabs.hidden = false;
   el.account.hidden = false;
+  el.navToggle.hidden = false; // reveal the hamburger (mobile CSS decides if it shows)
   el.username.textContent = user.username;
   showView('draft'); // always land on the draft, not wherever we last were
   // Not every Discord account has an avatar, and this element survives a
@@ -188,8 +192,8 @@ function closeTeam() {
 // unit-tested headlessly; it's a global here.
 
 function renderTeam(data) {
-  // Discord name, with the custom team name beside it if set.
-  el.teamTitle.textContent = data.teamName ? `${data.username} — ${data.teamName}` : data.username;
+  // Teams are identified by their coach's Discord name.
+  el.teamTitle.textContent = data.username;
 
   // Square team icon.
   if (data.teamIcon) { el.teamIcon.src = data.teamIcon; el.teamIcon.hidden = false; }
@@ -203,7 +207,6 @@ function renderTeam(data) {
   const mine = data.discordId === Auth.user()?.discordId;
   el.teamEdit.hidden = !mine;
   if (mine) {
-    el.tpName.value = data.teamName ?? '';
     el.tpIcon.value = data.teamIcon ?? '';
     el.tpShowdown.value = data.showdownName ?? '';
   }
@@ -394,7 +397,11 @@ let deadline = null;   // wall-clock ms when the current pick expires
 let pollTimer = null;
 let conn = null;
 
-const teamName = (id) => draft?.teams.find((t) => t.Id === id || t.id === id)?.name ?? `Team ${id}`;
+// Teams are identified by their coach, not a separate team name.
+const teamName = (id) => {
+  const t = draft?.teams.find((t) => t.Id === id || t.id === id);
+  return t?.coachName ?? `Team ${id}`;
+};
 
 // Prefer the sheet's Showdown slug (megas/regional forms share a dex, so a bare
 // dex lookup shows the wrong sprite); fall back to a dex-based sprite.
@@ -671,7 +678,7 @@ function pickRow(p) {
   const li = document.createElement('li');
   li.className = `pick pick--${p.tier}`;
 
-  // Column 1 — the draft pick itself: number, sprite, name (+ C-tier Tera). Left.
+  // Column 1 — the draft pick itself: number, sprite, name. Left.
   const main = document.createElement('div');
   main.className = 'pick-main';
   const num = document.createElement('span');
@@ -680,10 +687,15 @@ function pickRow(p) {
   const name = document.createElement('span');
   name.className = 'pick-name';
   name.textContent = p.name;
-  if (p.teraType) name.append(' ', teraTag(p.teraType));
   main.append(num, monImg(p), name);
 
-  // Column 2 — the options offered but passed on this turn (dimmed sprites). Left.
+  // Column 2 — the C-tier Tera type in its own aligned column (empty otherwise,
+  // so the column reserves the same width down the whole feed).
+  const tera = document.createElement('span');
+  tera.className = 'pick-tera';
+  if (p.teraType) tera.append(teraTag(p.teraType));
+
+  // Column 3 — the options offered but passed on this turn (dimmed sprites). Left.
   const passed = document.createElement('div');
   passed.className = 'pick-others';
   let others = [];
@@ -704,7 +716,7 @@ function pickRow(p) {
     }
   }
 
-  // Column 3 — who drafted it and the tier (+ auto badge). Right.
+  // Column 4 — who drafted it and the tier (+ auto badge). Right.
   const end = document.createElement('div');
   end.className = 'pick-end';
   const who = document.createElement('span');
@@ -721,7 +733,7 @@ function pickRow(p) {
     end.append(auto);
   }
 
-  li.append(main, passed, end);
+  li.append(main, tera, passed, end);
   return li;
 }
 
@@ -1258,13 +1270,18 @@ function showView(name) {
 
 let statsData = null;
 let statsSort = { key: 'plusminus', dir: -1 };
+let statsFilter = { tier: 'all', trainer: 'all' };
+let statsFiltersWired = false;
 
 const STAT_COLS = [
-  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon and its tier.' },
+  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon.' },
   { key: 'trainer', label: 'Trainer', tip: 'The coach who drafted it.' },
+  { key: 'tier', label: 'Tier', badge: true, tip: 'Draft tier.' },
   { key: 'gp', label: 'GP', num: true, tip: 'Games played — games this mon was brought to.' },
-  { key: 'presence', label: 'Presence', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
-    tip: "Share of the team's total battle turns this mon was on the field. 5/10 turns and 1/2 turns are the same 50%." },
+  { key: 'presence', label: 'Season Pres.', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
+    tip: "Season presence — the share of ALL your team's battle turns this season that this mon was on the field. Games it wasn't brought to count as absence, so it rewards being used often." },
+  { key: 'gamePresence', label: 'Game Pres.', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
+    tip: 'Game presence — of the turns in only the games this mon was actually brought to, the share it stayed on the field. Independent of how often it is used.' },
   { key: 'k', label: 'KOs', num: true, tip: 'Opposing Pokémon knocked out.' },
   { key: 'd', label: 'Faints', num: true, tip: 'Times this mon was knocked out.' },
   { key: 'plusminus', label: '+/−', num: true, fmt: (v) => (v > 0 ? `+${v}` : `${v}`), tip: 'KOs minus Faints.' },
@@ -1298,9 +1315,12 @@ async function ensureStats() {
       plusminus: r.k - r.d,
       winrate: (r.w + r.l) ? r.w / (r.w + r.l) : 0,
       ratio: r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0),
-      // Presence: turns on the field ÷ the team's total battle turns.
+      // Season presence: turns on the field ÷ the team's total battle turns (all
+      // games). Game presence: ÷ the turns of only the games it actually played.
       presence: r.teamTurns > 0 ? r.activeTurns / r.teamTurns : 0,
+      gamePresence: r.playedTurns > 0 ? r.activeTurns / r.playedTurns : 0,
     }));
+    wireStatsFilters();
     renderStats();
   } catch (e) {
     body.replaceChildren(Object.assign(document.createElement('p'), {
@@ -1309,15 +1329,38 @@ async function ensureStats() {
   }
 }
 
+const TIER_RANK = { S: 0, A: 1, B: 2, C: 3 };
+
 function statVal(r, key) {
   if (key === 'record') return r.w + r.l; // sort the W–L column by games decided
+  if (key === 'tier') return TIER_RANK[r.tier] ?? 9; // group S→A→B→C, not alphabetical
   return r[key];
+}
+
+// Fills the Trainer dropdown from the loaded rows and, once, wires both filters
+// to re-render. Called after every load; the listeners attach only the first time.
+function wireStatsFilters() {
+  const trainerSel = $('stats-filter-trainer');
+  const trainers = [...new Set(statsData.map((r) => r.trainer))].sort((a, b) => a.localeCompare(b));
+  trainerSel.replaceChildren(new Option('All', 'all'), ...trainers.map((t) => new Option(t, t)));
+  // Keep the current pick if it still exists, else fall back to All.
+  if (!trainers.includes(statsFilter.trainer)) statsFilter.trainer = 'all';
+  trainerSel.value = statsFilter.trainer;
+  $('stats-filter-tier').value = statsFilter.tier;
+
+  if (statsFiltersWired) return;
+  statsFiltersWired = true;
+  $('stats-filter-tier').addEventListener('change', (e) => { statsFilter.tier = e.target.value; renderStats(); });
+  trainerSel.addEventListener('change', (e) => { statsFilter.trainer = e.target.value; renderStats(); });
 }
 
 function renderStats() {
   const body = $('stats-body');
   const { key, dir } = statsSort;
-  const rows = [...statsData].sort((a, b) => {
+  const filtered = statsData.filter((r) =>
+    (statsFilter.tier === 'all' || r.tier === statsFilter.tier) &&
+    (statsFilter.trainer === 'all' || r.trainer === statsFilter.trainer));
+  const rows = filtered.sort((a, b) => {
     const av = statVal(a, key), bv = statVal(b, key);
     let cmp = dir * (typeof av === 'string' ? av.localeCompare(bv) : av - bv);
     // Win% is noisy at low sample size, so break ties by most games played.
@@ -1325,7 +1368,10 @@ function renderStats() {
     return cmp;
   });
 
-  $('stats-summary').textContent = `${statsData.length} mons · sort by any column`;
+  const filteredOut = statsData.length - filtered.length;
+  $('stats-summary').textContent = filteredOut
+    ? `${filtered.length} of ${statsData.length} mons · sort by any column`
+    : `${statsData.length} mons · sort by any column`;
 
   const table = document.createElement('table');
   table.className = 'stats-table';
@@ -1363,9 +1409,6 @@ function renderStats() {
     const nm = document.createElement('span');
     nm.className = 'stats-name'; nm.textContent = r.pokemon;
     cell.append(img, nm);
-    const tb = document.createElement('span');
-    tb.className = `tier-badge tier-badge--${r.tier}`; tb.textContent = r.tier;
-    cell.append(' ', tb);
     mon.append(cell);
     tr.append(mon);
 
@@ -1375,8 +1418,14 @@ function renderStats() {
 
     for (const c of STAT_COLS.slice(2)) {
       const td = document.createElement('td');
-      td.className = 'num';
-      td.textContent = c.text ? c.text(r) : c.fmt ? c.fmt(r[c.key]) : r[c.key];
+      if (c.badge) {
+        const tb = document.createElement('span');
+        tb.className = `tier-badge tier-badge--${r.tier}`; tb.textContent = r.tier;
+        td.append(tb);
+      } else {
+        td.className = 'num';
+        td.textContent = c.text ? c.text(r) : c.fmt ? c.fmt(r[c.key]) : r[c.key];
+      }
       tr.append(td);
     }
     tbody.append(tr);
@@ -1392,8 +1441,14 @@ window.addEventListener('resize', sizePicks);
 // that's how you reach a custom server's rooms without hosting the client too.
 function teambuilderUrl() {
   // Our self-hosted Showdown client — it connects to our server and has the
-  // league tiers (X/S/A/B/C/Z) baked into its teambuilder data.
-  return 'https://play.loomhozer.ca/teambuilder';
+  // league tiers (X/S/A/B/C/Z) baked into its teambuilder data. Pass the signed-in
+  // Discord username so the client auto-logs in as it (see serve-client.js).
+  const name = Auth.user()?.username;
+  const q = name ? `?name=${encodeURIComponent(name)}` : '';
+  // TEMP: local client (bypasses Cloudflare's cache override while we iterate on
+  // the tier data). Switch back to https://play.loomhozer.ca once the Cloudflare
+  // Browser-Cache-TTL setting is on "Respect Existing Headers".
+  return `http://localhost:8791/teambuilder${q}`;
 }
 
 // Reuse one named tab so repeated opens focus the same window instead of piling
@@ -1402,11 +1457,27 @@ function openTeambuilder() {
   window.open(teambuilderUrl(), 'draft-teambuilder', 'noopener');
 }
 
+// ── mobile nav drawer ────────────────────────────────────────────────────
+// Open/close the slide-in tab drawer. The `.open`/`.nav-open` classes only do
+// anything inside the mobile media query, so this is inert on desktop.
+function setNav(open) {
+  el.tabs.classList.toggle('open', open);
+  el.navBackdrop.classList.toggle('open', open);
+  document.body.classList.toggle('nav-open', open);
+  el.navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+el.navToggle.onclick = () => setNav(!el.tabs.classList.contains('open'));
+el.navBackdrop.onclick = () => setNav(false);
+
 document.querySelectorAll('.tab').forEach((t) => {
   t.onclick = () => {
+    setNav(false); // picking a tab closes the mobile drawer
     // Teambuilder isn't an in-app view — it launches the external Showdown
     // builder in a new browser tab and leaves the user on their current view.
     if (t.dataset.view === 'teambuilder') { openTeambuilder(); return; }
+    // My team isn't a view either — it opens the same team-page overlay you get
+    // by clicking your own icon in the roster, for the signed-in user.
+    if (t.dataset.view === 'myteam') { const u = Auth.user(); if (u) openTeam(u.discordId, u.username); return; }
     showView(t.dataset.view);
   };
 });
@@ -1486,6 +1557,7 @@ on('team-close', closeTeam);
 // Escape closes the team page (or just the edit form if it's open).
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (el.tabs.classList.contains('open')) { setNav(false); return; }
   if (el.teamEditForm && !el.teamEditForm.hidden) { el.teamEditForm.hidden = true; return; }
   if (el.teamPage && !el.teamPage.hidden) closeTeam();
 });
@@ -1497,7 +1569,6 @@ el.teamEditForm.onsubmit = async (e) => {
   e.preventDefault();
   el.tpMsg.textContent = 'Saving…';
   const err = await postDraft('/api/players/me/profile', {
-    teamName: el.tpName.value,
     teamIcon: el.tpIcon.value,
     showdownName: el.tpShowdown.value,
   });
