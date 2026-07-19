@@ -11,7 +11,10 @@ window.DRAFT_CONFIG = {
   apiBase:
     location.hostname === 'localhost' || location.hostname === '127.0.0.1'
       ? 'http://localhost:5211'
-      : 'https://REPLACE-ME.example.com', // <-- set once the API is deployed
+      // Public API = this dev machine's :5211 server exposed via a fixed ngrok
+      // reserved domain (kept up by server/keep-server-up.ps1). Live only while
+      // the machine + tunnel are running.
+      : 'https://diagram-thread-perplexed.ngrok-free.dev',
 
   // Our self-hosted Showdown server, as host:port. The Teambuilder tab opens the
   // official Showdown client pointed at it (play.pokemonshowdown.com/~~<server>),
