@@ -20,9 +20,13 @@ $pidf  = Join-Path $root '.watchdog.pid'
 $alive = Join-Path $root '.watchdog.alive'
 $logf  = Join-Path $root 'keep-server-up.log'
 # Public tunnel: a named Cloudflare tunnel exposes the local :5211 server (which
-# serves both the web app and the API) at https://dev.loomhozer.ca. Config lives
+# serves both the web app and the API) at https://dev.loomhozer.ca, and the
+# Showdown battle server (:8787) at https://showdown.loomhozer.ca. Config lives
 # in %USERPROFILE%\.cloudflared\config.yml.
 $cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
+# Self-hosted Showdown server (battle-server), for the teambuilder's custom format.
+$node        = 'C:\Program Files\nodejs\node.exe'
+$showdownDir = 'C:\Users\3hoze\Desktop\Pokemon Draft League\battle-server'
 
 function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
 
@@ -48,6 +52,13 @@ while ($true) {
         if (-not $cf -and (Test-Path $cloudflared)) {
             Start-Process -FilePath $cloudflared -ArgumentList 'tunnel', 'run', 'loom-tunnel' -WindowStyle Hidden
             Log "relaunched cloudflared tunnel"
+        }
+
+        # Keep the Showdown battle server up (port 8787), checked by listener.
+        $sd = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue
+        if (-not $sd -and (Test-Path $node)) {
+            Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
+            Log "relaunched showdown server"
         }
     } catch {
         Log "ERR: $($_.Exception.Message)"

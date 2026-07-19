@@ -24,7 +24,11 @@ window.DRAFT_CONFIG = {
   showdownServer:
     location.hostname === 'localhost' || location.hostname === '127.0.0.1'
       ? 'localhost:8787'
-      : 'REPLACE-ME.example.com:8787', // <-- set once the battle server is deployed
+      // Self-hosted Showdown server, tunnelled at its own subdomain (the ~~
+      // client syntax needs a host, not a path — so a subdomain, not /showdown).
+      : location.hostname.endsWith('loomhozer.ca')
+        ? 'showdown.loomhozer.ca'
+        : 'REPLACE-ME.example.com:8787',
 };
 
 // There is deliberately no teamId or userId here. Identity comes from the
