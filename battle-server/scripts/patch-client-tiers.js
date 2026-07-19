@@ -21,7 +21,7 @@ const { BattleTeambuilderTable: T } = require(tablePath);
 
 // Tier order for the browse list, and the header label each group gets. The
 // per-mon tag stays the short code (X/S/A/B/C/Z/Unranked) so it's easy to search.
-const ORDER = ['X', 'S', 'A', 'B', 'C', 'Z', 'Unranked'];
+const ORDER = ['S', 'A', 'B', 'C', 'X', 'Z', 'Unranked'];
 const HEADER = { X: 'Banned (X)', S: 'S', A: 'A', B: 'B', C: 'C', Z: 'Bad (Z)', Unranked: 'Unranked' };
 
 function patchTable(tbl) {
@@ -70,6 +70,17 @@ const json = JSON.stringify(T)
   .split(LS).join('\\u2028')
   .split(PS).join('\\u2029');
 fs.writeFileSync(tablePath, "exports.BattleTeambuilderTable = JSON.parse('" + json + "');\n");
+
+// Make our tier codes typeable in the teambuilder's Pokémon search: add each as
+// a "tier" token to the (sorted) search index, so typing S / A / X / etc. offers
+// a tier filter just like typing OU/Uber does. Idempotent.
+const idxPath = path.join(ROOT, 'client', 'play.pokemonshowdown.com', 'data', 'search-index.js');
+const { BattleSearchIndex: idx } = require(idxPath);
+const TOKENS = ['s', 'a', 'b', 'c', 'x', 'z'];
+const cleaned = idx.filter((e) => !(e[1] === 'tier' && TOKENS.includes(e[0])));
+for (const t of TOKENS) cleaned.push([t, 'tier']);
+cleaned.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)); // index is sorted by id
+fs.writeFileSync(idxPath, 'exports.BattleSearchIndex = ' + JSON.stringify(cleaned) + ';\n');
 
 for (const [k, counts] of Object.entries(report)) {
   if (counts) console.log(k.padEnd(18), JSON.stringify(counts));

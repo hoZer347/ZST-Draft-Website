@@ -66,9 +66,10 @@ http.createServer((req, res) => {
 
   const headers = {
     'content-type': MIME[entry.ext] || 'application/octet-stream',
-    // Cache assets long (they're query-string-versioned by the client) but never
-    // the entry HTML, so a client/UI change shows on the next load, not in an hour.
-    'cache-control': entry.ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+    // No-cache while we're actively patching the client — otherwise Cloudflare
+    // caches our edited files for an hour and changes don't show. Raise this to a
+    // long max-age once the client is finalised.
+    'cache-control': 'no-cache',
   };
   const acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
   if (entry.gz && acceptsGzip) {
