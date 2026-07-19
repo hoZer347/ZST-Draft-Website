@@ -60,6 +60,14 @@ while ($true) {
             Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
             Log "relaunched showdown server"
         }
+
+        # Keep the self-hosted Showdown client static server up (port 8791),
+        # served publicly at play.loomhozer.ca.
+        $cl = Get-NetTCPConnection -LocalPort 8791 -State Listen -ErrorAction SilentlyContinue
+        if (-not $cl -and (Test-Path $node)) {
+            Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
+            Log "relaunched client server"
+        }
     } catch {
         Log "ERR: $($_.Exception.Message)"
     }

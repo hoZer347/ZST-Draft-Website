@@ -1260,7 +1260,7 @@ let statsData = null;
 let statsSort = { key: 'plusminus', dir: -1 };
 
 const STAT_COLS = [
-  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon and its tier (C-tier shows its Tera type).' },
+  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon and its tier.' },
   { key: 'trainer', label: 'Trainer', tip: 'The coach who drafted it.' },
   { key: 'gp', label: 'GP', num: true, tip: 'Games played — games this mon was brought to.' },
   { key: 'presence', label: 'Presence', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
@@ -1273,6 +1273,10 @@ const STAT_COLS = [
     tip: 'Win rate over games played. Ties are broken by most games played.' },
   { key: 'dealt', label: 'Dealt%', num: true, fmt: (v) => Math.round(v), tip: 'Total damage dealt, as a cumulative % of a full HP bar.' },
   { key: 'taken', label: 'Taken%', num: true, fmt: (v) => Math.round(v), tip: 'Total damage taken, as a cumulative % of a full HP bar.' },
+  { key: 'recovered', label: 'Self-heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP this mon restored to itself (Recover, Roost, Leftovers, drain…), as a cumulative % of a full HP bar.' },
+  { key: 'healed', label: 'Ally-heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP this mon restored to allies (Heal Pulse, Life Dew, Pollen Puff…), as a cumulative % of a full HP bar.' },
   { key: 'ratio', label: 'Dmg ratio', num: true, fmt: (v) => (v === Infinity ? '∞' : v.toFixed(2)),
     tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
   { key: 'crits', label: 'Crits', num: true, tip: 'Critical hits landed.' },
@@ -1362,7 +1366,6 @@ function renderStats() {
     const tb = document.createElement('span');
     tb.className = `tier-badge tier-badge--${r.tier}`; tb.textContent = r.tier;
     cell.append(' ', tb);
-    if (r.tera) cell.append(' ', teraTag(r.tera));
     mon.append(cell);
     tr.append(mon);
 
@@ -1388,8 +1391,9 @@ window.addEventListener('resize', sizePicks);
 // the official Showdown client pointed at our server (the ~~host:port syntax) —
 // that's how you reach a custom server's rooms without hosting the client too.
 function teambuilderUrl() {
-  const server = window.DRAFT_CONFIG?.showdownServer || 'localhost:8787';
-  return `https://play.pokemonshowdown.com/~~${server}/teambuilder`;
+  // Our self-hosted Showdown client — it connects to our server and has the
+  // league tiers (X/S/A/B/C/Z) baked into its teambuilder data.
+  return 'https://play.loomhozer.ca/teambuilder';
 }
 
 // Reuse one named tab so repeated opens focus the same window instead of piling
