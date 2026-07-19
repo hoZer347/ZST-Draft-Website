@@ -7,6 +7,7 @@ using DraftLeague.Web.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -141,6 +142,17 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
     app.UseHsts();
+}
+
+// Serve the web/ SPA (the real UI) from the site root, so one self-hosted server
+// hosts BOTH the frontend and the API on a single origin — no separate static
+// host, and no CORS between them. web/ sits next to server/ in the repo.
+var webRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "web"));
+if (Directory.Exists(webRoot))
+{
+    var webFiles = new PhysicalFileProvider(webRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = webFiles });   // "/" -> index.html
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = webFiles });
 }
 
 app.UseHttpsRedirection();

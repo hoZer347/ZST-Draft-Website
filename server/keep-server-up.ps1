@@ -19,10 +19,10 @@ $pause = Join-Path $root '.server-paused'
 $pidf  = Join-Path $root '.watchdog.pid'
 $alive = Join-Path $root '.watchdog.alive'
 $logf  = Join-Path $root 'keep-server-up.log'
-# Public tunnel: ngrok exposes the local :5211 server on a fixed reserved domain
-# (endpoint defined in %LOCALAPPDATA%\ngrok\ngrok.yml) so the Netlify site can
-# reach this machine's API over the internet.
-$ngrok = 'C:\Users\3hoze\ngrok\ngrok.exe'
+# Public tunnel: a named Cloudflare tunnel exposes the local :5211 server (which
+# serves both the web app and the API) at https://dev.loomhozer.ca. Config lives
+# in %USERPROFILE%\.cloudflared\config.yml.
+$cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 
 function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
 
@@ -42,12 +42,12 @@ while ($true) {
                 Log "relaunched server"
             }
         }
-        # Keep the ngrok tunnel up too — independent of the rebuild pause, since
-        # the tunnel doesn't lock the build output.
-        $ng = Get-Process -Name 'ngrok' -ErrorAction SilentlyContinue
-        if (-not $ng -and (Test-Path $ngrok)) {
-            Start-Process -FilePath $ngrok -ArgumentList 'start', '--all' -WindowStyle Hidden
-            Log "relaunched ngrok"
+        # Keep the Cloudflare tunnel up too — independent of the rebuild pause,
+        # since the tunnel doesn't lock the build output.
+        $cf = Get-Process -Name 'cloudflared' -ErrorAction SilentlyContinue
+        if (-not $cf -and (Test-Path $cloudflared)) {
+            Start-Process -FilePath $cloudflared -ArgumentList 'tunnel', 'run', 'loom-tunnel' -WindowStyle Hidden
+            Log "relaunched cloudflared tunnel"
         }
     } catch {
         Log "ERR: $($_.Exception.Message)"

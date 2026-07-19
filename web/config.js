@@ -11,10 +11,12 @@ window.DRAFT_CONFIG = {
   apiBase:
     location.hostname === 'localhost' || location.hostname === '127.0.0.1'
       ? 'http://localhost:5211'
-      // Public API = this dev machine's :5211 server exposed via a fixed ngrok
-      // reserved domain (kept up by server/keep-server-up.ps1). Live only while
-      // the machine + tunnel are running.
-      : 'https://diagram-thread-perplexed.ngrok-free.dev',
+      // Self-hosted at loomhozer.ca: the same .NET server serves this page AND
+      // the API, so calls are same-origin (relative "/api/..."). No CORS.
+      : location.hostname.endsWith('loomhozer.ca')
+        ? ''
+        // Legacy: the Netlify deploy reaches the local API via ngrok.
+        : 'https://diagram-thread-perplexed.ngrok-free.dev',
 
   // Our self-hosted Showdown server, as host:port. The Teambuilder tab opens the
   // official Showdown client pointed at it (play.pokemonshowdown.com/~~<server>),
