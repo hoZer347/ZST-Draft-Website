@@ -3,14 +3,13 @@
 // Custom formats for the draft-league Showdown server.
 //
 // This repo file is the source of truth. scripts/showdown.js copies it into the
-// bundled server's dist/config/custom-formats.js on every start (Showdown loads
-// custom formats from there and merges them into the ladder/teambuilder list),
-// so our format survives an `npm install` that resets node_modules and we never
-// hand-edit anything inside node_modules.
+// bundled server's dist/config/custom-formats.js on every start, so it survives
+// an `npm install` that resets node_modules.
 //
-// For now the league format is a straight copy of [Gen 9] National Dex Doubles —
-// a working placeholder so the teambuilder has our format to build for. The
-// ruleset/banlist will be customised for the draft league later.
+// The name contains "NatDex" on purpose: the teambuilder client keys its tier
+// table + mega legality off the format id (it must include natdex/nationaldex),
+// which routes it to the gen9natdex data — where megas are legal and where
+// scripts/patch-client-tiers.js has written our X/S/A/B/C/Z tiers.
 
 exports.Formats = [
   {
@@ -18,17 +17,27 @@ exports.Formats = [
     column: 2,
   },
   {
-    name: "[Gen 9] Draft League",
-    desc: "Placeholder league format — currently a copy of National Dex Doubles. Rules TBD.",
+    name: "[Gen 9] NatDex Draft League",
+    desc: "National Dex draft league. Megas legal (base form + stone). Custom bans and clauses below.",
     mod: 'gen9',
-    gameType: 'doubles',
-    ruleset: ['Standard NatDex', 'OHKO Clause', 'Evasion Moves Clause', 'Evasion Abilities Clause', 'Species Clause', 'Gravity Sleep Clause'],
+    // Singles. Built on the National Dex standard so megas / origin formes work.
+    ruleset: [
+      'Standard NatDex',
+      'Dynamax Clause',       // no Dynamax
+      'Z-Move Clause',        // no Z-moves
+      'Item Clause = 1',      // no two mons with the same item
+      'OHKO Clause',          // no Fissure / Sheer Cold / etc.
+      'Evasion Moves Clause', // no Double Team / Minimize
+    ],
     banlist: [
-      'Annihilape', 'Arceus', 'Calyrex-Ice', 'Calyrex-Shadow', 'Dialga', 'Dialga-Origin', 'Eternatus', 'Genesect', 'Gengar-Mega', 'Giratina', 'Giratina-Origin',
-      'Groudon', 'Ho-Oh', 'Koraidon', 'Kyogre', 'Kyurem-White', 'Lugia', 'Lunala', 'Magearna', 'Melmetal', 'Metagross-Mega', 'Mewtwo', 'Miraidon', 'Necrozma-Dawn-Wings',
-      'Necrozma-Dusk-Mane', 'Necrozma-Ultra', 'Palkia', 'Palkia-Origin', 'Rayquaza', 'Reshiram', 'Shedinja', 'Solgaleo', 'Stakataka', 'Terapagos', 'Urshifu',
-      'Urshifu-Rapid-Strike', 'Xerneas', 'Yveltal', 'Zacian', 'Zacian-Crowned', 'Zamazenta', 'Zamazenta-Crowned', 'Zekrom', 'Zygarde-50%', 'Zygarde-Complete',
-      'Commander', 'Power Construct', 'Eevium Z', 'Assist', 'Coaching', 'Dark Void', 'Swagger',
+      'Power Construct',      // ability banned (Zygarde still draftable with other abilities)
+      'Swagger',
+      'Revival Blessing',
+      'Hidden Power',
+      // All type gems banned; the plain Normal Gem stays legal.
+      'Fire Gem', 'Water Gem', 'Electric Gem', 'Grass Gem', 'Ice Gem', 'Fighting Gem',
+      'Poison Gem', 'Ground Gem', 'Flying Gem', 'Psychic Gem', 'Bug Gem', 'Rock Gem',
+      'Ghost Gem', 'Dragon Gem', 'Dark Gem', 'Steel Gem', 'Fairy Gem',
     ],
   },
 ];
