@@ -6,11 +6,16 @@
 // CDN (see Config.routes in client/config/config.js); we only serve the client
 // itself + our tier-patched data files.
 //
+// gzips compressible responses (the tier data is ~15 MB raw, ~1.7 MB gzipped)
+// and caches the compressed bytes in memory, so it stays fast over a home
+// connection without a CDN.
+//
 //   PORT=8791 node scripts/serve-client.js
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..', 'client', 'play.pokemonshowdown.com');
 const PORT = Number(process.env.PORT || 8791);
@@ -22,6 +27,23 @@ const MIME = {
   '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.map': 'application/json',
   '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.txt': 'text/plain; charset=utf-8',
 };
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '.txt']);
+
+// path -> { mtimeMs, raw, gz } — files don't change at runtime, so cache the
+// gzipped bytes after the first hit instead of recompressing 15 MB per request.
+const cache = new Map();
+
+function load(file) {
+  const stat = fs.statSync(file); // throws if missing → caught by caller
+  const hit = cache.get(file);
+  if (hit && hit.mtimeMs === stat.mtimeMs) return hit;
+  const raw = fs.readFileSync(file);
+  const ext = path.extname(file);
+  const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;
+  const entry = { mtimeMs: stat.mtimeMs, raw, gz, ext };
+  cache.set(file, entry);
+  return entry;
+}
 
 http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
@@ -29,23 +51,33 @@ http.createServer((req, res) => {
   const file = path.join(ROOT, url);
   if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
 
-  fs.readFile(file, (err, body) => {
-    if (err) {
-      // Extensionless paths (e.g. /teambuilder) are client-side routes → the
-      // client SPA is index-new.html. Missing assets (with an extension) are a real
-      // 404.
-      if (!path.extname(url)) {
-        fs.readFile(path.join(ROOT, 'index-new.html'), (e2, idx) => {
-          if (e2) { res.writeHead(404).end(); return; }
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-          res.end(idx);
-        });
-      } else {
-        res.writeHead(404).end();
-      }
-      return;
+  let entry;
+  try { entry = load(file); }
+  catch {
+    // Extensionless paths (e.g. /teambuilder) are client-side routes → serve the
+    // SPA (index-new.html). Missing assets (with an extension) are a real 404.
+    if (!path.extname(url)) {
+      try { entry = load(path.join(ROOT, 'index-new.html')); }
+      catch { res.writeHead(404).end(); return; }
+    } else {
+      res.writeHead(404).end(); return;
     }
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
-    res.end(body);
-  });
-}).listen(PORT, '127.0.0.1', () => console.log(`[serve-client] http://127.0.0.1:${PORT} -> ${ROOT}`));
+  }
+
+  const headers = {
+    'content-type': MIME[entry.ext] || 'application/octet-stream',
+    // Long browser cache; the data files are versioned by the client via query
+    // strings, so this is safe and makes repeat loads instant.
+    'cache-control': 'public, max-age=3600',
+  };
+  const acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+  if (entry.gz && acceptsGzip) {
+    headers['content-encoding'] = 'gzip';
+    headers['vary'] = 'Accept-Encoding';
+    res.writeHead(200, headers);
+    res.end(entry.gz);
+  } else {
+    res.writeHead(200, headers);
+    res.end(entry.raw);
+  }
+}).listen(PORT, '127.0.0.1', () => console.log(`[serve-client] http://127.0.0.1:${PORT} -> ${ROOT} (gzip on)`));

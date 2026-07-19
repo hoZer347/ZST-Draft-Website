@@ -58,10 +58,20 @@ for (const k of ['gen9doubles', 'gen9natdex', 'gen9natdexdoubles']) {
   if (T[k]) report[k] = patchTable(T[k]);
 }
 
-const out = 'exports.BattleTeambuilderTable = JSON.parse(' + JSON.stringify(JSON.stringify(T)) + ');\n';
-fs.writeFileSync(tablePath, out);
+// Write it back in Showdown's own compact form: JSON.parse('<json>') with a
+// SINGLE-quoted string, so the JSON's double-quotes don't need escaping.
+// (Double-stringifying with JSON.stringify escapes every " as \" and roughly
+// doubles the file — that turned a ~2 MB file into 18 MB.)
+const LS = String.fromCharCode(0x2028); // line separator — legal in JSON, not in a JS string literal
+const PS = String.fromCharCode(0x2029); // paragraph separator — same
+const json = JSON.stringify(T)
+  .split('\\').join('\\\\')
+  .split("'").join("\\'")
+  .split(LS).join('\\u2028')
+  .split(PS).join('\\u2029');
+fs.writeFileSync(tablePath, "exports.BattleTeambuilderTable = JSON.parse('" + json + "');\n");
 
 for (const [k, counts] of Object.entries(report)) {
   if (counts) console.log(k.padEnd(18), JSON.stringify(counts));
 }
-console.log('patched', tablePath);
+console.log('patched', tablePath, '(' + (fs.statSync(tablePath).size / 1048576).toFixed(1) + ' MB)');
