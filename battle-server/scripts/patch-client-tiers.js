@@ -46,6 +46,11 @@ function patchTable(tbl) {
   }
   tbl.tiers = newTiers;
   tbl.overrideTier = override;
+  // formatSlices map standard tier boundaries (Uber/OU/…) onto the ORIGINAL tier
+  // order; after we reorder, they'd slice off the top of our list (S/A, which are
+  // all megas). Clear them so `tierSet.slice(slices.X)` becomes slice(undefined) =
+  // the whole set — nothing gets cut. Safe: only our format uses these tables now.
+  tbl.formatSlices = {};
 
   return Object.fromEntries(ORDER.map((t) => [t, groups[t].length]));
 }

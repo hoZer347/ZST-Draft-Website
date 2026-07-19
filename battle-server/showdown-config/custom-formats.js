@@ -17,7 +17,7 @@ exports.Formats = [
     column: 2,
   },
   {
-    name: "[Gen 9] NatDex Draft League",
+    name: "[Gen 9] ZST Season 4",
     desc: "National Dex draft league. Megas legal (base form + stone). Custom bans and clauses below.",
     mod: 'gen9',
     // Singles. Built on the National Dex standard so megas / origin formes work.
