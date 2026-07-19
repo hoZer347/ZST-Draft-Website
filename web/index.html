@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Draft League</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="style.css?v=62">
+</head>
+<body>
+  <header>
+    <h1>Draft League</h1>
+    <a class="kofi" href="https://ko-fi.com/zstdraftleague" target="_blank" rel="noopener" title="Support the league on Ko-fi">
+      <span class="kofi-cup" aria-hidden="true">☕</span>
+      <span class="kofi-label">Buy me a coffee</span>
+    </a>
+    <nav id="tabs" class="tabs" hidden>
+      <button class="tab active" data-view="draft">Draft</button>
+      <button class="tab" data-view="schedule">Schedule</button>
+      <button class="tab" data-view="stats">Stats</button>
+      <button class="tab" data-view="tierlist">Tier list</button>
+      <button class="tab" data-view="teambuilder">Teambuilder</button>
+    </nav>
+    <button id="ready" class="ready-btn" hidden></button>
+    <div class="header-right">
+      <div id="account" class="account" hidden>
+        <img id="avatar" class="avatar" alt="" hidden>
+        <span id="username" class="username"></span>
+        <button id="logout" class="linkish">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Signed out -->
+    <section id="signin" class="card signin" hidden>
+      <h2>Sign in</h2>
+      <p class="muted">Your account is linked to Discord.</p>
+      <button id="login" class="discord-btn">
+        <svg viewBox="0 0 127 96" width="20" height="16" aria-hidden="true">
+          <path fill="currentColor" d="M107 8A105 105 0 0 0 81 0c-1 2-3 5-4 8a97 97 0 0 0-29 0c-1-3-3-6-4-8a105 105 0 0 0-26 8C2 33-1 57 1 81a106 106 0 0 0 32 16c3-4 5-8 7-12-4-1-8-3-11-5l3-2a75 75 0 0 0 64 0l3 2c-3 2-7 4-11 5 2 4 4 8 7 12a106 106 0 0 0 32-16c2-28-4-52-20-73ZM42 66c-6 0-12-6-12-13s5-13 12-13 12 6 12 13-5 13-12 13Zm43 0c-6 0-12-6-12-13s5-13 12-13 12 6 12 13-5 13-12 13Z"/>
+        </svg>
+        Sign in with Discord
+      </button>
+      <p id="signin-error" class="error" hidden></p>
+
+      <!-- Dev-only. Revealed by app.js on localhost; the endpoint it calls only
+           exists when the API runs in Development. -->
+      <div id="dev-login" class="dev-login" hidden>
+        <p class="muted">Debug slots — no Discord. Claim one to play as that team.</p>
+        <ul id="dev-slots" class="dev-slots"></ul>
+        <button id="dev-admin" class="dev-admin-btn">Sign in as admin (not a player)</button>
+        <button id="dev-refresh" class="linkish">Refresh</button>
+      </div>
+    </section>
+
+    <!-- Signed in -->
+    <div id="app" hidden>
+      <div id="view-draft" class="view layout">
+      <aside class="players card">
+        <div class="label">Players</div>
+        <ul id="player-list" class="players-list">
+          <li class="muted">Loading…</li>
+        </ul>
+      </aside>
+
+      <section class="draft">
+        <div class="card draft-status">
+          <div class="draft-status-row">
+            <div id="on-clock-box">
+              <div class="label">On the clock</div>
+              <div id="on-clock" class="big">—</div>
+            </div>
+            <div>
+              <div class="label">Pick</div>
+              <div id="pick-no" class="big">—</div>
+            </div>
+            <div>
+              <div class="label">Time left</div>
+              <div id="timer" class="big timer">—</div>
+            </div>
+            <div class="draft-actions">
+              <button id="play" class="play-btn" hidden>▶ Start draft</button>
+              <button id="sim-season" class="linkish" hidden>Simulate season (test)</button>
+              <button id="rollback" class="linkish" hidden>Undo last pick</button>
+              <button id="abort" class="abort-btn" hidden>Abort draft</button>
+            </div>
+          </div>
+          <div id="state-banner" class="banner" hidden></div>
+        </div>
+
+        <!-- Admin-only, before the draft starts: season + timeout settings. -->
+        <div id="draft-settings" class="card draft-settings" hidden>
+          <div class="label">Draft settings</div>
+          <div class="settings-row">
+            <label class="setting">Weeks
+              <input id="set-weeks" type="number" min="1" max="52" value="8">
+            </label>
+            <label class="setting">Pick timeout (hours)
+              <input id="set-timeout" type="number" min="0.5" max="168" step="0.5" value="24">
+            </label>
+            <span class="setting-hint muted">Applied when you start the draft.</span>
+          </div>
+        </div>
+
+        <!-- Only shown to the coach on the clock. -->
+        <div id="turn" class="card turn" hidden>
+          <div class="label" id="turn-label">Your pick — choose a tier</div>
+          <div id="tiers" class="tiers"></div>
+          <div id="options" class="options"></div>
+          <div class="turn-foot">
+            <button id="skip" class="skip-btn" hidden>Skip pick</button>
+          </div>
+          <p id="draft-error" class="error" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="label">Picks</div>
+          <ol id="picks" class="picks"><li class="muted">No picks yet.</li></ol>
+        </div>
+      </section>
+      </div>
+
+      <div id="view-tierlist" class="view layout" hidden>
+        <aside class="filters card">
+          <div class="label">Filters</div>
+          <input id="tl-search" class="tl-search" type="search" placeholder="Search name…" autocomplete="off">
+
+          <div class="label tl-section">Tier</div>
+          <div id="tl-tiers" class="tl-checks"></div>
+
+          <div class="label tl-section">Type</div>
+          <select id="tl-type1" class="tl-select"></select>
+          <select id="tl-type2" class="tl-select"></select>
+
+          <div class="label tl-section">Role</div>
+          <div id="tl-roles" class="tl-roles"></div>
+
+          <label class="tl-check"><input type="checkbox" id="tl-available"> Available only</label>
+          <button id="tl-clear" class="linkish tl-clear">Clear filters</button>
+        </aside>
+
+        <section class="tierlist">
+          <div id="tl-count" class="label"></div>
+          <div id="tl-body" class="tl-body"><p class="muted">Loading…</p></div>
+        </section>
+      </div>
+
+      <div id="view-schedule" class="view schedule-view" hidden>
+        <div id="sched-scroll" class="sched-scroll">
+          <p class="muted">Loading…</p>
+        </div>
+      </div>
+
+      <div id="view-stats" class="view stats-view" hidden>
+        <div id="stats-summary" class="label"></div>
+        <div id="stats-body"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div id="view-teambuilder" class="view" hidden>
+        <div class="card tb-launch">
+          <h2>Teambuilder</h2>
+          <p class="muted">
+            Team building runs on our own Showdown server so it uses the league
+            format. Selecting this tab opens it in a new browser tab.
+          </p>
+          <p class="muted">
+            In the builder, choose <strong>[Gen 9] Draft League</strong> as the
+            format when you create a team.
+          </p>
+          <button id="tb-open" class="tb-open-btn">Open Teambuilder ↗</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Team page: covers the draft when a name in the roster is clicked. -->
+    <div id="team-page" class="team-page" hidden>
+      <div class="team-page-head">
+        <button id="team-close" class="team-close">← Back</button>
+        <img id="team-icon" class="team-icon" alt="" hidden>
+        <div class="team-heading">
+          <h2 id="team-title" class="team-title"></h2>
+          <span id="team-showdown" class="team-showdown" hidden></span>
+        </div>
+        <button id="team-edit" class="linkish team-edit" hidden>Edit team</button>
+      </div>
+
+      <!-- Own-team customisation form, revealed by the Edit button. -->
+      <form id="team-edit-form" class="team-edit-form card" hidden>
+        <label class="setting">Team name
+          <input id="tp-name" type="text" maxlength="40" placeholder="e.g. The Thunderbolts">
+        </label>
+        <label class="setting">Team icon URL <span class="muted">(square image)</span>
+          <input id="tp-icon" type="url" maxlength="500" placeholder="https://…">
+        </label>
+        <label class="setting">Showdown name
+          <input id="tp-showdown" type="text" maxlength="40" placeholder="Your PS! username">
+        </label>
+        <div class="team-edit-actions">
+          <button type="submit" class="play-btn">Save</button>
+          <button type="button" id="tp-cancel" class="linkish">Cancel</button>
+          <span id="tp-msg" class="muted"></span>
+        </div>
+      </form>
+
+      <div id="team-body" class="team-body"></div>
+    </div>
+  </main>
+
+  <script src="config.js?v=62"></script>
+  <script src="auth.js?v=62"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+  <script src="pool-logic.js?v=62"></script>
+  <script src="app.js?v=62"></script>
+</body>
+</html>

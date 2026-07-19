@@ -1,0 +1,13 @@
+# Host build output must not leak into the image — it shadows the container
+# build and can carry the wrong runtime identifier.
+bin/
+obj/
+
+# Local dev database. The container uses the mounted volume at /data.
+*.db
+*.db-shm
+*.db-wal
+
+Dockerfile
+.dockerignore
+fly.toml

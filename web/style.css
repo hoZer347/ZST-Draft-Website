@@ -1,0 +1,1064 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #fff;
+  --text: #14161a;
+  --muted: #6b7280;
+  --line: #e3e6ea;
+  --accent: #e3350d;
+  --ok: #1a9e5f;
+
+  /* Tier rarity colours, loot-drop style: S legendary orange, A epic purple,
+     B uncommon green, C rare blue. */
+  --tier-s: #f0850c;
+  --tier-a: #a335ee;
+  --tier-b: #2ea043;
+  --tier-c: #2d8fdb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216;
+    --card: #181b21;
+    --text: #e9ecf1;
+    --muted: #9aa3b0;
+    --line: #272b33;
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* The browser's own [hidden] rule is display:none, but any author rule that
+   sets display (.account is display:flex) outranks it — so `el.foo.hidden =
+   true` silently does nothing on those elements. This makes the attribute win
+   wherever it's used. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+
+/* Ko-fi "buy me a coffee" pill, top-left next to the title. */
+.kofi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: #ff5e5b; /* Ko-fi red */
+  border-radius: 999px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.kofi:hover { filter: brightness(1.06); }
+.kofi-cup { font-size: 14px; line-height: 1; }
+/* On tight widths keep just the cup so the header stays uncrowded. */
+@media (max-width: 620px) { .kofi-label { display: none; } }
+
+.header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+.account { display: flex; align-items: center; gap: 8px; }
+.avatar { width: 24px; height: 24px; border-radius: 50%; }
+.username { font-size: 13px; font-weight: 600; }
+
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linkish:hover { color: var(--text); }
+
+.signin { text-align: center; padding: 40px 20px; }
+.signin h2 { margin: 0 0 6px; font-size: 17px; }
+
+.discord-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 11px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #5865f2;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.discord-btn:hover { background: #4752c4; }
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.muted { color: var(--muted); font-size: 13px; margin: 0; list-style: none; }
+
+.error {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+/* Signed-in layout: player roster pinned to the far left, content on the right.
+   The negative-margin full-bleed breaks out of main's centered max-width so the
+   roster hugs the viewport edge instead of the 760px column. Collapses to a
+   single column on narrow screens so the sidebar stacks above the app. */
+.layout {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 620px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* Section tabs in the header, sitting just right of the title. Pill-shaped, with
+   the active one filled in the Poké-red accent. */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tab {
+  background: none;
+  border: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); background: var(--bg); }
+.tab.active { color: #fff; background: var(--accent); }
+
+/* Big confirm-participation toggle in the header. Green "Ready up" flips to an
+   outlined "Leave draft" once you're in. Hidden once the draft starts. */
+.ready-btn {
+  padding: 8px 18px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--ok);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ready-btn:hover { filter: brightness(1.08); }
+.ready-btn.ready-in {
+  color: var(--accent);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  filter: none;
+}
+.ready-btn.ready-in:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+.player-ready {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--ok);
+}
+
+/* Stats view: full-bleed sortable table of accrued battle stats. */
+.stats-view {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0 20px;
+}
+#stats-summary { margin-bottom: 8px; }
+.stats-view #stats-body { overflow-x: auto; }
+.stats-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.stats-table th, .stats-table td { padding: 6px 10px; text-align: center; white-space: nowrap; }
+.stats-table th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.stats-table th:hover { color: var(--text); }
+.stats-table th.sorted { color: var(--text); }
+.stats-table th.num, .stats-table td.num { text-align: center; font-variant-numeric: tabular-nums; }
+.stats-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--muted) 7%, transparent); }
+.stats-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.stats-mon { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.stats-sprite { width: 30px; height: 30px; object-fit: contain; image-rendering: pixelated; flex: none; }
+.stats-name { font-weight: 600; }
+
+/* Teambuilder view: a launcher panel. The builder itself opens in a new tab on
+   our own Showdown server (see openTeambuilder in app.js). */
+.tb-launch { max-width: 560px; margin: 0 auto; text-align: center; }
+.tb-launch h2 { margin: 0 0 8px; font-size: 18px; }
+.tb-launch p { margin: 0 0 10px; }
+.tb-open-btn {
+  margin-top: 8px;
+  padding: 11px 20px;
+  font: inherit;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.tb-open-btn:hover { filter: brightness(1.08); }
+
+.players-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+
+.player {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.player:hover { background: var(--bg); }
+.player { cursor: pointer; }
+.player:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.player-remove {
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  /* Fade in on row hover so the roster stays clean until you reach for it. */
+  opacity: 0;
+}
+.player:hover .player-remove { opacity: 1; }
+.player-remove:hover { color: var(--accent); }
+
+.player-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.player-avatar--blank { background: var(--line); }
+
+.player-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* Dev-only debug slots. Deliberately plain — they never ship to real users. */
+.dev-login {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+.dev-slots {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.dev-slot {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dev-slot:hover { border-color: var(--accent); }
+.dev-slot.taken { opacity: .7; }
+.dev-slot-name { font-weight: 600; }
+.dev-slot-team { font-size: 12px; color: var(--muted); }
+.dev-slot-state {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+.dev-slot.taken .dev-slot-state { color: var(--accent); }
+
+.dev-admin-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dev-admin-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── draft ──────────────────────────────────────────────────────────── */
+
+.draft { display: grid; gap: 16px; min-width: 0; }
+
+.draft-status-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 20px;
+  align-items: center;
+}
+.draft-actions { display: flex; align-items: center; gap: 12px; }
+
+.big { font-size: 20px; font-weight: 650; }
+.big.mine { color: var(--accent); }
+.timer { font-variant-numeric: tabular-nums; }
+.timer.low { color: var(--accent); }
+
+.play-btn {
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 650;
+  color: #fff;
+  background: var(--ok);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.play-btn:hover { filter: brightness(1.08); }
+
+/* Pre-start admin settings: weeks + pick timeout. */
+.settings-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 4px;
+}
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.setting input {
+  width: 96px;
+  padding: 7px 9px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+/* Sits on the input row (aligned to their bottoms) as a reminder there's no
+   separate save — the numbers take effect on Start. */
+.setting-hint { padding-bottom: 8px; font-style: italic; }
+
+.turn-foot { margin-top: 12px; }
+.skip-btn {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.skip-btn:hover { color: var(--text); border-color: var(--muted); }
+
+.abort-btn {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+  border-radius: 8px;
+  cursor: pointer;
+}
+.abort-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.banner {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* on-the-clock controls */
+.turn { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+/* Admin sees the same panel read-only, so dim it to read as "not yours". */
+.turn.readonly { border-color: var(--line); opacity: .85; }
+.tiers { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.tier {
+  flex: 1 1 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px;
+  font: inherit;
+  /* Filled with the tier's rarity colour; black letters for high contrast. */
+  color: #0b0b0c;
+  background: var(--tc);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+/* --tc is the tier's rarity colour, set per button. */
+.tier--S { --tc: var(--tier-s); }
+.tier--A { --tc: var(--tier-a); }
+.tier--B { --tc: var(--tier-b); }
+.tier--C { --tc: var(--tier-c); }
+.tier-key { font-size: 18px; font-weight: 800; color: #0b0b0c; }
+.tier-left { font-size: 10px; font-weight: 600; color: rgba(0, 0, 0, .62); }
+.tier:hover:not(:disabled) { filter: brightness(1.08); }
+.tier.open { box-shadow: inset 0 0 0 3px #0b0b0c; }
+.tier:disabled { opacity: .4; cursor: not-allowed; }
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+.mon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.mon:hover { border-color: var(--accent); }
+.mon-img { width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; }
+.mon-name { font-size: 12px; font-weight: 600; text-align: center; }
+.mon-tier { font-size: 10px; color: var(--muted); }
+
+.tier-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, .35);
+  /* Same lighter-to-darker gradient sweep as the type chips, keyed off --tc. */
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--tc) 82%, white),
+    color-mix(in srgb, var(--tc) 84%, black));
+}
+.tier-badge--S { --tc: var(--tier-s); }
+.tier-badge--A { --tc: var(--tier-a); }
+.tier-badge--B { --tc: var(--tier-b); }
+.tier-badge--C { --tc: var(--tier-c); }
+
+/* Running pick feed, newest first. Its max-height is set by JS (sizePicks) so it
+   grows to the bottom of the window and then scrolls, rather than a fixed cap. */
+.picks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+}
+/* Each row is tinted with its tier's rarity colour. */
+.pick--S { --tc: var(--tier-s); }
+.pick--A { --tc: var(--tier-a); }
+.pick--B { --tc: var(--tier-b); }
+.pick--C { --tc: var(--tier-c); }
+.pick {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--tc) 10%, transparent);
+}
+.pick:hover { background: color-mix(in srgb, var(--tc) 20%, transparent); }
+.pick .mon-img { width: 28px; height: 28px; }
+.pick-num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 2.5em; }
+.pick-name { font-size: 13px; font-weight: 600; }
+.pick-team { font-size: 12px; color: var(--muted); }
+
+/* The options passed on this turn — a dimmed run of small sprites in their own
+   flexible column on the pick's own line (never a new row). The column is the
+   grid's 1fr, so it takes the slack between the name and the coach; its content
+   is centred within that slack and reads label→sprites left-to-right, so it's
+   not clamped onto the name text. Always rendered (empty when none) so the
+   column stays aligned down the whole feed. */
+.pick-others {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+.pick-others-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-right: 3px; }
+.pick-other-img { width: 20px; height: 20px; object-fit: contain; image-rendering: pixelated; opacity: .55; filter: grayscale(.4); flex: none; }
+.pick-other-img:hover { opacity: 1; filter: none; }
+.auto {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* ── team page (covers the draft) ────────────────────────────────────── */
+
+.team-page {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  overflow-y: auto;
+  padding: 20px;
+}
+.team-page-head {
+  position: sticky;
+  top: -20px;
+  z-index: 1; /* keep the sticky menu above the type chips scrolling under it */
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: -20px -20px 16px;
+  padding: 14px 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.team-close {
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.team-close:hover { border-color: var(--accent); color: var(--accent); }
+.team-title { margin: 0; font-size: 18px; }
+
+/* Square, player-supplied team icon. */
+.team-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.team-heading { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.team-showdown { font-size: 12px; color: var(--muted); }
+.team-edit { margin-left: auto; }
+
+/* Own-team customisation form. */
+.team-edit-form {
+  max-width: 1000px;
+  margin: 0 auto 16px;
+  display: grid;
+  gap: 12px;
+}
+.team-edit-actions { display: flex; align-items: center; gap: 12px; }
+
+.team-body {
+  max-width: 1000px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* left = S A A …, right = B B B … */
+  gap: 8px;
+  align-items: start;
+}
+/* Each column stacks its own cards, so tiers stay grouped by column. */
+.tm-col { display: grid; gap: 8px; align-content: start; }
+@media (max-width: 720px) {
+  .team-body { grid-template-columns: 1fr; }
+}
+
+.tm-card {
+  --tc: var(--muted);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--tc);
+  border-radius: 10px;
+  padding: 8px 10px;
+  /* A wash of the tier colour bleeding in from the left, fading to the card. */
+  background: linear-gradient(105deg, color-mix(in srgb, var(--tc) 22%, var(--card)), var(--card) 58%);
+  /* Left = the mon's profile; right = its scraped battle stats. */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+.tm-main { min-width: 0; }
+
+/* Scraped battle stats, down the right of each card. */
+.tm-battle {
+  border-left: 1px solid var(--line);
+  padding-left: 10px;
+  min-width: 104px;
+  align-self: stretch;
+}
+.tm-battle-head { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; white-space: nowrap; }
+/* One battle stat per row: a muted label on the left, value(s) on the right. */
+.tm-brow { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+.tm-brow-l { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); min-width: 5.6em; }
+.tm-brow-v { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tm-brow-v.tm-brow-sub { font-size: 11px; font-weight: 600; color: var(--muted); }
+.tm-brow-v.good { color: #2ea043; }
+.tm-brow-v.bad { color: #d9534f; }
+@media (max-width: 460px) {
+  /* Too tight to sit beside the profile — drop it under instead. */
+  .tm-card { grid-template-columns: 1fr; }
+  .tm-battle { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 8px; }
+}
+.tm--S { --tc: var(--tier-s); }
+.tm--A { --tc: var(--tier-a); }
+.tm--B { --tc: var(--tier-b); }
+.tm--C { --tc: var(--tier-c); }
+
+/* Team MVP — gold ring on the card, gold pill by the name. */
+.tm-card.mvp {
+  border-color: #f4b400;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #f4b400 55%, transparent);
+}
+.mvp-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  color: #7a5200;
+  background: linear-gradient(135deg, #ffda63, #f4b400);
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.tm-top { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+.tm-sprite { width: 56px; height: 56px; object-fit: contain; image-rendering: pixelated; }
+.tm-id { min-width: 0; }
+.tm-name { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tm-types { display: flex; gap: 4px; margin: 3px 0; flex-wrap: wrap; }
+.tm-abilities { font-size: 11px; color: var(--muted); }
+.tm-bst { text-align: center; line-height: 1; }
+.tm-bst-num { display: block; font-size: 18px; font-weight: 700; }
+.tm-bst-label { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+
+.tm-stats { display: grid; gap: 2px; margin-top: 6px; }
+.tm-stat { display: grid; grid-template-columns: 2.6em 2.4em 1fr; align-items: center; gap: 8px; }
+.tm-stat-label { font-size: 11px; color: var(--muted); }
+.tm-stat-val { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.tm-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.tm-bar-fill { display: block; height: 100%; border-radius: 999px; }
+.stat--lo  { background: #d9534f; }
+.stat--mid { background: #e6a417; }
+.stat--hi  { background: #2ea043; }
+
+/* Pokémon type chips */
+/* Each chip is a slightly-transparent diagonal gradient of its type colour
+   (--tcol) — a lighter-to-darker sweep. Types only declare their colour; the
+   shared rule builds the gradient. */
+.type-chip {
+  /* inline-flex + fixed line-height so the text is always centred in the pill,
+     instead of riding the surrounding line's baseline (which offset it at small
+     sizes / in flex rows). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #fff;
+  /* Roomier pill so the gradient reads as a background around the label rather
+     than being crowded right up to the glyphs. */
+  padding: 4px 10px;
+  border-radius: 999px;
+  /* A tighter, darker shadow so the white text stays legible over the lighter
+     end of the gradient. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, color-mix(in srgb, var(--tcol), white 48%) 90%, transparent),
+    color-mix(in srgb, var(--tcol) 90%, transparent) 50%,
+    color-mix(in srgb, color-mix(in srgb, var(--tcol), black 44%) 90%, transparent));
+}
+.type--normal   { --tcol: #a8a77a; }
+.type--fire     { --tcol: #ee8130; }
+.type--water    { --tcol: #6390f0; }
+.type--electric { --tcol: #d8a800; }
+.type--grass    { --tcol: #7ac74c; }
+.type--ice      { --tcol: #74c7c4; }
+.type--fighting { --tcol: #c22e28; }
+.type--poison   { --tcol: #a33ea1; }
+.type--ground   { --tcol: #cf9b45; }
+.type--flying   { --tcol: #a98ff3; }
+.type--psychic  { --tcol: #f95587; }
+.type--bug      { --tcol: #a6b91a; }
+.type--rock     { --tcol: #b6a136; }
+.type--ghost    { --tcol: #735797; }
+.type--dragon   { --tcol: #6f35fc; }
+.type--dark     { --tcol: #705746; }
+.type--steel    { --tcol: #9a9ab0; }
+.type--fairy    { --tcol: #d685ad; }
+/* Stellar isn't a real elemental type (and has no symbol) — keep the terastal
+   rainbow sheen, slightly transparent to match the others. */
+.type--stellar { background: linear-gradient(110deg, #6ad5c6cc, #7b9cf0cc 45%, #b57de0cc); }
+
+/* Tera pill: the type-chip base, just a touch smaller so it reads as a tag. */
+.tera { font-size: 9px; }
+
+/* ── tier list ───────────────────────────────────────────────────────── */
+
+.filters { align-self: start; position: sticky; top: 16px; display: grid; gap: 8px; }
+.tl-section { margin-top: 10px; }
+.tl-search, .tl-select {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.tl-roles { display: grid; gap: 4px; }
+.tl-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.tl-check { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.tl-check input { accent-color: var(--accent); }
+/* An option that would show nothing given the other filters is dimmed + inert. */
+.tl-check.off { opacity: .35; cursor: not-allowed; }
+/* Tier checkboxes carry their rarity colour. */
+.tl-check:has(.tl-tier-cb--S) { color: var(--tier-s); font-weight: 700; }
+.tl-check:has(.tl-tier-cb--A) { color: var(--tier-a); font-weight: 700; }
+.tl-check:has(.tl-tier-cb--B) { color: var(--tier-b); font-weight: 700; }
+.tl-check:has(.tl-tier-cb--C) { color: var(--tier-c); font-weight: 700; }
+.tl-tier-cb--S { accent-color: var(--tier-s); }
+.tl-tier-cb--A { accent-color: var(--tier-a); }
+.tl-tier-cb--B { accent-color: var(--tier-b); }
+.tl-tier-cb--C { accent-color: var(--tier-c); }
+.tl-clear { margin-top: 10px; text-align: left; }
+
+.tierlist { min-width: 0; display: grid; gap: 16px; align-content: start; }
+.tl-body { display: grid; gap: 18px; }
+
+.tl-tier { display: grid; gap: 8px; }
+.tl-tier-head {
+  --tc: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-left: 5px solid var(--tc);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--tc) 12%, transparent);
+}
+.tl-tier--S { --tc: var(--tier-s); }
+.tl-tier--A { --tc: var(--tier-a); }
+.tl-tier--B { --tc: var(--tier-b); }
+.tl-tier--C { --tc: var(--tier-c); }
+.tl-tier-key { font-size: 18px; font-weight: 800; color: var(--tc); }
+.tl-tier-count { font-size: 12px; color: var(--muted); }
+
+.tl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 8px; }
+.tl-mon {
+  --tc: var(--muted);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--tc);
+  border-radius: 10px;
+  background: var(--card);
+}
+.tl-mon--S { --tc: var(--tier-s); }
+.tl-mon--A { --tc: var(--tier-a); }
+.tl-mon--B { --tc: var(--tier-b); }
+.tl-mon--C { --tc: var(--tier-c); }
+/* Drafted mons are dimmed to read as "unavailable" — but only the sprite/name,
+   so the owner chip below stays legible (a card-wide opacity would fade it too). */
+.tl-mon.taken .tl-mon-img { opacity: .4; filter: grayscale(.7); }
+.tl-mon.taken .tl-mon-name { color: var(--muted); }
+/* Fade the type chips on a drafted card too, so a "taken" mon reads as uniformly
+   dimmed rather than a greyed sprite sitting next to full-colour type pills. The
+   owner chip below is a separate element and keeps its full strength. */
+.tl-mon.taken .tl-mon-types { opacity: .5; filter: grayscale(.4); }
+.tl-mon-img { width: 84px; height: 84px; object-fit: contain; image-rendering: pixelated; margin-bottom: 2px; }
+.tl-mon-name { font-size: 12px; font-weight: 600; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.tl-mon-types { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+/* Compact on the tier-list slot, but keep the dark text-shadow — without it the
+   white label washes out over the lighter types (electric, steel, normal, bug…). */
+.tl-mon-types .type-chip { font-size: 9px; padding: 1px 6px; letter-spacing: .02em; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }
+.tl-mon-bst { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Who drafted it — a tier-coloured chip so it stands out on a dimmed card. */
+.tl-mon-owner {
+  margin-top: 2px;
+  max-width: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--tc);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── schedule ────────────────────────────────────────────────────────────
+   A single scrolling column. The signed-in coach's next game leads (hero-sized),
+   this week's other games and future weeks follow at normal size, and already-
+   played games are stacked *above* the fold — the JS scrolls to #sched-present on
+   load so history sits off the top and you scroll up into it. Card size encodes
+   importance: hero > mine > normal, with a smaller "small" pair for history. */
+.schedule-view {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+
+.sched-admin { display: grid; gap: 10px; }
+.sched-admin-row { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.sched-weeks {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.sched-weeks input {
+  width: 84px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* Bounded scroll area so "scroll up for history" has a fixed viewport to sit in
+   and the initial scroll-to-present is stable. */
+.sched-scroll {
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.sched-heading {
+  margin: 14px 0 2px;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 4px 0;
+  z-index: 1;
+}
+.sched-present > .sched-heading:first-child { margin-top: 0; }
+
+.match {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+/* Your matches get an accent left-edge so they read as "yours" at a glance. */
+.match--is-mine { border-left: 4px solid var(--accent); }
+
+.match-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.match-week {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+.match-when { font-size: 12px; color: var(--muted); }
+
+.match-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.match-team { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.match-team--away { justify-content: flex-end; text-align: right; }
+.match-team-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The loser of a played game dims; the winner stays full-strength. */
+.match.match--played .match-team:not(.won) { color: var(--muted); }
+.match-team.won .match-team-name { color: var(--ok); }
+.match-you {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.match-mid {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+  min-width: 3ch;
+}
+.match-mid.match-score {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.match-replay-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+.match-replay-link:hover { text-decoration: underline; }
+
+/* Replay submission on your own unplayed games. */
+.replay-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
+.replay-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.replay-btn {
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  color: #fff;
+  background: var(--ok);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.replay-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.replay-btn:disabled { opacity: .6; cursor: default; }
+.replay-msg { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.replay-msg.error { color: var(--accent); }
+
+/* Size tiers. The hero is the biggest, "mine" a step up from normal, and the
+   history pair ("small"/"small-mine") a step down. */
+.match--hero {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  padding: 18px 18px;
+  gap: 12px;
+}
+.match--hero .match-team-name { font-size: 20px; font-weight: 750; }
+.match--hero .match-mid { font-size: 15px; }
+.match--hero .match-mid.match-score { font-size: 26px; }
+
+.match--mine .match-team-name { font-size: 17px; }
+.match--small { padding: 8px 12px; opacity: .82; }
+.match--small .match-team-name { font-size: 13px; }
+.match--small .match-mid.match-score { font-size: 15px; }
+.match--small-mine { padding: 10px 12px; opacity: .95; }
+.match--small-mine .match-team-name { font-size: 15px; }
+
+/* Picks feed as three aligned columns: the draft pick (left), the options that
+   were passed on that turn (left), and the coach + tier (right). Appended so
+   they win over the base .pick rules above. */
+/* Fixed-width pick column so the passed column has a consistent left edge down
+   the feed (an `auto` first column started the passed run at a different x each
+   row, making it look glued to the pick). */
+.pick { grid-template-columns: 18rem 1fr auto; }
+.pick-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Passed options: a distinct middle column, content aligned to its leftmost edge,
+   nudged right a bit as a whole. */
+.pick-others { justify-content: flex-start; padding-left: 2rem; }
+.pick-end { display: flex; align-items: center; gap: 8px; justify-self: end; }

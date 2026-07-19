@@ -1,0 +1,40 @@
+app = "zst-draft-api"
+primary_region = "yyz"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ASPNETCORE_ENVIRONMENT = "Production"
+  ConnectionStrings__Default = "Data Source=/data/draftleague.db"
+  # Origins allowed to call this API. Must include whatever serves the frontend,
+  # or the browser blocks every request.
+  Cors__Origins__0 = "https://zst-league.netlify.app"
+  Cors__Origins__1 = "http://localhost:8000"
+
+# SQLite needs a real disk. Without this the database is wiped on every deploy.
+[mounts]
+  source = "draft_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # The draft clock is an always-on background service — it fires auto-picks
+  # when a coach's timer expires. If Fly stops the machine when HTTP traffic
+  # goes quiet, the clock stops with it and an idle draft stalls forever.
+  # That is exactly the failure the timer exists to prevent, so the machine
+  # must stay up.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

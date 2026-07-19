@@ -1,0 +1,10 @@
+{
+  "name": "draft-league-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static frontend for the Pokémon Draft League. Pure-logic unit tests + a tier-list performance guard run on Node's built-in test runner (no dependencies).",
+  "scripts": {
+    "test": "node --test tests/pool-logic.test.js tests/tierlist.bench.js",
+    "bench": "node --test tests/tierlist.bench.js"
+  }
+}

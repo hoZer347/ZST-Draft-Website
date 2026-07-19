@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Draft League — Battle Viewer</title>
+<style>
+  :root {
+    --bg: #0f1116; --card: #181b21; --line: #272b33; --text: #e9ecf1;
+    --muted: #9aa3b0; --accent: #e3350d; --ok: #2ea043; --p1: #6390f0; --p2: #f95587;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card);
+  }
+  h1 { margin: 0; font-size: 16px; }
+  .status { font-size: 12px; color: var(--muted); }
+  .fmt { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  button {
+    font: inherit; font-weight: 600; color: #fff; background: var(--accent);
+    border: 0; border-radius: 8px; padding: 7px 14px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+  .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .side {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--card);
+    border-top: 3px solid var(--sc);
+  }
+  .side--p1 { --sc: var(--p1); }
+  .side--p2 { --sc: var(--p2); }
+  .side h2 { margin: 0 0 8px; font-size: 14px; }
+  .roster { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  .mon {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
+    padding: 5px 8px; border-radius: 7px; background: var(--bg);
+  }
+  .mon.active { outline: 2px solid var(--sc); }
+  .mon.fainted { opacity: .4; }
+  .mon.fainted .mon-name { text-decoration: line-through; }
+  .mon-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hp { width: 74px; height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
+  .hp-fill { height: 100%; background: var(--ok); }
+  .hp-fill.low { background: #e6a417; }
+  .hp-fill.crit { background: var(--accent); }
+  .log {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--card);
+    height: 300px; overflow-y: auto; font-size: 13px;
+  }
+  .log-line { padding: 1px 0; }
+  .log-turn { margin-top: 8px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+  .banner {
+    border-radius: 12px; padding: 14px; text-align: center; font-weight: 700;
+    background: color-mix(in srgb, var(--ok) 20%, var(--card)); border: 1px solid var(--ok);
+  }
+  .banner[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔️ Draft League Battle Viewer</h1>
+  <span id="status" class="status">connecting…</span>
+  <span id="fmt" class="fmt"></span>
+  <button id="start" style="margin-left:auto" disabled>New battle</button>
+</header>
+
+<main>
+  <div id="banner" class="banner" hidden></div>
+  <div class="teams">
+    <section class="side side--p1"><h2 id="p1name">Player 1</h2><ul id="p1roster" class="roster"></ul></section>
+    <section class="side side--p2"><h2 id="p2name">Player 2</h2><ul id="p2roster" class="roster"></ul></section>
+  </div>
+  <div id="log" class="log"></div>
+</main>
+
+<script>
+// A minimal same-origin battle viewer. It opens three sockets to this server:
+// a spectator (which it renders) and both players (which auto-pick a legal
+// default each turn), so the page plays a demo match against itself and shows it.
+const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+const $ = (id) => document.getElementById(id);
+
+let sockets = [];
+const state = { p1: fresh(), p2: fresh() };
+function fresh() { return { name: '', mons: new Map(), activeName: null }; }
+
+$('start').onclick = startBattle;
+health();
+
+async function health() {
+  try {
+    const h = await (await fetch('/health')).json();
+    $('fmt').textContent = h.format;
+  } catch { /* non-fatal */ }
+}
+
+function setStatus(t) { $('status').textContent = t; }
+
+function startBattle() {
+  cleanup();
+  state.p1 = fresh(); state.p2 = fresh();
+  render();
+  $('banner').hidden = true;
+  $('start').disabled = true;
+  setStatus('starting…');
+
+  const matchId = 'demo-' + Date.now();
+
+  // Control socket: creates the demo match, then spectates + renders it.
+  const control = open();
+  control.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'created') {
+      control.send(JSON.stringify({ type: 'join', matchId, side: 'spectator' }));
+      spawnPlayer(matchId, 'p1');
+      spawnPlayer(matchId, 'p2');
+      setStatus('battle in progress…');
+    } else if (msg.type === 'protocol') {
+      handleProtocol(msg.chunk);
+    } else if (msg.type === 'end') {
+      onEnd(msg.winner);
+    } else if (msg.type === 'error') {
+      setStatus('error: ' + msg.error); $('start').disabled = false;
+    }
+  };
+  control.onopen = () => control.send(JSON.stringify({ type: 'create-demo', matchId }));
+}
+
+// A player socket that answers every non-wait request with a legal default.
+function spawnPlayer(matchId, side) {
+  const ws = open();
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'join', matchId, side }));
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type !== 'protocol') return;
+    for (const line of msg.chunk.split('\n')) {
+      if (!line.startsWith('|request|')) continue;
+      const json = line.slice('|request|'.length);
+      if (!json || json === 'null') continue;
+      if (JSON.parse(json).wait) continue;
+      ws.send(JSON.stringify({ type: 'choose', decision: 'default' }));
+    }
+  };
+}
+
+function open() { const ws = new WebSocket(WS_URL); sockets.push(ws); return ws; }
+function cleanup() { for (const ws of sockets) { try { ws.close(); } catch {} } sockets = []; }
+
+// ── protocol → view ──────────────────────────────────────────────────────
+// We parse just enough of the sim's spectator protocol to show rosters, the
+// active mon, HP, faints and a readable play-by-play. (Not a full renderer.)
+function handleProtocol(chunk) {
+  for (const line of chunk.split('\n')) {
+    if (!line.startsWith('|')) continue;
+    const parts = line.split('|'); // ['', cmd, ...args]
+    const cmd = parts[1];
+    switch (cmd) {
+      case 'player': {
+        const side = parts[2]; // p1 / p2
+        if (state[side] && parts[3]) { state[side].name = parts[3]; }
+        break;
+      }
+      case 'poke': {
+        const side = parts[2];
+        const species = (parts[3] || '').split(',')[0];
+        if (state[side]) state[side].mons.set(species, { name: species, hp: 100, fainted: false });
+        break;
+      }
+      case 'switch':
+      case 'drag': {
+        const { side, species } = ident(parts[2]);
+        const hp = pctFrom(parts[4]);
+        const s = state[side];
+        if (s) {
+          if (!s.mons.has(species)) s.mons.set(species, { name: species, hp: 100, fainted: false });
+          const m = s.mons.get(species); m.hp = hp; s.activeName = species;
+        }
+        break;
+      }
+      case '-damage':
+      case '-heal':
+      case '-sethp': {
+        const { side, species } = ident(parts[2]);
+        const m = state[side]?.mons.get(species);
+        if (m) m.hp = pctFrom(parts[3]);
+        break;
+      }
+      case 'faint': {
+        const { side, species } = ident(parts[2]);
+        const m = state[side]?.mons.get(species);
+        if (m) { m.fainted = true; m.hp = 0; }
+        logLine(`💀 ${species} fainted`);
+        break;
+      }
+      case 'move': {
+        const mover = ident(parts[2]).species;
+        logLine(`${mover} used ${parts[3]}`);
+        break;
+      }
+      case 'turn': logTurn(`Turn ${parts[2]}`); break;
+      case 'win': onEnd(parts[2]); break;
+    }
+  }
+  render();
+}
+
+// "p1a: Charizard" → { side:'p1', species:'Charizard' }
+function ident(s) {
+  const side = (s || '').slice(0, 2);
+  const species = (s || '').split(': ')[1] || '';
+  return { side, species };
+}
+// "142/244" or "83/100" or "0 fnt" → integer percent
+function pctFrom(hpStr) {
+  if (!hpStr) return 0;
+  const head = hpStr.split(' ')[0];
+  if (head.includes('/')) { const [c, m] = head.split('/').map(Number); return m ? Math.round((c / m) * 100) : 0; }
+  return Number(head) || 0;
+}
+
+function render() {
+  for (const side of ['p1', 'p2']) {
+    const s = state[side];
+    $(side + 'name').textContent = s.name || (side === 'p1' ? 'Player 1' : 'Player 2');
+    const ul = $(side + 'roster');
+    ul.replaceChildren(...[...s.mons.values()].map((m) => {
+      const li = document.createElement('li');
+      li.className = 'mon' + (m.fainted ? ' fainted' : '') + (s.activeName === m.name && !m.fainted ? ' active' : '');
+      const name = document.createElement('span'); name.className = 'mon-name'; name.textContent = m.name;
+      const bar = document.createElement('span'); bar.className = 'hp';
+      const fill = document.createElement('span');
+      fill.className = 'hp-fill' + (m.hp <= 20 ? ' crit' : m.hp <= 50 ? ' low' : '');
+      fill.style.width = m.hp + '%';
+      bar.append(fill);
+      li.append(name, bar);
+      return li;
+    }));
+  }
+}
+
+function logLine(text) { appendLog('log-line', text); }
+function logTurn(text) { appendLog('log-turn', text); }
+function appendLog(cls, text) {
+  const div = document.createElement('div'); div.className = cls; div.textContent = text;
+  const log = $('log'); log.append(div); log.scrollTop = log.scrollHeight;
+}
+
+function onEnd(winner) {
+  if ($('start').disabled === false) return; // already handled
+  setStatus('battle over');
+  $('start').disabled = false;
+  const b = $('banner');
+  b.hidden = false;
+  b.textContent = winner ? `🏆 ${winner} wins!` : 'Battle ended in a tie';
+  cleanup();
+}
+
+// Kick off automatically on load.
+window.addEventListener('load', () => { $('start').disabled = false; startBattle(); });
+</script>
+</body>
+</html>

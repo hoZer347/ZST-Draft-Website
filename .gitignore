@@ -1,0 +1,46 @@
+# ── Secrets — never commit ────────────────────────────────
+# The previous version of this project had a Discord client secret in a
+# committed config.json and a Google service account key loose in the folder.
+*service-account*.json
+firebase-adminsdk*.json
+google-services.json
+GoogleService-Info.plist
+appsettings.Production.json
+appsettings.Local.json
+secrets.json
+local_user.json
+credentials.json
+token.json
+.env
+*.pfx
+
+# ── .NET ──────────────────────────────────────────────────
+bin/
+obj/
+*.user
+
+# ── Local database ────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+
+# ── Flutter ───────────────────────────────────────────────
+app/.dart_tool/
+app/.packages
+app/build/
+app/pubspec.lock
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+
+# ── Editors / OS ──────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# ── Claude scratch files ──────────────────────────────────
+tmpclaude*
+
+# runtime log from the dev-server keepalive script
+keep-server-up.log

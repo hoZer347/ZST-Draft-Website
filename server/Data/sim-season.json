@@ -1,0 +1,1180 @@
+{
+  "picks": [
+    {
+      "pick": 1,
+      "tier": "S",
+      "pokemon": "Cresselia",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 2,
+      "tier": "A",
+      "pokemon": "Archaludon",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 3,
+      "tier": "A",
+      "pokemon": "Sinistcha",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 4,
+      "tier": "B",
+      "pokemon": "Alakazam",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 5,
+      "tier": "B",
+      "pokemon": "Togekiss",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 6,
+      "tier": "B",
+      "pokemon": "Toxapex",
+      "tera": null,
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 7,
+      "tier": "C",
+      "pokemon": "Boltund",
+      "tera": "Flying",
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 8,
+      "tier": "C",
+      "pokemon": "Emboar",
+      "tera": "Ice",
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 9,
+      "tier": "C",
+      "pokemon": "Lilligant",
+      "tera": "Fighting",
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 10,
+      "tier": "C",
+      "pokemon": "Tauros-PC",
+      "tera": "Electric",
+      "trainer": "Burndt",
+      "team": "Studio Greentea"
+    },
+    {
+      "pick": 11,
+      "tier": "S",
+      "pokemon": "Incineroar",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 12,
+      "tier": "A",
+      "pokemon": "Amoonguss",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 13,
+      "tier": "A",
+      "pokemon": "Enamorus-I",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 14,
+      "tier": "B",
+      "pokemon": "Gyarados",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 15,
+      "tier": "B",
+      "pokemon": "Pecharunt",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 16,
+      "tier": "B",
+      "pokemon": "Regidrago",
+      "tera": null,
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 17,
+      "tier": "C",
+      "pokemon": "Aurorus",
+      "tera": "Fire",
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 18,
+      "tier": "C",
+      "pokemon": "Claydol",
+      "tera": "Ground",
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 19,
+      "tier": "C",
+      "pokemon": "Magneton",
+      "tera": "Fire",
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 20,
+      "tier": "C",
+      "pokemon": "Ribombee",
+      "tera": "Ghost",
+      "trainer": "ParmesanCheese",
+      "team": "FAT FUCK FRIDAY"
+    },
+    {
+      "pick": 21,
+      "tier": "S",
+      "pokemon": "M-Diancie",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 22,
+      "tier": "A",
+      "pokemon": "Chien-Pao",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 23,
+      "tier": "A",
+      "pokemon": "Iron Bundle",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 24,
+      "tier": "B",
+      "pokemon": "Araquanid",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 25,
+      "tier": "B",
+      "pokemon": "Murkrow",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 26,
+      "tier": "B",
+      "pokemon": "Salamence",
+      "tera": null,
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 27,
+      "tier": "C",
+      "pokemon": "Dedenne",
+      "tera": "Fighting",
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 28,
+      "tier": "C",
+      "pokemon": "Venonat",
+      "tera": "Steel",
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 29,
+      "tier": "C",
+      "pokemon": "Vikavolt",
+      "tera": "Fighting",
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 30,
+      "tier": "C",
+      "pokemon": "Wartortle",
+      "tera": "Stellar",
+      "trainer": "Hipotama975",
+      "team": "The 'Maka Marakas"
+    },
+    {
+      "pick": 31,
+      "tier": "S",
+      "pokemon": "Rillaboom",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 32,
+      "tier": "A",
+      "pokemon": "Kingambit",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 33,
+      "tier": "A",
+      "pokemon": "Tornadus-T",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 34,
+      "tier": "B",
+      "pokemon": "Greninja",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 35,
+      "tier": "B",
+      "pokemon": "Marowak-A",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 36,
+      "tier": "B",
+      "pokemon": "Porygon2",
+      "tera": null,
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 37,
+      "tier": "C",
+      "pokemon": "Articuno",
+      "tera": "Water",
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 38,
+      "tier": "C",
+      "pokemon": "Florges",
+      "tera": "Bug",
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 39,
+      "tier": "C",
+      "pokemon": "Kilowattrel",
+      "tera": "Ghost",
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 40,
+      "tier": "C",
+      "pokemon": "Medicham",
+      "tera": "Ground",
+      "trainer": "jalapinecone",
+      "team": "Jalapinecone"
+    },
+    {
+      "pick": 41,
+      "tier": "S",
+      "pokemon": "Zekrom",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 42,
+      "tier": "A",
+      "pokemon": "Grimmsnarl",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 43,
+      "tier": "A",
+      "pokemon": "Rotom-Heat",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 44,
+      "tier": "B",
+      "pokemon": "Gardevoir",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 45,
+      "tier": "B",
+      "pokemon": "Mamoswine",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 46,
+      "tier": "B",
+      "pokemon": "Oranguru",
+      "tera": null,
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 47,
+      "tier": "C",
+      "pokemon": "Chesnaught",
+      "tera": "Fighting",
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 48,
+      "tier": "C",
+      "pokemon": "Mienshao",
+      "tera": "Psychic",
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 49,
+      "tier": "C",
+      "pokemon": "Staraptor",
+      "tera": "Psychic",
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 50,
+      "tier": "C",
+      "pokemon": "Uxie",
+      "tera": "Normal",
+      "trainer": "fancy bear",
+      "team": "funny guys"
+    },
+    {
+      "pick": 51,
+      "tier": "S",
+      "pokemon": "M-Salamence",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 52,
+      "tier": "A",
+      "pokemon": "Great Tusk",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 53,
+      "tier": "A",
+      "pokemon": "Walking Wake",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 54,
+      "tier": "B",
+      "pokemon": "Bisharp",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 55,
+      "tier": "B",
+      "pokemon": "Hitmontop",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 56,
+      "tier": "B",
+      "pokemon": "Moltres",
+      "tera": null,
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 57,
+      "tier": "C",
+      "pokemon": "Aggron",
+      "tera": "Fighting",
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 58,
+      "tier": "C",
+      "pokemon": "Illumise",
+      "tera": "Ice",
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 59,
+      "tier": "C",
+      "pokemon": "Thwackey",
+      "tera": "Stellar",
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 60,
+      "tier": "C",
+      "pokemon": "Torracat",
+      "tera": "Fighting",
+      "trainer": "Camkart100",
+      "team": "Brutally Honest Butterfrees"
+    },
+    {
+      "pick": 61,
+      "tier": "S",
+      "pokemon": "Chi-Yu",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 62,
+      "tier": "A",
+      "pokemon": "Latias",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 63,
+      "tier": "A",
+      "pokemon": "M-Gardevoir",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 64,
+      "tier": "B",
+      "pokemon": "Meowscarada",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 65,
+      "tier": "B",
+      "pokemon": "Nihilego",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 66,
+      "tier": "B",
+      "pokemon": "Primarina",
+      "tera": null,
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 67,
+      "tier": "C",
+      "pokemon": "Articuno-G",
+      "tera": "Dark",
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 68,
+      "tier": "C",
+      "pokemon": "Magmar",
+      "tera": "Water",
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 69,
+      "tier": "C",
+      "pokemon": "Qwilfish",
+      "tera": "Dark",
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 70,
+      "tier": "C",
+      "pokemon": "Salazzle",
+      "tera": "Ground",
+      "trainer": "UniTy",
+      "team": "Fih-Yu"
+    },
+    {
+      "pick": 71,
+      "tier": "S",
+      "pokemon": "Landorus-T",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 72,
+      "tier": "A",
+      "pokemon": "M-Lucario",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 73,
+      "tier": "A",
+      "pokemon": "Ogerpon-H",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 74,
+      "tier": "B",
+      "pokemon": "Clefable",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 75,
+      "tier": "B",
+      "pokemon": "Iron Jugulis",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 76,
+      "tier": "B",
+      "pokemon": "Raichu",
+      "tera": null,
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 77,
+      "tier": "C",
+      "pokemon": "Braviary-H",
+      "tera": "Psychic",
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 78,
+      "tier": "C",
+      "pokemon": "Persian-A",
+      "tera": "Ground",
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 79,
+      "tier": "C",
+      "pokemon": "Piloswine",
+      "tera": "Water",
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 80,
+      "tier": "C",
+      "pokemon": "Volbeat",
+      "tera": "Electric",
+      "trainer": "Geno",
+      "team": "Amigos"
+    },
+    {
+      "pick": 81,
+      "tier": "S",
+      "pokemon": "Genesect",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 82,
+      "tier": "A",
+      "pokemon": "Iron Hands",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 83,
+      "tier": "A",
+      "pokemon": "Sylveon",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 84,
+      "tier": "B",
+      "pokemon": "Entei",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 85,
+      "tier": "B",
+      "pokemon": "Glimmora",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 86,
+      "tier": "B",
+      "pokemon": "Mimikyu",
+      "tera": null,
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 87,
+      "tier": "C",
+      "pokemon": "Arboliva",
+      "tera": "Stellar",
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 88,
+      "tier": "C",
+      "pokemon": "Honchkrow",
+      "tera": "Dark",
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 89,
+      "tier": "C",
+      "pokemon": "Morgrem",
+      "tera": "Ground",
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 90,
+      "tier": "C",
+      "pokemon": "Rhydon",
+      "tera": "Ghost",
+      "trainer": "hoZer",
+      "team": "The SCRAW father"
+    },
+    {
+      "pick": 91,
+      "tier": "S",
+      "pokemon": "Raging Bolt",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 92,
+      "tier": "A",
+      "pokemon": "Basculegion",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 93,
+      "tier": "A",
+      "pokemon": "Jirachi",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 94,
+      "tier": "B",
+      "pokemon": "M-Altaria",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 95,
+      "tier": "B",
+      "pokemon": "Skeledirge",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 96,
+      "tier": "B",
+      "pokemon": "Vivillon",
+      "tera": null,
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 97,
+      "tier": "C",
+      "pokemon": "Celebi",
+      "tera": "Dragon",
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 98,
+      "tier": "C",
+      "pokemon": "Regigigas",
+      "tera": "Water",
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 99,
+      "tier": "C",
+      "pokemon": "Tangela",
+      "tera": "Fire",
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 100,
+      "tier": "C",
+      "pokemon": "Tatsugiri",
+      "tera": "Stellar",
+      "trainer": "benbotheclown",
+      "team": "Sharpedo Has Run Knucklehead"
+    },
+    {
+      "pick": 101,
+      "tier": "S",
+      "pokemon": "Shaymin-S",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 102,
+      "tier": "A",
+      "pokemon": "Darmanitan-G",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 103,
+      "tier": "A",
+      "pokemon": "Ogerpon-W",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 104,
+      "tier": "B",
+      "pokemon": "Deoxys-D",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 105,
+      "tier": "B",
+      "pokemon": "Kommo-o",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 106,
+      "tier": "B",
+      "pokemon": "Talonflame",
+      "tera": null,
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 107,
+      "tier": "C",
+      "pokemon": "Eelektross",
+      "tera": "Fairy",
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 108,
+      "tier": "C",
+      "pokemon": "Gothorita",
+      "tera": "Bug",
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 109,
+      "tier": "C",
+      "pokemon": "Hoopa-C",
+      "tera": "Bug",
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 110,
+      "tier": "C",
+      "pokemon": "Registeel",
+      "tera": "Fire",
+      "trainer": "mr.whale.",
+      "team": "Smilers"
+    },
+    {
+      "pick": 111,
+      "tier": "S",
+      "pokemon": "Ursaluna-B",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 112,
+      "tier": "A",
+      "pokemon": "Ogerpon-C",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 113,
+      "tier": "A",
+      "pokemon": "Tornadus-I",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 114,
+      "tier": "B",
+      "pokemon": "Milotic",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 115,
+      "tier": "B",
+      "pokemon": "Munkidori",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 116,
+      "tier": "B",
+      "pokemon": "Slowbro",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 117,
+      "tier": "C",
+      "pokemon": "Lucario",
+      "tera": "Flying",
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 118,
+      "tier": "C",
+      "pokemon": "M-Aggron",
+      "tera": null,
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 119,
+      "tier": "C",
+      "pokemon": "Meloetta",
+      "tera": "Steel",
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 120,
+      "tier": "C",
+      "pokemon": "Typhlosion-H",
+      "tera": "Bug",
+      "trainer": "RoamingCookie",
+      "team": "The Berry Juicers"
+    },
+    {
+      "pick": 121,
+      "tier": "S",
+      "pokemon": "Marshadow",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 122,
+      "tier": "A",
+      "pokemon": "Heatran",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 123,
+      "tier": "A",
+      "pokemon": "Naganadel",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 124,
+      "tier": "B",
+      "pokemon": "Raikou",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 125,
+      "tier": "B",
+      "pokemon": "Umbreon",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 126,
+      "tier": "B",
+      "pokemon": "Zoroark-H",
+      "tera": null,
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 127,
+      "tier": "C",
+      "pokemon": "Arctovish",
+      "tera": "Ground",
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 128,
+      "tier": "C",
+      "pokemon": "Rabsca",
+      "tera": "Fire",
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 129,
+      "tier": "C",
+      "pokemon": "Smeargle",
+      "tera": "Electric",
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 130,
+      "tier": "C",
+      "pokemon": "Trevenant",
+      "tera": "Grass",
+      "trainer": "jorgeta",
+      "team": "Sneaky Serperiors"
+    },
+    {
+      "pick": 131,
+      "tier": "S",
+      "pokemon": "Gouging Fire",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 132,
+      "tier": "A",
+      "pokemon": "Zapdos",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 133,
+      "tier": "A",
+      "pokemon": "Zygarde-50",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 134,
+      "tier": "B",
+      "pokemon": "Lilligant-H",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 135,
+      "tier": "B",
+      "pokemon": "Slowking",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 136,
+      "tier": "B",
+      "pokemon": "Torkoal",
+      "tera": null,
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 137,
+      "tier": "C",
+      "pokemon": "Cinccino",
+      "tera": "Ground",
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 138,
+      "tier": "C",
+      "pokemon": "Jumpluff",
+      "tera": "Steel",
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 139,
+      "tier": "C",
+      "pokemon": "Ninjask",
+      "tera": "Dragon",
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    },
+    {
+      "pick": 140,
+      "tier": "C",
+      "pokemon": "Sableye",
+      "tera": "Water",
+      "trainer": "Mathgeek",
+      "team": "Qril Estate Agents"
+    }
+  ],
+  "replays": [
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2534948693",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2535005851",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2535558243",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2535714419",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2539198316",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2539367278",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2541144291",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2541173127",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2544589016",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2543827370",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2543305256",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2545130640",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2545156899",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2548027126",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2548712447",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2549016936",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2546342119",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2549274650",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2549643497",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2553618195",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2553592910",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2553469118",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2552619996",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2554054180",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2554781188",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2554820813",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2559027268",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2558430186",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2557607949",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2559669975",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2559264558",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2560664060",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2560733069",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2561427152",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2562040227",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2562531708",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2563803645",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2565042674",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2564963393",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2567598276",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2568374118",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2568126247",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2569915415",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2570355488",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2571473925",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2570000776",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2573111304",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2575494470",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2577683041",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2578446826",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2580771104",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2581943011",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2581938678",
+    "https://replay.pokemonshowdown.com/gen9natdex6v6doublesdraft-2581981799"
+  ]
+}
