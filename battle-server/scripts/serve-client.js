@@ -66,9 +66,9 @@ http.createServer((req, res) => {
 
   const headers = {
     'content-type': MIME[entry.ext] || 'application/octet-stream',
-    // Long browser cache; the data files are versioned by the client via query
-    // strings, so this is safe and makes repeat loads instant.
-    'cache-control': 'public, max-age=3600',
+    // Cache assets long (they're query-string-versioned by the client) but never
+    // the entry HTML, so a client/UI change shows on the next load, not in an hour.
+    'cache-control': entry.ext === '.html' ? 'no-cache' : 'public, max-age=3600',
   };
   const acceptsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
   if (entry.gz && acceptsGzip) {
