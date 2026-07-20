@@ -116,6 +116,21 @@ const AUTOLOGIN = `
 })();
 </script>`;
 
+// Lock coaches to their Discord identity. The teambuilder auto-logs a coach in
+// as their Discord name (see AUTOLOGIN), so the client's name controls must not
+// let them log out (which drops them to an anonymous Guest and breaks their
+// identity across battles/teambuilder) or rename to something else. The
+// OptionsPopup (the cog / name popup) renders a "Change name" and a "Log out"
+// button in its buttonbar; hide both. Everything else in that popup — the
+// avatar/portrait picker, sound, timestamps and other prefs — is untouched, so
+// coaches can still customise their trainer sprite.
+//
+// Scoped to `.ps-popup` so only the popup's controls are hidden: the userbar's
+// own "Choose name" button (same name="login") stays as a recovery path if
+// auto-login ever fails. "Log out" only appears in the popup anyway. The
+// LoginPopup's submit is an unnamed type="submit", so it is unaffected.
+const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[name="login"] { display: none !important; }</style>`;
+
 // path -> { mtimeMs, raw, gz } — files don't change at runtime, so cache the
 // gzipped bytes after the first hit instead of recompressing 15 MB per request.
 const cache = new Map();
@@ -138,7 +153,7 @@ function load(file) {
     // comment, so a naive `<script` match would bury CAPTURE_HEAD in a block
     // modern browsers never run. The first external script is the earliest real
     // client JS, so running just before it still beats the query-string strip.
-    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n';
+    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n';
     raw = Buffer.from(html, 'utf8');
   }
   const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;

@@ -129,6 +129,28 @@ h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 }
 .discord-btn:hover { background: #4752c4; }
 
+/* Dev-only "Sign in as" picker on the sign-in card (localhost). */
+.dev-signin {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+.dev-signin-select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 220px;
+  cursor: pointer;
+}
+
 main {
   /* Full width. The app views (draft/tier-list/stats) fill the viewport; the
      signed-out card constrains itself. This replaces an older setup where main
@@ -312,6 +334,25 @@ main {
   color: var(--ok);
 }
 
+/* Admin pre-start: the ready tag becomes a clickable pill to ready / un-ready
+   that account (dummy or real player). Muted when not readied, green when it is. */
+.player-ready-toggle {
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.player-ready-toggle.is-ready { color: var(--ok); border-color: var(--ok); }
+.player-ready-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
 /* Stats view: sortable table of accrued battle stats. Fills main; the wide
    table scrolls inside #stats-body, not the page. The view is a grid item of
    main, so it needs min-width:0 — without it the default min-width:auto lets the
@@ -402,6 +443,22 @@ main {
 .tb-open-btn:hover { filter: brightness(1.08); }
 
 .players-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+
+/* Admin "Add dummy" button under the roster. */
+.add-dummy {
+  margin-top: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.add-dummy:hover { color: var(--text); border-color: var(--accent); }
 
 .player {
   display: grid;
@@ -642,6 +699,19 @@ main {
 .pick--A { --tc: var(--tier-a); }
 .pick--B { --tc: var(--tier-b); }
 .pick--C { --tc: var(--tier-c); }
+/* A passed turn: muted, no tier colour, so it reads as a gap in the run. */
+.pick--skip { --tc: var(--muted); opacity: .75; }
+.pick-skip-label { font-weight: 500; font-style: italic; color: var(--muted); }
+.pick-skip-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .pick {
   display: grid;
   grid-template-columns: auto auto auto 1fr auto auto auto;
@@ -674,6 +744,10 @@ main {
 .pick-others-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-right: 3px; }
 .pick-other-img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; opacity: .55; filter: grayscale(.4); flex: none; }
 .pick-other-img:hover { opacity: 1; filter: none; }
+/* Tera type symbol (round icon) in the pick feed: beside the pick's name and
+   beside each rejected C-tier option in the passed column. */
+.tera-icon { width: 18px; height: 18px; flex: none; vertical-align: middle; }
+.pick-others .tera-icon { margin: 0 6px 0 1px; }
 .auto {
   font-size: 10px;
   font-weight: 700;
@@ -891,7 +965,8 @@ main {
 
 /* ── tier list ───────────────────────────────────────────────────────── */
 
-.filters { align-self: start; position: sticky; top: 16px; display: grid; gap: 8px; }
+.filters { align-self: start; position: sticky; top: 16px; }
+.filters-inner { display: grid; gap: 8px; }
 .tl-section { margin-top: 10px; }
 .tl-search, .tl-select {
   width: 100%;
@@ -918,7 +993,11 @@ main {
 .tl-tier-cb--A { accent-color: var(--tier-a); }
 .tl-tier-cb--B { accent-color: var(--tier-b); }
 .tl-tier-cb--C { accent-color: var(--tier-c); }
-.tl-clear { margin-top: 10px; text-align: left; }
+.filters-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.tl-clear { text-align: left; }
+/* The "Filters" trigger and the "Done" button are mobile-only (revealed in the
+   max-width media query below); on desktop the filter sidebar is always shown. */
+.tl-filter-open, .tl-done { display: none; }
 
 .tierlist { min-width: 0; display: grid; gap: 16px; align-content: start; }
 .tl-body { display: grid; gap: 18px; }
@@ -985,6 +1064,92 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── tier-list filters on mobile ──────────────────────────────────────────
+   On a phone the always-on filter column wastes the whole first screen. Instead
+   the panel is "stored" in a Filters button and expands out of it (and folds
+   back) as an in-flow accordion: the outer .filters animates its grid row from
+   0fr to 1fr, and .filters-inner (overflow:hidden) clips to nothing when closed
+   so it grows/shrinks to the exact content height both ways. A Done button
+   (bottom-right, opposite Clear) collapses it. */
+@media (max-width: 620px) {
+  /* Plain block stacking so there's no grid gap around the collapsed panel. */
+  #view-tierlist { display: block; }
+
+  /* The trigger. It sticks just under the sticky header so it follows the user
+     down the list and is tappable without scrolling back up (--header-h is kept
+     in sync by app.js; the fallback covers first paint). The panel unfolds
+     directly beneath it, so it reads as coming out of the button; opening also
+     scrolls to the top so the fold-out is in view. Turns accent while open. */
+  .tl-filter-open {
+    position: sticky;
+    top: calc(var(--header-h, 56px) + 10px);
+    z-index: 30;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 9px 18px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .14);
+    cursor: pointer;
+  }
+  .tl-filter-open.open { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .tl-filter-icon { font-size: 15px; line-height: 1; }
+
+  /* Outer: the accordion animator. No card chrome of its own (that moves to the
+     inner so it can be clipped away when closed). Collapsed by default. */
+  #view-tierlist .filters {
+    position: static;
+    display: grid;
+    grid-template-rows: 0fr;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    opacity: 0;
+    transition: grid-template-rows .28s ease, opacity .2s ease, margin .28s ease;
+  }
+  #view-tierlist .filters.open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-bottom: 14px;
+  }
+
+  /* Inner: the clipped element the grid row sizes. Carries the card look, so
+     when the row is 0fr it (and its padding/border) collapse to nothing. */
+  .filters-inner {
+    overflow: hidden;
+    min-height: 0;
+    padding: 16px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .tl-filters-title { font-size: 15px; }
+
+  /* Footer flows at the bottom of the panel: Clear left, Done right. */
+  .filters-foot { justify-content: space-between; }
+  .tl-done {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 22px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
 }
 
 /* ── schedule ────────────────────────────────────────────────────────────
@@ -1157,6 +1322,7 @@ main {
 .replay-btn:disabled { opacity: .6; cursor: default; }
 .replay-msg { flex-basis: 100%; font-size: 12px; color: var(--muted); }
 .replay-msg.error { color: var(--accent); }
+.match-autorecord { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
 
 /* Size tiers. The hero is the biggest, "mine" a step up from normal, and the
    history pair ("small"/"small-mine") a step down. */
@@ -1210,4 +1376,104 @@ main {
   .pick-main { grid-area: main; }
   .pick-end { grid-area: end; }
   .pick-others { grid-area: others; justify-self: center; }
+}
+
+/* ── scoreboard ─────────────────────────────────────────────────────────── */
+
+/* The standings card and the leaders grid stack with the same gap the leader
+   cards use between themselves (.leaders-grid). The gap lives on #scoreboard-body
+   because that's the element that actually holds both sections. */
+#scoreboard-body { display: flex; flex-direction: column; gap: 16px; }
+
+.standings-list, .leader-list {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+/* One standings entry: rank on the left, then the coach name and the record +
+   tiebreaker chips. A grid (not a flex row) so that when the window gets too
+   small the name can move ABOVE the stats instead of being truncated — the rank
+   keeps its own column and spans both rows. */
+.standings-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "rank name stats";
+  align-items: center; column-gap: 12px; row-gap: 4px;
+  padding: 10px 12px; border-radius: 10px;
+}
+.standings-rank {
+  grid-area: rank;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  min-width: 1.4em; text-align: center; color: var(--muted);
+}
+.standings-name { grid-area: name; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.standings-stats { grid-area: stats; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+@media (max-width: 620px) {
+  /* Too narrow for the name + every chip on one line: stack the name above the
+     stats. The rank stays in place, spanning both rows. */
+  .standings-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas: "rank name" "rank stats";
+  }
+  .standings-name { white-space: normal; overflow: visible; text-overflow: clip; } /* show the full name */
+  .standings-stats { justify-content: flex-start; }
+}
+
+.stat-chip { display: flex; flex-direction: column; align-items: center; line-height: 1.1; min-width: 3em; }
+.stat-chip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.stat-chip-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* The four stat leaderboards, side by side and wrapping on narrow screens. */
+.leaders-grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.leader-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 10px;
+}
+.leader-sprite { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; flex: none; }
+.leader-who { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.15; }
+.leader-mon-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.leader-mon-line .tera-icon { flex: none; }
+.leader-mon { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leader-trainer { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leader-value { font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+
+/* A slight diagonal sheen, top-left → bottom-right, over every coloured entry in
+   the standings and the stat-leader lists. It's a background-IMAGE, so it layers
+   on top of the tint colour (a background-COLOR) below without replacing it. */
+.standings-row, .leader-row {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, .11), rgba(0, 0, 0, .09));
+}
+
+/* OPGB — orange, purple, green, blue — the background tint for each standings
+   entry from the top down, cycling every four. A translucent tint over the card
+   keeps text (var(--text)) legible in both light and dark themes; the solid
+   accent bar on the left carries the full colour. */
+.opgb-0 { background-color: rgba(230, 126, 34, .15); box-shadow: inset 4px 0 0 #e07e22; }
+.opgb-1 { background-color: rgba(139, 92, 246, .15); box-shadow: inset 4px 0 0 #8b5cf6; }
+.opgb-2 { background-color: rgba(34, 197, 94, .15);  box-shadow: inset 4px 0 0 #22c55e; }
+.opgb-3 { background-color: rgba(59, 130, 246, .15); box-shadow: inset 4px 0 0 #3b82f6; }
+
+@media (prefers-color-scheme: dark) {
+  .opgb-0 { background-color: rgba(230, 126, 34, .22); }
+  .opgb-1 { background-color: rgba(139, 92, 246, .22); }
+  .opgb-2 { background-color: rgba(34, 197, 94, .22); }
+  .opgb-3 { background-color: rgba(59, 130, 246, .22); }
+}
+
+/* Stat-leader rows are tinted by the mon's draft tier (S/A/B/C) via --tc, which
+   the shared .tier--X classes set. Same translucent-tint + accent-bar treatment
+   as the OPGB standings rows, but keyed to tier instead of rank. */
+.leader-row.tier--S, .leader-row.tier--A, .leader-row.tier--B, .leader-row.tier--C {
+  background-color: color-mix(in srgb, var(--tc) 16%, transparent);
+  box-shadow: inset 4px 0 0 var(--tc);
+}
+@media (prefers-color-scheme: dark) {
+  .leader-row.tier--S, .leader-row.tier--A, .leader-row.tier--B, .leader-row.tier--C {
+    background-color: color-mix(in srgb, var(--tc) 24%, transparent);
+  }
 }

@@ -133,9 +133,33 @@ const Auth = (() => {
     location.assign(`${cfg.authorizeUrl}?${params}`);
   }
 
-  // ── admin: view as a simulated dummy coach ───────────────────────────
+  // ── dev sign-in (localhost only) ─────────────────────────────────────
+  // Sign in as an existing account without Discord, for local testing. All of
+  // this 404s on a deployed server (the /dev/* routes only exist in Development).
 
-  /** Admin-only: the sim-generated coaches an admin can browse as. */
+  /** Existing accounts you can sign in as: the admin plus every coach. */
+  async function devAccounts() {
+    const res = await fetch(`${apiBase}/dev/accounts`);
+    if (!res.ok) throw new Error('Dev accounts need the API running in Development');
+    return res.json();
+  }
+
+  /** Sign in as `discordId` (dev bypass). Stores a session shaped like a real login. */
+  async function devSignInAs(discordId, admin = false) {
+    const res = await fetch(`${apiBase}/dev/token/${encodeURIComponent(discordId)}?admin=${admin}`, { method: 'POST' });
+    if (!res.ok) throw new Error('Could not sign in as that account');
+    const body = await res.json();
+    save({
+      accessToken: body.accessToken,
+      refreshToken: body.refreshToken,
+      expiresAt: body.accessExpiresAt,
+      user: body.user,
+    });
+  }
+
+  // ── admin: view as another user ──────────────────────────────────────
+
+  /** Admin-only: the users an admin can browse as (everyone in the roster). */
   async function loadDummies() {
     const res = await authFetch('/api/admin/dummies');
     if (!res.ok) throw new Error('Could not load dummy accounts');
@@ -304,5 +328,5 @@ const Auth = (() => {
     sessionStorage.removeItem(STATE);
   }
 
-  return { login, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch, loadDummies, impersonate, impersonator, stopImpersonating };
+  return { login, devAccounts, devSignInAs, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch, loadDummies, impersonate, impersonator, stopImpersonating };
 })();

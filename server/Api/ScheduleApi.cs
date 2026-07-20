@@ -93,6 +93,120 @@ public static class ScheduleApi
             });
         });
 
+        // The scoreboard: team standings plus a handful of per-mon stat leaders,
+        // all derived from the stored PokemonStat rows and the teams' match
+        // records. Same numbers the Stats tab shows, rolled up into rankings.
+        api.MapGet("/leagues/{leagueId:int}/scoreboard", async (
+            int leagueId, AppDbContext db, CancellationToken ct) =>
+        {
+            var league = await db.Leagues.FirstOrDefaultAsync(l => l.Id == leagueId, ct);
+            if (league is null) return Results.NotFound();
+
+            // Every team in the league, with its authoritative match record.
+            var teams = await db.Teams
+                .Where(t => t.LeagueId == leagueId)
+                .Select(t => new { t.Id, t.CoachName, t.Wins, t.Losses, t.Draws })
+                .ToListAsync(ct);
+
+            // Every played mon in the league, with the raw fields the leaderboards
+            // and the per-team KO rollups are built from. Mirrors /api/stats.
+            var mons = await db.PokemonStats
+                .Where(s => s.Pick.Team.LeagueId == leagueId && s.GamesPlayed > 0)
+                .Select(s => new
+                {
+                    teamId = s.Pick.TeamId,
+                    pokemon = s.Pick.PokemonEntry.Name,
+                    sprite = s.Pick.PokemonEntry.Sprite,
+                    dex = s.Pick.PokemonEntry.DexNumber,
+                    tier = s.Pick.Tier.ToString(),
+                    tera = s.Pick.TeraType,
+                    trainer = s.Pick.Team.CoachName,
+                    activeTurns = s.ActiveTurns,
+                    teamTurns = s.Pick.Team.BattleTurns,
+                    k = s.Kills,
+                    d = s.Deaths,
+                    dealt = s.DamageDealtDirect + s.DamageDealtIndirect,
+                    taken = s.DamageTakenDirect + s.DamageTakenIndirect,
+                    heal = s.HpRecovered + s.HpHealed,       // HP restored to self + allies
+                })
+                .ToListAsync(ct);
+
+            // Per-team KO rollups for the standings tiebreakers.
+            var koByTeam = mons
+                .GroupBy(m => m.teamId)
+                .ToDictionary(g => g.Key, g => (kos: g.Sum(x => x.k), deaths: g.Sum(x => x.d)));
+
+            // Standings: every team, sorted by record differential (W - L), then
+            // KO differential, then total wins, then total KOs. A team with no
+            // games played still appears (all zeros), sorted to the bottom. Team id
+            // is the final, stable tiebreak so the order is deterministic.
+            var standings = teams
+                .Select(t =>
+                {
+                    var ko = koByTeam.GetValueOrDefault(t.Id);
+                    return new
+                    {
+                        teamId = t.Id,
+                        trainer = t.CoachName,
+                        wins = t.Wins,
+                        losses = t.Losses,
+                        draws = t.Draws,
+                        recordDiff = t.Wins - t.Losses,
+                        koDiff = ko.kos - ko.deaths,
+                        totalKos = ko.kos,
+                        totalFaints = ko.deaths,
+                    };
+                })
+                .OrderByDescending(s => s.recordDiff)
+                .ThenByDescending(s => s.koDiff)
+                .ThenByDescending(s => s.wins)
+                .ThenByDescending(s => s.totalKos)
+                .ThenBy(s => s.teamId)
+                .ToList();
+
+            // Leaderboards: the top 5 mons in each category, each with its trainer.
+            // Every ordering has explicit tiebreaks so the result is deterministic.
+            var presence = mons
+                .Select(m => new { m, value = m.teamTurns > 0 ? (double)m.activeTurns / m.teamTurns : 0.0 })
+                .OrderByDescending(x => x.value).ThenByDescending(x => x.m.activeTurns).ThenBy(x => x.m.pokemon)
+                .Take(5)
+                .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera, value = (double?)x.value })
+                .ToList();
+
+            var plusMinus = mons
+                .Select(m => new { m, value = m.k - m.d })
+                .OrderByDescending(x => x.value).ThenByDescending(x => x.m.k).ThenBy(x => x.m.pokemon)
+                .Take(5)
+                .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera, value = (double?)x.value })
+                .ToList();
+
+            var healing = mons
+                .Select(m => new { m, value = m.heal })
+                .OrderByDescending(x => x.value).ThenBy(x => x.m.pokemon)
+                .Take(5)
+                .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera, value = (double?)x.value })
+                .ToList();
+
+            // Damage ratio = dealt / taken, matching the Stats tab. A mon that never
+            // took damage is treated as infinite and ranked first; among those the
+            // bigger dealer leads. Infinity can't be JSON, so it serializes as null
+            // and the client renders it as the infinity symbol.
+            var damageRatio = mons
+                .Select(m => new { m, ratio = m.taken > 0 ? m.dealt / m.taken : (m.dealt > 0 ? double.PositiveInfinity : 0.0) })
+                .OrderByDescending(x => x.ratio).ThenByDescending(x => x.m.dealt).ThenBy(x => x.m.pokemon)
+                .Take(5)
+                .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera,
+                    value = double.IsInfinity(x.ratio) ? (double?)null : x.ratio })
+                .ToList();
+
+            return Results.Ok(new
+            {
+                leagueId,
+                standings,
+                leaders = new { presence, plusMinus, healing, damageRatio },
+            });
+        });
+
         // Submit a replay for one of your matches. The result — winner and score —
         // is read off the replay itself, not taken on trust from the submitter.
         api.MapPost("/matches/{matchId:int}/replay", async (
@@ -239,13 +353,13 @@ public static class ScheduleApi
     /// <summary>
     /// Renders a raw Showdown battle log with Showdown's OWN modern replay client
     /// (replays.js), not the older replay-embed. It's the exact page you get at
-    /// replay.pokemonshowdown.com — same nav, header, controls, speed/sound, and
-    /// download — because it loads the identical scripts and stylesheets from the
+    /// replay.pokemonshowdown.com (same nav, header, controls, speed/sound, and
+    /// download) because it loads the identical scripts and stylesheets from the
     /// CDN. The trick that avoids any backend: the client derives a "replay id"
     /// from the URL (everything after the final slash) and, if it finds inline
     /// &lt;script&gt; blocks keyed by that id, renders them directly instead of
     /// fetching. This endpoint is /api/matches/{id}/replay, so that id is always
-    /// the literal "replay" — hence replaylog-replay / replaydata-replay below.
+    /// the literal "replay", hence replaylog-replay / replaydata-replay below.
     /// </summary>
     private static string ReplayHtml(string log)
     {
@@ -364,7 +478,7 @@ public static class ScheduleApi
             <script>
               /* The battle scene is a fixed 640x360 canvas, so on a big screen it
                  floats in a sea of empty space. Zoom the whole replay (battle, log
-                 and controls together) to fill the room below the nav — capped so
+                 and controls together) to fill the room below the nav, capped so
                  it fits both dimensions and never leaks off screen. Re-runs as the
                  replay mounts asynchronously, and on resize. */
               (function () {
@@ -417,10 +531,12 @@ public static class ScheduleApi
     /// <summary>
     /// Lays down the round-robin for a league's teams over <paramref name="weeks"/>
     /// weeks (the league's configured SeasonWeeks), replacing any existing schedule.
-    /// RoundRobin repeats the cycle with home/away swapped each time round, so a long
-    /// enough season plays each pair multiple times. Called automatically when the
-    /// draft starts. No-op with fewer than two teams, or once results are in, so a
-    /// re-start can't wipe a live season.
+    /// The season is capped at ONE full single round-robin so no pair ever plays
+    /// twice: that's (players - 1) weeks for an even count, or (players) weeks for an
+    /// odd count, where each week a different player takes a bye and every player
+    /// byes exactly once. The configured weeks only ever shortens the season below
+    /// that cap. Called automatically when the draft starts. No-op with fewer than
+    /// two teams, or once results are in, so a re-start can't wipe a live season.
     /// </summary>
     /// <returns>The number of matches created (0 if it was skipped).</returns>
     public static async Task<int> GenerateAsync(AppDbContext db, int leagueId, int weeks, CancellationToken ct = default)
@@ -430,15 +546,26 @@ public static class ScheduleApi
         var teamIds = await db.Teams.Where(t => t.LeagueId == leagueId).Select(t => t.Id).ToListAsync(ct);
         if (teamIds.Count < 2) return 0;
 
+        // Never schedule more than one full single round-robin, so a matchup can't
+        // repeat. An even roster completes in (n-1) weeks; an odd one needs n weeks
+        // so every player gets their single bye. The configured weeks can only make
+        // the season SHORTER than this, never longer.
+        var maxWeeks = SingleRoundRobinWeeks(teamIds.Count);
+        if (weeks > maxWeeks) weeks = maxWeeks;
+
         // Never disturb a season that's already producing results.
         if (await db.Matches.AnyAsync(m => m.LeagueId == leagueId && m.Result != MatchResult.Pending, ct))
             return 0;
 
         await db.Matches.Where(m => m.LeagueId == leagueId).ExecuteDeleteAsync(ct);
 
-        // Weekly cadence off a clean anchor (midnight UTC today), so each week's
-        // matches carry a plausible date the client can show.
-        var seasonStart = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
+        // Each week's game is due by Monday 23:59 (UTC) of that week. Anchor on the
+        // first Monday on or after today, then step one week per round; the client
+        // renders this as the "Due by" stamp.
+        var today = DateTime.UtcNow.Date;
+        var daysToMonday = ((int)DayOfWeek.Monday - (int)today.DayOfWeek + 7) % 7;
+        var firstDue = new DateTimeOffset(today.AddDays(daysToMonday), TimeSpan.Zero)
+            .AddHours(23).AddMinutes(59);
         var rounds = RoundRobin(teamIds, weeks);
         for (var w = 0; w < rounds.Count; w++)
             foreach (var (home, away) in rounds[w])
@@ -448,12 +575,20 @@ public static class ScheduleApi
                     Week = w + 1,
                     HomeTeamId = home,
                     AwayTeamId = away,
-                    ScheduledFor = seasonStart.AddDays(7 * w),
+                    ScheduledFor = firstDue.AddDays(7 * w),
                 });
 
         await db.SaveChangesAsync(ct);
         return rounds.Sum(x => x.Count);
     }
+
+    /// <summary>
+    /// Weeks in ONE full single round-robin for <paramref name="players"/> players:
+    /// (players - 1) when even, players when odd (the extra week carries the byes, so
+    /// each player sits out exactly once). This is the season-length cap.
+    /// </summary>
+    public static int SingleRoundRobinWeeks(int players) =>
+        players < 2 ? 1 : (players % 2 == 0 ? players - 1 : players);
 
     /// <summary>
     /// Round-robin pairings via the circle method: fix one team, rotate the rest.

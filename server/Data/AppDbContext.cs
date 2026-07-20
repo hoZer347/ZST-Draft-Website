@@ -30,6 +30,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<DraftParticipant> DraftParticipants => Set<DraftParticipant>();
     public DbSet<OfferedOption> OfferedOptions => Set<OfferedOption>();
     public DbSet<Pick> Picks => Set<Pick>();
+    public DbSet<DraftSkip> DraftSkips => Set<DraftSkip>();
     public DbSet<PokemonStat> PokemonStats => Set<PokemonStat>();
     public DbSet<Match> Matches => Set<Match>();
     public DbSet<DeviceRegistration> DeviceRegistrations => Set<DeviceRegistration>();

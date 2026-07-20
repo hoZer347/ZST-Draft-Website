@@ -286,11 +286,12 @@ if (app.Environment.IsDevelopment())
         return Results.Ok();
     });
 
-    // Mints a token for a seeded coach so the draft can be driven without
-    // standing up Discord. Development only — it is an auth bypass.
-    app.MapPost("/dev/token/{discordId}", async (string discordId, bool? admin, AppDbContext db, TokenService tokens) =>
+    // Mints a token for an account so the app can be driven on localhost without
+    // standing up Discord. Development only — it is an auth bypass. Returns the full
+    // user so the web "Sign in as" picker can store a session shaped like a real login.
+    app.MapPost("/dev/token/{discordId}", async (string discordId, bool? admin, AppDbContext db, TokenService tokens, CancellationToken ct) =>
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId, ct);
         if (user is null)
         {
             user = new DraftLeague.Web.Models.User
@@ -300,15 +301,35 @@ if (app.Environment.IsDevelopment())
                 IsAdmin = admin ?? false,
             };
             db.Users.Add(user);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
         }
         else if (admin is not null && user.IsAdmin != admin)
         {
             user.IsAdmin = admin.Value;
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
         }
         var pair = await tokens.IssueAsync(user, "dev");
-        return Results.Ok(new { pair.AccessToken, pair.RefreshToken, pair.AccessExpiresAt, user.IsAdmin });
+        return Results.Ok(new
+        {
+            pair.AccessToken,
+            pair.RefreshToken,
+            pair.AccessExpiresAt,
+            user.IsAdmin,
+            user = await DraftLeague.Web.Api.AuthApi.BuildMeAsync(db, user, ct),
+        });
+    });
+
+    // Existing accounts the localhost "Sign in as" picker can offer — the reserved
+    // admin plus everyone a simulation created (or a real member who has logged in).
+    // Development only, unauthenticated like /dev/token (both are the local bypass).
+    app.MapGet("/dev/accounts", async (AppDbContext db, CancellationToken ct) =>
+    {
+        var accounts = await db.Users
+            .OrderByDescending(u => u.IsAdmin)
+            .ThenBy(u => u.Username)
+            .Select(u => new { discordId = u.DiscordId, username = u.Username, u.IsAdmin })
+            .ToListAsync(ct);
+        return Results.Ok(accounts);
     });
 }
 

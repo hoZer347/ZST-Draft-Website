@@ -128,7 +128,7 @@ try { fs.mkdirSync(path.join(psDir, 'config', 'chat-plugins'), { recursive: true
 // Showdown writes each format's ladder to config/ladders/<formatid>.tsv when a
 // rated battle ends. That dir doesn't ship either, and unlike the read path (which
 // swallows ENOENT into an empty ladder) the WRITE crashes the whole worker with
-// ENOENT — taking the server down after the first laddered ZST game. Create it.
+// ENOENT, taking the server down after the first laddered ZST game. Create it.
 try { fs.mkdirSync(path.join(psDir, 'config', 'ladders'), { recursive: true }); } catch { /* best effort */ }
 
 // Where the report plugin sends finished battles, and the shared-secret file the

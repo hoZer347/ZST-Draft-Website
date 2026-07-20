@@ -45,7 +45,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     /// species that merely contains "mega" (Meganium, Yanmega) isn't caught.
     /// Shedinja is matched by name.
     /// </summary>
-    private static bool TeraBarred(string name, string? sprite) =>
+    public static bool TeraBarred(string name, string? sprite) =>
         name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
         || (sprite?.Contains("-mega", StringComparison.OrdinalIgnoreCase) ?? false)
         || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
@@ -144,7 +144,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     /// Walks tiers C -> B -> A -> S so an unattended coach loses their least
     /// valuable slot rather than their S pick.
     /// </summary>
-    public async Task<DraftActionResult> AutoPickAsync(int draftId, CancellationToken ct = default)
+    public async Task<DraftActionResult> AutoPickAsync(int draftId, CancellationToken ct = default, bool preferSkip = true)
     {
         await GlobalLock.WaitAsync(ct);
         try
@@ -155,6 +155,44 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
             var teamId = CurrentTeamId(draft);
             if (teamId is null) return DraftActionResult.Fail("Draft is complete");
+
+            // A coach who missed their pick window keeps their agency where we can
+            // afford it: while they still hold skip tokens, prefer an auto-SKIP
+            // (defer the slot to a later cycle) over forcing a random Pokemon on
+            // them. Only once their skips are spent do we fall back to auto-picking
+            // a tier (C-S, below). Start lays down enough snake rounds to absorb
+            // every team's skips, so a deferred slot comes back around still owed.
+            // Callers that just want to force-fill a roster (e.g. tests) pass
+            // preferSkip: false.
+            if (preferSkip)
+            {
+                var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId.Value, ct);
+                if (team is { SkipsRemaining: > 0 })
+                {
+                    team.SkipsRemaining--;
+                    // Always show what the lapsed turn passed on. If they had a tier
+                    // open when the clock expired, snapshot those exact options; if
+                    // they never opened one, fall back to a fresh sample of the lowest
+                    // tier they still owe, so a timed-out skip is never a blank run.
+                    var snapshot = draft.Offered.Count > 0
+                        ? OfferedSnapshot(draft)
+                        : await LowestTierOfferSnapshotAsync(draft, teamId.Value, ct);
+                    draft.Skips.Add(new DraftSkip
+                    {
+                        DraftId = draft.Id, TeamId = teamId.Value,
+                        AfterPickNumber = draft.Picks.Count, WasAuto = true,
+                        OtherOptions = snapshot,
+                    });
+                    db.OfferedOptions.RemoveRange(draft.Offered);
+                    await AdvanceAsync(draft, ct);
+
+                    log.LogInformation("Auto-skipped for team {Team} in draft {Draft}: {Left} skips left",
+                        teamId, draftId, team.SkipsRemaining);
+                    await notifier.PickSkippedAsync(draft.Id, teamId.Value, ct);
+                    await AnnounceTurnAsync(draft, ct);
+                    return DraftActionResult.Success();
+                }
+            }
 
             // If they already opened a tier, honour it — they were mid-decision.
             var tiers = draft.Offered.Count > 0
@@ -212,6 +250,11 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             log.LogWarning("Skipping pick {Index} in draft {Draft}: no eligible pokemon for team {Team}",
                 draft.CurrentIndex, draftId, teamId);
 
+            draft.Skips.Add(new DraftSkip
+            {
+                DraftId = draft.Id, TeamId = teamId.Value,
+                AfterPickNumber = draft.Picks.Count, WasAuto = true,
+            });
             await AdvanceAsync(draft, ct);
             await notifier.PickSkippedAsync(draft.Id, teamId.Value, ct);
             await AnnounceTurnAsync(draft, ct);
@@ -241,6 +284,13 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             if (team.SkipsRemaining <= 0) return DraftActionResult.Fail("No skips remaining");
 
             team.SkipsRemaining--;
+            draft.Skips.Add(new DraftSkip
+            {
+                DraftId = draft.Id, TeamId = teamId,
+                AfterPickNumber = draft.Picks.Count, WasAuto = false,
+                // They passed on everything offered this turn — snapshot it for the feed.
+                OtherOptions = OfferedSnapshot(draft),
+            });
             db.OfferedOptions.RemoveRange(draft.Offered);
             await AdvanceAsync(draft, ct);
 
@@ -309,6 +359,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 .ExecuteUpdateAsync(s => s.SetProperty(p => p.DraftedByTeamId, (int?)null), ct);
 
             db.Picks.RemoveRange(draft.Picks); // scraped stats cascade with the picks
+            db.DraftSkips.RemoveRange(draft.Skips);
             db.OfferedOptions.RemoveRange(draft.Offered);
             draft.CurrentIndex = 0;
             draft.State = DraftState.NotStarted;
@@ -360,8 +411,8 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             if (draft.State == DraftState.Running) return DraftActionResult.Fail("Already running");
 
             // Roster = coaches who readied up for this draft, in the order they
-            // did so. Signing in no longer auto-enrols anyone — readiness is opt-in
-            // — and the admin plays too if they choose to ready up.
+            // did so. Signing in no longer auto-enrols anyone (readiness is opt-in),
+            // and the admin plays too if they choose to ready up.
             var readyIds = await db.DraftParticipants
                 .Where(p => p.DraftId == draft.Id)
                 .OrderBy(p => p.ReadyAt)
@@ -421,6 +472,42 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             ResetClock(draft);
             await db.SaveChangesAsync(ct);
 
+            // A real draft's league contains exactly this roster. Starting the draft
+            // begins a fresh season, so clear the previous schedule + the standings it
+            // fed, and delete any team lingering from a prior run — most often the
+            // "Sim Coach" teams a simulated season leaves behind. Without this the
+            // round-robin laid down next (ScheduleApi.GenerateAsync schedules EVERY
+            // team in the league, and skips a league that already has results) would
+            // keep the simulated season's games on the schedule. Order matters:
+            // matches FK the teams, so they go first.
+            await db.Matches.Where(m => m.LeagueId == draft.LeagueId).ExecuteDeleteAsync(ct);
+
+            var rosterIds = roster.Select(t => t.Id).ToHashSet();
+            var staleIds = await db.Teams
+                .Where(t => t.LeagueId == draft.LeagueId && !rosterIds.Contains(t.Id))
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            if (staleIds.Count > 0)
+            {
+                await db.Pokemon
+                    .Where(p => p.DraftedByTeamId != null && staleIds.Contains(p.DraftedByTeamId.Value))
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.DraftedByTeamId, (int?)null), ct);
+                await db.PokemonStats.Where(s => staleIds.Contains(s.Pick.TeamId)).ExecuteDeleteAsync(ct);
+                await db.Picks.Where(p => staleIds.Contains(p.TeamId)).ExecuteDeleteAsync(ct);
+                await db.DraftSkips.Where(s => staleIds.Contains(s.TeamId)).ExecuteDeleteAsync(ct);
+                await db.DraftSlots.Where(s => staleIds.Contains(s.TeamId)).ExecuteDeleteAsync(ct);
+                await db.Teams.Where(t => staleIds.Contains(t.Id)).ExecuteDeleteAsync(ct);
+            }
+
+            // Fresh season: zero the standings + battle-turn totals the old schedule fed.
+            await db.Teams
+                .Where(t => rosterIds.Contains(t.Id))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Wins, 0)
+                    .SetProperty(t => t.Losses, 0)
+                    .SetProperty(t => t.Draws, 0)
+                    .SetProperty(t => t.BattleTurns, 0), ct);
+
             await notifier.DraftStateChangedAsync(draft.Id, DraftState.Running, ct);
             await AnnounceTurnAsync(draft, ct);
             return DraftActionResult.Success();
@@ -430,12 +517,69 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
     // ── internals ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The options offered this turn, as the JSON a pick's OtherOptions uses, so a
+    /// skip's "passed" run renders exactly like a pick's. Null when nothing's offered.
+    /// </summary>
+    private static string? OfferedSnapshot(Draft draft)
+    {
+        var offered = draft.Offered
+            .Where(o => o.PokemonEntry is not null)
+            .Select(o => new
+            {
+                name = o.PokemonEntry.Name,
+                sprite = o.PokemonEntry.Sprite,
+                dexNumber = o.PokemonEntry.DexNumber,
+                tier = o.Tier.ToString(),
+                teraType = o.TeraType, // C-tier options carry a rolled Tera type
+            })
+            .ToList();
+        return offered.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(offered) : null;
+    }
+
+    /// <summary>
+    /// A sample of the lowest tier a team still owes, in a pick's OtherOptions JSON
+    /// shape — so a timed-out auto-skip where the coach never opened a tier still
+    /// shows the options they lapsed on. Walks C -> S (least valuable first, like
+    /// the auto-pick fallback), honouring the dex-number guard. Null if nothing is
+    /// draftable anywhere.
+    /// </summary>
+    private async Task<string?> LowestTierOfferSnapshotAsync(Draft draft, int teamId, CancellationToken ct)
+    {
+        var teamDex = await TeamDexNumbersAsync(teamId, ct);
+        foreach (var tier in new[] { Tier.C, Tier.B, Tier.A, Tier.S })
+        {
+            if (RemainingSlots(draft, teamId, tier) <= 0) continue;
+
+            var pool = await db.Pokemon
+                .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier && p.DraftedByTeamId == null
+                            && !teamDex.Contains(p.DexNumber))
+                .Select(p => new { p.Name, p.Sprite, p.DexNumber })
+                .ToListAsync(ct);
+            if (pool.Count == 0) continue;
+
+            var count = draft.League.TierRules.FirstOrDefault(r => r.Tier == tier)?.OptionsOffered ?? 3;
+            var sample = pool
+                .OrderBy(_ => Random.Shared.Next())
+                .Take(Math.Min(count, pool.Count))
+                .Select(p => new
+                {
+                    name = p.Name, sprite = p.Sprite, dexNumber = p.DexNumber, tier = tier.ToString(),
+                    teraType = RollTera(tier, p.Name, p.Sprite), // C-tier draws a Tera type
+                })
+                .ToList();
+            return System.Text.Json.JsonSerializer.Serialize(sample);
+        }
+        return null;
+    }
+
     private async Task<Draft?> LoadAsync(int draftId, CancellationToken ct) =>
         await db.Drafts
             .Include(d => d.League).ThenInclude(l => l.TierRules)
             .Include(d => d.Order)
             .Include(d => d.Offered).ThenInclude(o => o.PokemonEntry) // for the passed-on snapshot
             .Include(d => d.Picks)
+            .Include(d => d.Skips)
             // Split query: these are several independent collections (Order, Picks,
             // Offered, TierRules). Loaded in one SQL statement they'd cartesian-
             // multiply — Order × Picks rows — so each pick's load grew with the
@@ -503,6 +647,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 sprite = o.PokemonEntry.Sprite,
                 dexNumber = o.PokemonEntry.DexNumber,
                 tier = o.Tier.ToString(),
+                teraType = o.TeraType, // C-tier options carry a rolled Tera type
             })
             .ToList();
         // An auto-pick where the coach never opened a tier has nothing offered to
@@ -517,7 +662,11 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 .Select(p => new { p.Name, p.Sprite, p.DexNumber })
                 .ToListAsync(ct);
             others = pool.OrderBy(_ => Random.Shared.Next()).Take(Math.Max(0, offered - 1))
-                .Select(p => new { name = p.Name, sprite = p.Sprite, dexNumber = p.DexNumber, tier = tier.ToString() })
+                .Select(p => new
+                {
+                    name = p.Name, sprite = p.Sprite, dexNumber = p.DexNumber, tier = tier.ToString(),
+                    teraType = RollTera(tier, p.Name, p.Sprite), // C-tier draws a Tera type
+                })
                 .ToList();
         }
         pick.OtherOptions = others.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(others) : null;

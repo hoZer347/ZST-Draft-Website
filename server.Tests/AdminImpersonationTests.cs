@@ -8,13 +8,14 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The admin "view as a dummy coach" tools (/api/admin/dummies, /impersonate).
-/// A dummy is a team's coach whose id isn't a real Discord snowflake (all digits);
-/// the endpoints are admin-only and refuse to hand out a real member's session.
+/// The admin "view as" tools (/api/admin/dummies, /impersonate). An admin can view
+/// as ANY user in the league roster (real or synthetic), since they already hold
+/// full powers; the endpoints are admin-only and refuse only the reserved
+/// oversee-admin identity and unknown accounts.
 /// </summary>
 public class AdminImpersonationTests : DraftScenarioBase
 {
-    /// <summary>Seeds a league with two coached teams and matching User rows.</summary>
+    /// <summary>Seeds a league with a coached team and a matching User row.</summary>
     private async Task SeedCoachAsync(string coachId, string username, bool isAdmin = false)
     {
         using var scope = Factory.Services.CreateScope();
@@ -26,35 +27,32 @@ public class AdminImpersonationTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task Admin_lists_only_synthetic_dummy_coaches()
+    public async Task Admin_lists_all_roster_users_to_view_as()
     {
         var admin = await Factory.SignedInAsAsync("admin", admin: true);
-        await SeedCoachAsync("benbotheclown", "benbotheclown"); // dummy
-        await SeedCoachAsync("burndt", "Burndt");               // dummy
+        await SeedCoachAsync("benbotheclown", "benbotheclown"); // synthetic
         await SeedCoachAsync("209262115196895232", ".hozer");    // real Discord id
 
-        var dummies = await admin.GetFromJsonAsync<JsonElement>("/api/admin/dummies");
-        var ids = dummies.EnumerateArray().Select(d => Str(d, "discordId")).ToList();
+        var users = await admin.GetFromJsonAsync<JsonElement>("/api/admin/dummies");
+        var ids = users.EnumerateArray().Select(d => Str(d, "discordId")).ToList();
 
         Assert.Contains("benbotheclown", ids);
-        Assert.Contains("burndt", ids);
-        Assert.DoesNotContain("209262115196895232", ids); // real accounts are never listed
+        Assert.Contains("209262115196895232", ids);  // real accounts ARE listed now
+        Assert.DoesNotContain("admin", ids);           // but not the oversee-admin (self)
     }
 
     [Fact]
-    public async Task Admin_can_impersonate_a_dummy_and_gets_that_users_session()
+    public async Task Admin_can_view_as_any_user_real_or_synthetic()
     {
         var admin = await Factory.SignedInAsAsync("admin", admin: true);
-        await SeedCoachAsync("benbotheclown", "benbotheclown");
+        await SeedCoachAsync("209262115196895232", ".hozer"); // a real snowflake id
 
-        var res = await admin.PostAsJsonAsync("/api/admin/impersonate", new { discordId = "benbotheclown" });
+        var res = await admin.PostAsJsonAsync("/api/admin/impersonate", new { discordId = "209262115196895232" });
         res.EnsureSuccessStatusCode();
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.False(string.IsNullOrEmpty(Str(body, "accessToken")));
-        var user = body.GetProperty("user");
-        Assert.Equal("benbotheclown", Str(user, "discordId"));
-        Assert.False(user.GetProperty("isAdmin").GetBoolean());
+        Assert.Equal("209262115196895232", Str(body.GetProperty("user"), "discordId"));
     }
 
     [Fact]
@@ -72,25 +70,10 @@ public class AdminImpersonationTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task A_real_discord_account_cannot_be_impersonated()
+    public async Task The_oversee_admin_identity_cannot_be_viewed_as()
     {
         var admin = await Factory.SignedInAsAsync("admin", admin: true);
-        await SeedCoachAsync("209262115196895232", ".hozer"); // real snowflake id
-
-        var res = await admin.PostAsJsonAsync("/api/admin/impersonate", new { discordId = "209262115196895232" });
-
-        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
-    }
-
-    [Fact]
-    public async Task An_admin_account_cannot_be_impersonated()
-    {
-        var admin = await Factory.SignedInAsAsync("admin", admin: true);
-        // A synthetic-id account that is nonetheless an admin — still refused.
-        await SeedCoachAsync("superuser", "superuser", isAdmin: true);
-
-        var res = await admin.PostAsJsonAsync("/api/admin/impersonate", new { discordId = "superuser" });
-
+        var res = await admin.PostAsJsonAsync("/api/admin/impersonate", new { discordId = "admin" });
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 

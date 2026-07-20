@@ -170,6 +170,9 @@ public class Draft
     public List<OfferedOption> Offered { get; set; } = [];
 
     public List<Pick> Picks { get; set; } = [];
+
+    /// <summary>Turns passed rather than picked, for the pick feed.</summary>
+    public List<DraftSkip> Skips { get; set; } = [];
 }
 
 /// <summary>
@@ -257,6 +260,40 @@ public class Pick
 
     /// <summary>Battle stats scraped from the season's replays. Null until scored.</summary>
     public PokemonStat? Stat { get; set; }
+}
+
+/// <summary>
+/// A turn a coach passed rather than picking: a voluntary defer (spending one of
+/// their skip tokens) or a forced pass when nothing was eligible. Recorded so the
+/// pick feed can show skips in sequence alongside picks; the counter on Team
+/// tracks the allowance, this tracks the history.
+/// </summary>
+public class DraftSkip
+{
+    public int Id { get; set; }
+    public int DraftId { get; set; }
+    public Draft Draft { get; set; } = null!;
+
+    public int TeamId { get; set; }
+    public Team Team { get; set; } = null!;
+
+    /// <summary>How many picks had been made when this skip happened. The feed
+    /// slots the skip in right after the pick with this number.</summary>
+    public int AfterPickNumber { get; set; }
+
+    /// <summary>True when the engine passed the turn (no eligible pokemon left for
+    /// the team), rather than a coach voluntarily spending a skip token.</summary>
+    public bool WasAuto { get; set; }
+
+    /// <summary>
+    /// JSON snapshot of the options the coach passed on by skipping (everything
+    /// that was offered this turn), in the same [{name,sprite,dexNumber,tier}] shape
+    /// a pick's OtherOptions uses, so the feed renders the "passed" run identically.
+    /// Null when nothing was offered (e.g. an auto-skip with no tier opened).
+    /// </summary>
+    public string? OtherOptions { get; set; }
+
+    public DateTimeOffset MadeAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 /// <summary>

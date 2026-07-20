@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace DraftLeague.Web.Tests;
@@ -83,6 +84,37 @@ public class ReadyTests : DraftScenarioBase
     }
 
     [Fact]
+    public async Task Readying_all_dummies_readies_synthetic_accounts_but_not_real_users()
+    {
+        var admin = await Factory.SignedInAsAsync("admin", admin: true);
+        var draftId = await DraftIdAsync(admin);
+
+        // Two dummies (non-numeric ids) and one real Discord user (all-digit id)
+        // sign in, but none ready up.
+        await Factory.SignedInAsAsync("coach-1");
+        await Factory.SignedInAsAsync("coach-2");
+        await Factory.SignedInAsAsync("123456789012345678");
+
+        (await admin.PostAsync("/api/admin/dummies/ready-all", null)).EnsureSuccessStatusCode();
+
+        var ready = ReadyIds(await StateAsync(admin, draftId));
+        Assert.Contains("coach-1", ready);
+        Assert.Contains("coach-2", ready);
+        Assert.DoesNotContain("123456789012345678", ready); // real Discord user untouched
+        Assert.DoesNotContain("admin", ready);              // oversee-admin untouched
+    }
+
+    [Fact]
+    public async Task Readying_all_dummies_is_admin_only()
+    {
+        var coach = await Factory.SignedInAsAsync("coach-1");
+        var draftId = await DraftIdAsync(coach);
+
+        var res = await coach.PostAsync("/api/admin/dummies/ready-all", null);
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
     public async Task Readying_after_the_draft_has_started_is_refused()
     {
         // StartWithAsync readies + starts p1/p2.
@@ -100,6 +132,72 @@ public class ReadyTests : DraftScenarioBase
         var draftId = await DraftIdAsync(await Factory.SignedInAsAsync("coach-1"));
         var res = await Factory.CreateClient().PostAsync($"/api/drafts/{draftId}/ready", null);
         Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_can_add_a_dummy_that_readies_into_the_draft()
+    {
+        var admin = await Factory.SignedInAsAsync("admin", admin: true);
+        var draftId = await DraftIdAsync(admin);
+
+        var res = await admin.PostAsync("/api/admin/dummies", null);
+        res.EnsureSuccessStatusCode();
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var id = Str(body, "discordId")!;
+        Assert.StartsWith("dummy-", id);
+        Assert.True(body.GetProperty("readied").GetBoolean());
+
+        // It's a readied participant and appears in the roster.
+        Assert.Contains(id, ReadyIds(await StateAsync(admin, draftId)));
+        var players = await admin.GetFromJsonAsync<JsonElement>("/api/players");
+        Assert.Contains(players.EnumerateArray(), p => Str(p, "discordId") == id);
+    }
+
+    [Fact]
+    public async Task Adding_two_dummies_makes_two_distinct_accounts()
+    {
+        var admin = await Factory.SignedInAsAsync("admin", admin: true);
+        await DraftIdAsync(admin);
+
+        var a = Str(await (await admin.PostAsync("/api/admin/dummies", null)).Content.ReadFromJsonAsync<JsonElement>(), "discordId");
+        var b = Str(await (await admin.PostAsync("/api/admin/dummies", null)).Content.ReadFromJsonAsync<JsonElement>(), "discordId");
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public async Task A_non_admin_cannot_add_a_dummy()
+    {
+        var user = await Factory.SignedInAsAsync("coach-1");
+        await DraftIdAsync(user);
+        var res = await user.PostAsync("/api/admin/dummies", null);
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_can_ready_and_unready_any_account()
+    {
+        var admin = await Factory.SignedInAsAsync("admin", admin: true);
+        var draftId = await DraftIdAsync(admin);
+        await Factory.SignedInAsAsync("coach-9"); // the account exists
+
+        // Ready them on their behalf, then un-ready.
+        (await admin.PostAsync($"/api/admin/drafts/{draftId}/participants/coach-9", null)).EnsureSuccessStatusCode();
+        Assert.Contains("coach-9", ReadyIds(await StateAsync(admin, draftId)));
+
+        (await admin.DeleteAsync($"/api/admin/drafts/{draftId}/participants/coach-9")).EnsureSuccessStatusCode();
+        Assert.DoesNotContain("coach-9", ReadyIds(await StateAsync(admin, draftId)));
+    }
+
+    [Fact]
+    public async Task A_non_admin_cannot_ready_another_account()
+    {
+        var admin = await Factory.SignedInAsAsync("admin", admin: true);
+        var draftId = await DraftIdAsync(admin);
+        var coach = await Factory.SignedInAsAsync("coach-1");
+        await Factory.SignedInAsAsync("coach-9");
+
+        var res = await coach.PostAsync($"/api/admin/drafts/{draftId}/participants/coach-9", null);
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
     }
 
     [Fact]

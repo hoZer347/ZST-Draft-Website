@@ -6,7 +6,8 @@ const el = {
   signin: $('signin'), signinError: $('signin-error'), app: $('app'),
   account: $('account'), avatar: $('avatar'), username: $('username'),
   viewAs: $('view-as'), stopViewAs: $('stop-view-as'),
-  tabs: $('tabs'), ready: $('ready'), playerList: $('player-list'),
+  tabs: $('tabs'), ready: $('ready'), playerList: $('player-list'), addDummy: $('add-dummy'),
+  readyAllDummies: $('ready-all-dummies'),
   navToggle: $('nav-toggle'), navBackdrop: $('nav-backdrop'),
   // draft
   onClock: $('on-clock'), onClockBox: $('on-clock-box'), pickNo: $('pick-no'), timer: $('timer'),
@@ -17,7 +18,8 @@ const el = {
   turn: $('turn'), turnLabel: $('turn-label'), tiers: $('tiers'), options: $('options'),
   skip: $('skip'), draftError: $('draft-error'), picks: $('picks'),
   // pre-start settings (admin)
-  draftSettings: $('draft-settings'), setWeeks: $('set-weeks'), setTimeout: $('set-timeout'),
+  draftSettings: $('draft-settings'), setWeeks: $('set-weeks'), setTimeout: $('set-timeout'), weeksHint: $('weeks-hint'),
+  devSignin: $('dev-signin'), devSigninSelect: $('dev-signin-select'),
   // team page
   teamPage: $('team-page'), teamTitle: $('team-title'), teamBody: $('team-body'), teamClose: $('team-close'),
   teamIcon: $('team-icon'), teamShowdown: $('team-showdown'), teamEdit: $('team-edit'),
@@ -26,6 +28,7 @@ const el = {
   // tier list
   tlSearch: $('tl-search'), tlTiers: $('tl-tiers'), tlType1: $('tl-type1'), tlType2: $('tl-type2'), tlRoles: $('tl-roles'),
   tlAvailable: $('tl-available'), tlClear: $('tl-clear'), tlCount: $('tl-count'), tlBody: $('tl-body'),
+  tlFilters: $('tl-filters'), tlFilterOpen: $('tl-filter-open'), tlDone: $('tl-done'),
   // schedule
   schedScroll: $('sched-scroll'),
 };
@@ -48,6 +51,8 @@ function signedOut() {
   closeTeam();
   teardownDraft();
   statsData = null; // drop cached stats so a re-login reloads them
+  scoreboardData = null; // and the scoreboard cache
+  loadDevSignin(); // (localhost) repopulate the dev "Sign in as" picker
 }
 
 async function signedIn() {
@@ -58,7 +63,7 @@ async function signedIn() {
   el.account.hidden = false;
   el.navToggle.hidden = false; // reveal the hamburger (mobile CSS decides if it shows)
   el.username.textContent = user.username;
-  showView('draft'); // always land on the draft, not wherever we last were
+  showView('draft'); // safe default; may switch to the scoreboard once the season is over
   // Not every Discord account has an avatar, and this element survives a
   // sign-out, so the empty case has to clear it rather than leave the last one.
   if (user.avatarUrl) { el.avatar.src = user.avatarUrl; el.avatar.hidden = false; }
@@ -67,6 +72,24 @@ async function signedIn() {
   renderImpersonation(user);
   loadPlayers();
   await initDraft();
+
+  // Landing tab: the draft tab while a season is in progress, but the scoreboard
+  // once every scheduled game has been played. Only switch if the user hasn't
+  // already navigated away during the async init.
+  if (!$('view-draft')?.hidden && await seasonComplete()) showView('scoreboard');
+}
+
+// True once the schedule exists and no match is still pending — i.e. the season's
+// games are all played. Warms the schedule cache as a side effect.
+async function seasonComplete() {
+  if (leagueId == null) return false;
+  try {
+    const res = await Auth.authFetch(`/api/leagues/${leagueId}/schedule`);
+    if (!res.ok) return false;
+    scheduleData = await res.json();
+    const matches = scheduleData.matches || [];
+    return matches.length > 0 && scheduleData.currentWeek == null;
+  } catch { return false; }
 }
 
 // Admin-only "view as a dummy coach" control. Shows the picker for a real admin;
@@ -74,7 +97,7 @@ async function signedIn() {
 async function renderImpersonation(user) {
   // Defensive: a cached HTML/JS mismatch (missing #view-as) must not throw and
   // break sign-in — the impersonation controls are simply absent then.
-  if (!el.viewAs || !el.stopViewAs) return;
+  if (!user || !el.viewAs || !el.stopViewAs) return;
   const impersonating = !!Auth.impersonator();
   el.stopViewAs.hidden = !impersonating;
   const canPick = !impersonating && !!user.isAdmin;
@@ -143,13 +166,23 @@ async function loadPlayers() {
     // be interpreted as markup.
     name.textContent = p.username;
 
-    // The right-hand tag reports ready status (it replaced the old
-    // dummy/discord source badge). Readied-up coaches show a green "ready" from
-    // the latest draft state; the span is always present so it holds the grid
-    // column and keeps the remove button aligned to the far right.
-    const tag = document.createElement('span');
-    tag.className = 'player-ready';
-    if (draft?.ready?.includes(p.discordId)) tag.textContent = 'ready';
+    // The right-hand tag reports ready status. Readied-up coaches show a green
+    // "ready" from the latest draft state. Before the draft starts an admin can
+    // click it to ready / un-ready that account (dummy or real player), so a test
+    // roster can be filled without logging in as each. The element is always
+    // present so it holds the grid column and keeps the remove button far-right.
+    const readied = !!draft?.ready?.includes(p.discordId);
+    const adminSetup = !!me?.isAdmin && draft?.state === 'NotStarted';
+    const tag = document.createElement(adminSetup ? 'button' : 'span');
+    tag.className = 'player-ready' + (readied ? ' is-ready' : '');
+    if (adminSetup) {
+      tag.classList.add('player-ready-toggle');
+      tag.textContent = readied ? 'ready' : 'ready up';
+      tag.title = readied ? `Un-ready ${p.username}` : `Ready up ${p.username}`;
+      tag.onclick = (e) => { e.stopPropagation(); toggleReady(p.discordId, readied); };
+    } else if (readied) {
+      tag.textContent = 'ready';
+    }
 
     li.append(avatar, name, tag);
 
@@ -167,6 +200,22 @@ async function loadPlayers() {
     }
     return li;
   }));
+}
+
+// Admin (pre-start): ready or un-ready an account on its behalf. Lets an admin
+// fill a test roster with dummies and players without logging in as each.
+async function toggleReady(discordId, currentlyReady) {
+  try {
+    const res = await Auth.authFetch(
+      `/api/admin/drafts/${draftId}/participants/${encodeURIComponent(discordId)}`,
+      { method: currentlyReady ? 'DELETE' : 'POST' },
+    );
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    await refreshDraft();
+    loadPlayers();
+  } catch (e) {
+    showDraftError(`Could not change ready state — ${e.message}`);
+  }
 }
 
 async function removePlayer(p) {
@@ -493,6 +542,23 @@ function teraTag(teraType) {
   return s;
 }
 
+// A Tera type shown as its round type-symbol icon (baked into web/type-icons/).
+// Used ONLY in the pick feed (the pick's own Tera and the passed column); the
+// pill teraTag stays everywhere else (team page, live option cards).
+function teraIcon(teraType) {
+  const img = document.createElement('img');
+  // Colour is baked into the recoloured PNG (a coloured glyph on transparency),
+  // so no type-- CSS tint is needed here.
+  img.className = 'tera-icon';
+  img.src = `type-icons/${teraType.toLowerCase()}.png`;
+  img.width = 18;
+  img.height = 18;
+  img.alt = `Tera ${teraType}`;
+  img.title = `Tera ${teraType}`;
+  img.loading = 'lazy';
+  return img;
+}
+
 const showDraftError = (msg) => { el.draftError.textContent = msg || ''; el.draftError.hidden = !msg; };
 
 async function initDraft() {
@@ -578,6 +644,15 @@ function render(s) {
   if (showSettings) {
     if (document.activeElement !== el.setWeeks) el.setWeeks.value = s.weeks;
     if (document.activeElement !== el.setTimeout) el.setTimeout.value = s.pickTimerSeconds / 3600;
+    // The season is capped at one full round-robin, so with few players it runs
+    // shorter than the setting. Show what will actually be scheduled.
+    if (el.weeksHint) {
+      const players = (s.teams?.length) || (s.ready?.length) || 0;
+      const eff = s.scheduledWeeks;
+      el.weeksHint.textContent = (eff != null && players >= 2 && eff < s.weeks)
+        ? `With ${players} players the season runs ${eff} week${eff === 1 ? '' : 's'} (one full round-robin).`
+        : '';
+    }
   }
 
   // Ready-up toggle (header): only a coach, only before the draft starts.
@@ -621,6 +696,13 @@ function render(s) {
   el.simRandomSeason.hidden = !(isAdmin && s.state === 'NotStarted');
   el.simBattlesLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // the random-sim battles toggle
   el.demoTeamsLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // build demo teams for every player
+  // Admin-only. Shown in any state so it's always reachable; the server only
+  // readies the new dummy into a not-yet-started draft (otherwise it's just an
+  // account). Most useful pre-start, to fill the roster before the draft.
+  if (el.addDummy) el.addDummy.hidden = !isAdmin;
+  // Bulk-ready every dummy: only useful before the draft starts (readying is a
+  // pre-start action), so hide it once running/complete.
+  if (el.readyAllDummies) el.readyAllDummies.hidden = !(isAdmin && s.state === 'NotStarted');
 
   renderTurn(mine, isAdmin, s);
   renderPicks(s);
@@ -703,6 +785,32 @@ function renderTurn(mine, isAdmin, s) {
   }));
 }
 
+// The "passed" run: dimmed sprites of the options offered but not taken, with a
+// "passed" label. Shared by pick rows (manual/auto) and skip rows so they render
+// identically. `json` is the stored [{name,sprite,dexNumber,tier}] JSON, or null.
+// Returns a .pick-others div (empty when there's nothing passed).
+function passedRun(json) {
+  const passed = document.createElement('div');
+  passed.className = 'pick-others';
+  let others = [];
+  try { others = json ? JSON.parse(json) : []; } catch { /* ignore bad json */ }
+  if (others.length) {
+    for (const o of others) {
+      const img = document.createElement('img');
+      img.className = 'pick-other-img';
+      img.alt = o.name;
+      img.title = o.name;
+      img.loading = 'lazy';
+      applySprite(img, o);
+      passed.append(img);
+      // Rejected C-tier options carry the Tera type they were offered with: show
+      // its type symbol beside the sprite.
+      if (o.teraType) passed.append(teraIcon(o.teraType));
+    }
+  }
+  return passed;
+}
+
 // The running feed, newest first.
 // Build one row of the pick feed. Rows never change once made (a pick is
 // immutable; a rollback removes the last one), so the feed can be rendered
@@ -725,30 +833,12 @@ function pickRow(p) {
   if (p.teraType) {
     const tera = document.createElement('span');
     tera.className = 'pick-tera';
-    tera.append(teraTag(p.teraType));
+    tera.append(teraIcon(p.teraType));
     main.append(tera);
   }
 
   // Column 2 — the options offered but passed on this turn (dimmed sprites). Left.
-  const passed = document.createElement('div');
-  passed.className = 'pick-others';
-  let others = [];
-  try { others = p.otherOptions ? JSON.parse(p.otherOptions) : []; } catch { /* ignore bad json */ }
-  if (others.length) {
-    const lbl = document.createElement('span');
-    lbl.className = 'pick-others-label';
-    lbl.textContent = 'passed';
-    passed.append(lbl);
-    for (const o of others) {
-      const img = document.createElement('img');
-      img.className = 'pick-other-img';
-      img.alt = o.name;
-      img.title = o.name;
-      img.loading = 'lazy';
-      applySprite(img, o);
-      passed.append(img);
-    }
-  }
+  const passed = passedRun(p.otherOptions);
 
   // Column 3 — who drafted it and the tier (+ auto badge). Right.
   const end = document.createElement('div');
@@ -771,14 +861,62 @@ function pickRow(p) {
   return li;
 }
 
+// A passed turn in the feed: a coach's voluntary skip, or the engine's forced
+// pass when nothing was eligible ('auto'). Mirrors pickRow's 3-column grid (with
+// an empty middle) so it lines up down the feed.
+function skipRow(sk) {
+  const li = document.createElement('li');
+  li.className = 'pick pick--skip';
+
+  const main = document.createElement('div');
+  main.className = 'pick-main';
+  const num = document.createElement('span');
+  num.className = 'pick-num';
+  num.textContent = '–';
+  const label = document.createElement('span');
+  label.className = 'pick-name pick-skip-label';
+  label.textContent = 'Skipped';
+  main.append(num, label);
+
+  // The options they passed on by skipping (same "passed" run as a pick row).
+  const mid = passedRun(sk.otherOptions);
+
+  const end = document.createElement('div');
+  end.className = 'pick-end';
+  const who = document.createElement('span');
+  who.className = 'pick-team';
+  who.textContent = teamName(sk.teamId);
+  const badge = document.createElement('span');
+  badge.className = 'pick-skip-badge';
+  badge.textContent = sk.wasAuto ? 'auto' : 'skip';
+  end.append(who, badge);
+
+  li.append(main, mid, end);
+  return li;
+}
+
 // The running feed, newest first. Rendered incrementally: a new pick just
 // prepends its row. The old code rebuilt the whole list every refresh, which
 // re-created and re-fetched every sprite in it — so each pick got slower as the
 // feed grew. A full rebuild only happens when the list shrinks (rollback/abort).
+// Picks and skips as one chronological feed. A skip recorded after N picks slots
+// in right after pick #N (before #N+1); ties break by id. Both kinds only ever
+// append at the tail in real time, so the incremental render below still holds.
+function buildFeed(s) {
+  const items = (s.picks || []).map(p => ({ kind: 'pick', a: p.pickNumber, b: 0, c: 0, data: p }));
+  for (const sk of s.skips || []) items.push({ kind: 'skip', a: sk.afterPickNumber, b: 1, c: sk.id, data: sk });
+  items.sort((x, y) => x.a - y.a || x.b - y.b || x.c - y.c);
+  return items;
+}
+
+function feedRow(item) {
+  return item.kind === 'skip' ? skipRow(item.data) : pickRow(item.data);
+}
+
 let renderedPicks = 0;
 function renderPicks(s) {
-  const picks = s.picks;
-  if (!picks.length) {
+  const feed = buildFeed(s);
+  if (!feed.length) {
     if (renderedPicks !== 0 || !el.picks.firstElementChild) {
       el.picks.innerHTML = '<li class="muted">No picks yet.</li>';
       renderedPicks = 0;
@@ -786,16 +924,16 @@ function renderPicks(s) {
     }
     return;
   }
-  if (picks.length < renderedPicks || renderedPicks === 0) {
+  if (feed.length < renderedPicks || renderedPicks === 0) {
     // Fresh feed, or the list shrank — rebuild from scratch.
-    el.picks.replaceChildren(...[...picks].reverse().map(pickRow));
-    renderedPicks = picks.length;
+    el.picks.replaceChildren(...[...feed].reverse().map(feedRow));
+    renderedPicks = feed.length;
     sizePicks();
-  } else if (picks.length > renderedPicks) {
-    // Only the new picks need rows; prepend so the newest lands on top and the
+  } else if (feed.length > renderedPicks) {
+    // Only the new rows need building; prepend so the newest lands on top and the
     // existing rows (and their already-loaded sprites) are left untouched.
-    for (let i = renderedPicks; i < picks.length; i++) el.picks.prepend(pickRow(picks[i]));
-    renderedPicks = picks.length;
+    for (let i = renderedPicks; i < feed.length; i++) el.picks.prepend(feedRow(feed[i]));
+    renderedPicks = feed.length;
     sizePicks();
   }
 }
@@ -881,14 +1019,20 @@ async function connect() {
     .forEach((evt) => conn.on(evt, () => refreshDraft()));
 
   // Roster changes (someone signed in / was removed) fan out to all clients.
-  conn.on('playersChanged', () => loadPlayers());
+  conn.on('playersChanged', () => { loadPlayers(); renderImpersonation(Auth.user()); });
 
   // Someone readied up or left before the draft — update the button + markers.
   conn.on('readyChanged', async () => { await refreshDraft(); loadPlayers(); });
 
   // A match was scored or the schedule was regenerated — refresh the tab if it's
   // been opened (scheduleData is set on first view) so results land live.
-  conn.on('scheduleChanged', () => { if (scheduleData) ensureSchedule(); });
+  conn.on('scheduleChanged', () => {
+    if (scheduleData) ensureSchedule();
+    // A scored match changes standings + stat leaders. Drop the cache; refresh
+    // now only if the scoreboard is the view being looked at.
+    scoreboardData = null;
+    if (!$('view-scoreboard')?.hidden) ensureScoreboard();
+  });
 
   conn.onreconnected(async () => { setConn(true); await conn.invoke('JoinDraft', draftId); await loadPlayers(); await refreshDraft(); });
   conn.onclose(() => setConn(false));
@@ -961,6 +1105,25 @@ function buildTierFilters() {
       .forEach((c) => { c.checked = false; });
     renderTierList();
   };
+
+  // Mobile: the filter column is an accordion that expands out of the button.
+  // The Filters button toggles it; Done collapses it. Both are display:none on
+  // desktop, so these handlers are inert there.
+  if (el.tlFilterOpen) el.tlFilterOpen.onclick = () => {
+    const open = el.tlFilters.classList.toggle('open');
+    el.tlFilterOpen.classList.toggle('open', open);
+    // The button is sticky, so it can be tapped from anywhere down the list; the
+    // panel folds out at the top, so bring that into view when opening.
+    if (open) window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  if (el.tlDone) el.tlDone.onclick = closeTierFilters;
+}
+
+// Collapse the mobile filter panel. No-op when already closed / on desktop, so
+// it's safe to call on any view switch.
+function closeTierFilters() {
+  if (el.tlFilters) el.tlFilters.classList.remove('open');
+  if (el.tlFilterOpen) el.tlFilterOpen.classList.remove('open');
 }
 
 const tlChecked = (container) => [...container.querySelectorAll('input:checked')].map((c) => c.value);
@@ -1182,7 +1345,13 @@ function schedHeading(text) {
   return h;
 }
 
-const WEEKDAY = { weekday: 'short', month: 'short', day: 'numeric' };
+// The match deadline is stored as Monday 23:59 UTC of its week. Render it in UTC
+// so every viewer sees the same "Mon, Jul 20, 11:59 PM" regardless of their
+// timezone (a local conversion could shift it off Monday and off 11:59).
+const DUE_FMT = {
+  weekday: 'short', month: 'short', day: 'numeric',
+  hour: 'numeric', minute: '2-digit', timeZone: 'UTC',
+};
 
 function matchCard(m, size) {
   const card = document.createElement('div');
@@ -1197,7 +1366,7 @@ function matchCard(m, size) {
   if (m.scheduledFor) {
     const when = document.createElement('span');
     when.className = 'match-when';
-    when.textContent = new Date(m.scheduledFor).toLocaleDateString(undefined, WEEKDAY);
+    when.textContent = 'Due by ' + new Date(m.scheduledFor).toLocaleString(undefined, DUE_FMT);
     head.append(when);
   }
 
@@ -1216,9 +1385,20 @@ function matchCard(m, size) {
   );
   card.append(head, row);
 
-  // Your own unplayed game: submit a replay to score it.
-  if (!m.played && m.mine) card.append(replayForm(m));
+  // Your own unplayed game: nothing to submit. Playing it on our Showdown server
+  // reports the finished battle automatically (see /api/showdown/report).
+  if (!m.played && m.mine) card.append(autoRecordNote());
   return card;
+}
+
+// The note under a coach's own unplayed match. There's no link to paste: a game
+// played against your opponent on our Showdown server is reported and scored on
+// its own the moment it ends.
+function autoRecordNote() {
+  const p = document.createElement('p');
+  p.className = 'match-autorecord';
+  p.textContent = 'Just play this match against your opponent on our Showdown server and the result records automatically. No replay link to paste.';
+  return p;
 }
 
 function teamSide(name, isMe, won, which) {
@@ -1361,11 +1541,14 @@ function replayForm(m, opts = {}) {
 
 function showView(name) {
   closeTeam(); // a view switch drops the team overlay
+  closeTierFilters(); // and the mobile filter panel, so it doesn't linger open
+  syncHeaderHeight(); // keep the sticky Filters button's offset correct
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
   for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.view === name);
   if (name === 'tierlist') ensureTierList();
   if (name === 'schedule') ensureSchedule();
   if (name === 'stats') ensureStats();
+  if (name === 'scoreboard') ensureScoreboard();
   if (name === 'draft') sizePicks();
 }
 
@@ -1581,7 +1764,16 @@ function renderStats() {
   body.replaceChildren(table);
 }
 
-window.addEventListener('resize', sizePicks);
+// The mobile sticky "Filters" button sits below the sticky header, so it needs
+// the header's live height. Publish it as a CSS var; the header can wrap to two
+// rows on a narrow phone, so it isn't a constant.
+function syncHeaderHeight() {
+  const h = document.querySelector('header');
+  if (h) document.documentElement.style.setProperty('--header-h', `${h.offsetHeight}px`);
+}
+syncHeaderHeight();
+
+window.addEventListener('resize', () => { sizePicks(); syncHeaderHeight(); });
 
 // The teambuilder lives on our own Showdown server now, not an embed. We open
 // the official Showdown client pointed at our server (the ~~host:port syntax) —
@@ -1664,6 +1856,162 @@ document.querySelectorAll('.tab').forEach((t) => {
   };
 });
 
+// ── scoreboard ─────────────────────────────────────────────────────────────
+// Team standings + a few per-mon stat leaderboards, both ranked server-side from
+// the stored battle stats (/api/leagues/{id}/scoreboard). Each list entry is
+// tinted with the OPGB scheme (orange, purple, green, blue) from the top down,
+// cycling every four rows.
+
+let scoreboardData = null;
+
+// Orange, Purple, Green, Blue — the class for the row at a given rank (0-based),
+// cycling. style.css defines .opgb-0..3 background tints + accent border.
+const opgbClass = (rank) => `opgb-${rank % 4}`;
+
+async function ensureScoreboard() {
+  const body = $('scoreboard-body');
+  if (!body) return;
+  if (scoreboardData) { renderScoreboard(); return; }
+  if (leagueId == null) {
+    body.replaceChildren(muted('No season yet — standings appear once a draft has started.'));
+    return;
+  }
+  body.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const res = await Auth.authFetch(`/api/leagues/${leagueId}/scoreboard`);
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    scoreboardData = await res.json();
+    renderScoreboard();
+  } catch (e) {
+    body.replaceChildren(muted(`Couldn't load the scoreboard — ${e.message}`));
+  }
+}
+
+// The four leaderboards and how each mon's value is shown.
+const LEADER_CATS = [
+  { key: 'presence', label: 'Season presence', fmt: (v) => `${Math.round(v * 100)}%` },
+  { key: 'plusMinus', label: '+/−', fmt: (v) => (v > 0 ? `+${v}` : `${v}`) },
+  { key: 'healing', label: 'Healing', fmt: (v) => `${Math.round(v)}%` },
+  { key: 'damageRatio', label: 'Damage ratio', fmt: (v) => (v == null ? '∞' : v.toFixed(2)) },
+];
+
+function renderScoreboard() {
+  const body = $('scoreboard-body');
+  const data = scoreboardData;
+  if (!body || !data) return;
+
+  const frag = document.createDocumentFragment();
+  frag.appendChild(standingsCard(data.standings || []));
+
+  const leadersWrap = document.createElement('div');
+  leadersWrap.className = 'leaders-grid';
+  for (const cat of LEADER_CATS) {
+    leadersWrap.appendChild(leaderCard(cat, (data.leaders?.[cat.key]) || []));
+  }
+  frag.appendChild(leadersWrap);
+
+  body.replaceChildren(frag);
+}
+
+function standingsCard(rows) {
+  const card = document.createElement('section');
+  card.className = 'card scoreboard-standings';
+  card.appendChild(Object.assign(document.createElement('div'), { className: 'label', textContent: 'Standings' }));
+
+  if (!rows.length) {
+    card.appendChild(muted('No teams yet.'));
+    return card;
+  }
+
+  const list = document.createElement('ol');
+  list.className = 'standings-list';
+  rows.forEach((r, i) => {
+    const li = document.createElement('li');
+    li.className = `standings-row ${opgbClass(i)}`;
+
+    const rank = document.createElement('span');
+    rank.className = 'standings-rank';
+    rank.textContent = `${i + 1}`;
+
+    const name = document.createElement('span');
+    name.className = 'standings-name';
+    name.textContent = r.trainer;
+
+    // The record and the three tiebreakers, in the order they decide ties.
+    const record = statChip('Record', recordText(r));
+    const diff = statChip('Diff', signed(r.recordDiff));
+    const koDiff = statChip('KO±', signed(r.koDiff));
+    const kos = statChip('KOs', `${r.totalKos}`);
+    const faints = statChip('Faints', `${r.totalFaints}`);
+
+    const stats = document.createElement('span');
+    stats.className = 'standings-stats';
+    stats.append(record, diff, koDiff, kos, faints);
+
+    li.append(rank, name, stats);
+    list.appendChild(li);
+  });
+  card.appendChild(list);
+  return card;
+}
+
+function recordText(r) {
+  return r.draws ? `${r.wins}–${r.losses}–${r.draws}` : `${r.wins}–${r.losses}`;
+}
+const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+
+function statChip(label, value) {
+  const chip = document.createElement('span');
+  chip.className = 'stat-chip';
+  const l = document.createElement('span'); l.className = 'stat-chip-label'; l.textContent = label;
+  const v = document.createElement('span'); v.className = 'stat-chip-value'; v.textContent = value;
+  chip.append(l, v);
+  return chip;
+}
+
+function leaderCard(cat, entries) {
+  const card = document.createElement('section');
+  card.className = 'card leader-card';
+  card.appendChild(Object.assign(document.createElement('div'), { className: 'label', textContent: cat.label }));
+
+  if (!entries.length) {
+    card.appendChild(muted('No stats yet.'));
+    return card;
+  }
+
+  const list = document.createElement('ol');
+  list.className = 'leader-list';
+  entries.forEach((e) => {
+    const li = document.createElement('li');
+    // Leader rows are tinted by the mon's draft tier (S/A/B/C), not by rank.
+    li.className = `leader-row${e.tier ? ` tier--${e.tier}` : ''}`;
+
+    const img = document.createElement('img');
+    img.className = 'leader-sprite'; img.alt = ''; img.loading = 'lazy';
+    applySprite(img, e);
+
+    const who = document.createElement('span');
+    who.className = 'leader-who';
+    const monLine = document.createElement('span');
+    monLine.className = 'leader-mon-line';
+    const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = e.pokemon;
+    monLine.append(mon);
+    // C-tier mons drafted with a Tera type — show its type symbol beside the name.
+    if (e.tera) monLine.append(teraIcon(e.tera));
+    const trainer = document.createElement('span'); trainer.className = 'leader-trainer'; trainer.textContent = e.trainer;
+    who.append(monLine, trainer);
+
+    const val = document.createElement('span');
+    val.className = 'leader-value';
+    val.textContent = cat.fmt(e.value);
+
+    li.append(img, who, val);
+    list.appendChild(li);
+  });
+  card.appendChild(list);
+  return card;
+}
+
 // ── boot ───────────────────────────────────────────────────────────────
 
 setInterval(renderTimer, 1000); // tick locally; the server is authoritative
@@ -1744,7 +2092,7 @@ on('sim-random-season', async () => {
     statsData = null; // fresh season → drop cached stats
     await refreshDraft();
     loadPlayers();
-    let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles — schedule left pending'}).`;
+    let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.skips ? `${r.skips} skips, ` : ''}${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles — schedule left pending'}).`;
 
     // Build demo teams: an example team for every player, cached to seed onto THIS
     // (the admin's) device as a folder per player the next time the Teambuilder opens.
@@ -1795,6 +2143,39 @@ on('ready', async () => {
   loadPlayers();
 });
 
+// Admin: add a synthetic coach to fill the roster (readied into a not-yet-started
+// draft, so it joins like any coach who signed up).
+on('add-dummy', async () => {
+  if (el.addDummy) el.addDummy.disabled = true;
+  try {
+    const res = await Auth.authFetch('/api/admin/dummies', { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    await refreshDraft();
+    loadPlayers();
+    renderImpersonation(Auth.user()); // the new dummy joins the "View as" list
+  } catch (e) {
+    showDraftError(`Could not add dummy — ${e.message}`);
+  } finally {
+    if (el.addDummy) el.addDummy.disabled = false;
+  }
+});
+
+// Admin: ready every existing dummy into the not-yet-started draft at once, so a
+// test roster fills without clicking each one.
+on('ready-all-dummies', async () => {
+  if (el.readyAllDummies) el.readyAllDummies.disabled = true;
+  try {
+    const res = await Auth.authFetch('/api/admin/dummies/ready-all', { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    await refreshDraft();
+    loadPlayers();
+  } catch (e) {
+    showDraftError(`Could not ready dummies: ${e.message}`);
+  } finally {
+    if (el.readyAllDummies) el.readyAllDummies.disabled = false;
+  }
+});
+
 on('team-close', closeTeam);
 // Escape closes the team page (or just the edit form if it's open).
 window.addEventListener('keydown', (e) => {
@@ -1823,6 +2204,33 @@ on('login', async () => {
   try { await Auth.login(); }
   catch (e) { el.signinError.textContent = e.message; el.signinError.hidden = false; }
 });
+
+// Dev-only "Sign in as" picker (localhost). Lists existing accounts (admin + every
+// coach) so you can drive the app without Discord. Hidden and inert in production
+// (the /dev/* routes 404 there, so populate just fails quietly).
+const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+async function loadDevSignin() {
+  if (!isLocalhost || !el.devSignin || !el.devSigninSelect) return;
+  let accounts;
+  try { accounts = await Auth.devAccounts(); }
+  catch { return; } // not in Development — leave it hidden
+  el.devSigninSelect.replaceChildren(
+    new Option('Choose an account…', ''),
+    ...accounts.map((a) => {
+      const o = new Option(a.username + (a.isAdmin ? ' (admin)' : ''), a.discordId);
+      o.dataset.admin = a.isAdmin ? '1' : '';
+      return o;
+    }),
+  );
+  el.devSignin.hidden = false;
+}
+if (el.devSigninSelect) el.devSigninSelect.onchange = async (e) => {
+  const opt = e.target.selectedOptions[0];
+  const id = e.target.value;
+  if (!id) return;
+  try { await Auth.devSignInAs(id, opt?.dataset.admin === '1'); await signedIn(); }
+  catch (err) { el.signinError.textContent = err.message; el.signinError.hidden = false; e.target.value = ''; }
+};
 
 on('logout', async () => {
   await Auth.logout();

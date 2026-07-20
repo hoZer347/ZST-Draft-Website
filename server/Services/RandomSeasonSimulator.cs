@@ -27,7 +27,7 @@ public class RandomSeasonSimulator(
     AppDbContext db, NodeBattleSimulator battles, MatchStatsRecorder recorder,
     ReplayScorer scorer, IHubContext<DraftHub> hub, ILogger<RandomSeasonSimulator> log)
 {
-    public record SimResult(int Teams, int Picks, int Matches, bool RealBattles);
+    public record SimResult(int Teams, int Picks, int Matches, bool RealBattles, int Skips = 0);
 
     /// <param name="teamCount">How many synthetic teams to draft (clamped to what the pool can fill).</param>
     /// <param name="seed">Fixed seed for a reproducible season; null for a fresh random one.</param>
@@ -52,6 +52,7 @@ public class RandomSeasonSimulator(
         await db.Matches.Where(m => m.LeagueId == leagueId).ExecuteDeleteAsync(ct);
         await db.PokemonStats.Where(s => s.Pick.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.Picks.Where(p => p.DraftId == draftId).ExecuteDeleteAsync(ct);
+        await db.DraftSkips.Where(s => s.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.DraftSlots.Where(s => s.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.DraftParticipants.Where(p => p.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.Pokemon.Where(p => p.LeagueId == leagueId && p.DraftedByTeamId != null)
@@ -61,8 +62,11 @@ public class RandomSeasonSimulator(
 
         // ── pool grouped by tier, shuffled into draw stacks ────────────────
         var pool = await db.Pokemon.Where(p => p.LeagueId == leagueId).ToListAsync(ct);
+        // Pre-shuffled draw lists per tier: drawing the first dex-eligible mon from a
+        // shuffled list is still a random draw, but lets us skip a species a team
+        // already holds (a Stack.Pop couldn't look past the top).
         var byTier = pool.GroupBy(p => p.Tier)
-            .ToDictionary(g => g.Key, g => new Stack<PokemonEntry>(g.OrderBy(_ => rng.Next())));
+            .ToDictionary(g => g.Key, g => g.OrderBy(_ => rng.Next()).ToList());
 
         // Clamp the team count to what the scarcest tier can fill a full roster of.
         var maxTeams = tierRules.Where(r => r.SlotsPerTeam > 0)
@@ -114,6 +118,13 @@ public class RandomSeasonSimulator(
         var offeredByTier = tierRules.ToDictionary(r => r.Tier, r => r.OptionsOffered);
         var quota = tierRules.ToDictionary(r => r.Tier, r => r.SlotsPerTeam);
         var owed = teams.ToDictionary(t => t.Id, _ => new Dictionary<Tier, int>(quota));
+        // Species (dex numbers) each team already holds. The sim honours the same
+        // dex-number clause as the live draft: no team drafts two forms of one
+        // species (e.g. two Raichu megas). Dex 0 is "unset" and never blocks.
+        var heldDex = teams.ToDictionary(t => t.Id, _ => new HashSet<int>());
+        // Debug skips: budget per team (capped like the live draft) plus a running total.
+        var skipsUsed = teams.ToDictionary(t => t.Id, _ => 0);
+        var skipCount = 0;
         var rosterSize = quota.Values.Sum();
         int pickNo = 1, pos = 0;
         for (var round = 0; round < rosterSize; round++)
@@ -125,17 +136,49 @@ public class RandomSeasonSimulator(
                 var tier = owedTiers[rng.Next(owedTiers.Count)]; // a random tier this team still owes
                 owed[team.Id][tier]--;
 
-                var mon = byTier[tier].Pop();
+                // Draw the first mon whose species this team doesn't already hold
+                // (the list is pre-shuffled, so "first eligible" is a random draw).
+                // Enforces the dex-number clause; dex 0 never blocks.
+                var list = byTier[tier];
+                var idx = list.FindIndex(p => p.DexNumber == 0 || !heldDex[team.Id].Contains(p.DexNumber));
+                if (idx < 0) idx = 0; // pool too thin to honour it: take any rather than stall
+                var mon = list[idx];
+                list.RemoveAt(idx);
+                if (mon.DexNumber > 0) heldDex[team.Id].Add(mon.DexNumber);
+
                 mon.DraftedByTeam = team;
-                var teraType = tier == Tier.C ? RandomTera(rng) : null;
+
+                // Before committing the pick, sometimes record a skip (defer) for
+                // this turn — a mix of voluntary and auto skips, each carrying the
+                // passed-options snapshot — so the feed's skip rows are exercised.
+                // Capped per team like the live draft; the roster still fills, since
+                // the pick below is still made.
+                if (skipsUsed[team.Id] < DraftEngine.MaxSkipsPerTeam && rng.Next(100) < 20)
+                {
+                    skipsUsed[team.Id]++;
+                    skipCount++;
+                    db.DraftSkips.Add(new DraftSkip
+                    {
+                        DraftId = draftId, TeamId = team.Id,
+                        AfterPickNumber = pickNo - 1, // slots in right after the last committed pick
+                        WasAuto = rng.Next(2) == 0,
+                        OtherOptions = PassedOptions(list, tier, offeredByTier[tier], rng, heldDex[team.Id]),
+                    });
+                }
+
+                // Same rule as the live draft: only C-tier draws a Tera type, and
+                // megas / Shedinja are barred from one (see DraftEngine.TeraBarred).
+                var teraType = tier == Tier.C && !DraftEngine.TeraBarred(mon.Name, mon.Sprite)
+                    ? RandomTera(rng) : null;
                 db.Picks.Add(new Pick
                 {
                     DraftId = draftId, PickNumber = pickNo++, TeamId = team.Id,
                     PokemonEntry = mon, Tier = tier, TeraType = teraType,
                     // The "passed" run: a random sample of the same tier's still-
                     // available mons, snapshot in the exact shape the draft engine
-                    // stores (so the pick feed renders it identically).
-                    OtherOptions = PassedOptions(byTier[tier], tier, offeredByTier[tier], rng),
+                    // stores (so the pick feed renders it identically). Excludes the
+                    // team's held species so it never shows a form they couldn't take.
+                    OtherOptions = PassedOptions(list, tier, offeredByTier[tier], rng, heldDex[team.Id]),
                 });
                 db.DraftSlots.Add(new DraftSlot { DraftId = draftId, Position = pos++, TeamId = team.Id });
             }
@@ -160,9 +203,9 @@ public class RandomSeasonSimulator(
         // stay Pending: no score, no stats, ready for replays to be added later.
         var real = realBattles && await RunRealBattlesAsync(matches, rosterByTeam, ct);
 
-        log.LogInformation("Random season for league {League}: {Teams} teams, {Picks} picks, {Matches} matches (real battles: {Real})",
-            leagueId, teams.Count, pickNo - 1, matches.Count, real);
-        return new SimResult(teams.Count, pickNo - 1, matches.Count, real);
+        log.LogInformation("Random season for league {League}: {Teams} teams, {Picks} picks, {Skips} skips, {Matches} matches (real battles: {Real})",
+            leagueId, teams.Count, pickNo - 1, skipCount, matches.Count, real);
+        return new SimResult(teams.Count, pickNo - 1, matches.Count, real, skipCount);
     }
 
     // The pool slug the battle runner keys on — the Showdown sprite slug, falling
@@ -222,10 +265,21 @@ public class RandomSeasonSimulator(
     // The options offered-but-not-taken this turn, in the draft engine's exact
     // JSON shape ([{name,sprite,dexNumber,tier}]), sampled from the same tier's
     // still-available mons. Null when nothing is left to offer.
-    private static string? PassedOptions(IEnumerable<PokemonEntry> remaining, Tier tier, int offered, Random rng)
+    private static string? PassedOptions(IEnumerable<PokemonEntry> remaining, Tier tier, int offered, Random rng, HashSet<int> heldDex)
     {
-        var passed = remaining.OrderBy(_ => rng.Next()).Take(Math.Max(0, offered - 1))
-            .Select(m => new { name = m.Name, sprite = m.Sprite, dexNumber = m.DexNumber, tier = tier.ToString() })
+        // Honour the dex-number clause in the cosmetic "passed" run too: never show a
+        // species the team already holds, and never list two forms of the same
+        // species against each other. Dex 0 ("unset") is exempt from both.
+        var seen = new HashSet<int>();
+        var passed = remaining.OrderBy(_ => rng.Next())
+            .Where(m => m.DexNumber == 0 || (!heldDex.Contains(m.DexNumber) && seen.Add(m.DexNumber)))
+            .Take(Math.Max(0, offered - 1))
+            .Select(m => new
+            {
+                name = m.Name, sprite = m.Sprite, dexNumber = m.DexNumber, tier = tier.ToString(),
+                // C-tier options carry a Tera type, but megas / Shedinja are barred.
+                teraType = tier == Tier.C && !DraftEngine.TeraBarred(m.Name, m.Sprite) ? RandomTera(rng) : null,
+            })
             .ToList();
         return passed.Count > 0 ? JsonSerializer.Serialize(passed) : null;
     }

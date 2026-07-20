@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=203">
-  <link rel="stylesheet" href="style.css?v=203">
+  <link rel="icon" href="favicon.ico?v=225">
+  <link rel="stylesheet" href="style.css?v=225">
 </head>
 <body>
   <header>
@@ -22,6 +22,7 @@
       <span class="kofi-label">Buy me a coffee</span>
     </a>
     <nav id="tabs" class="tabs" hidden>
+      <button class="tab" data-view="scoreboard">Scoreboard</button>
       <button class="tab active" data-view="draft">Draft</button>
       <button class="tab" data-view="myteam">My team</button>
       <button class="tab" data-view="schedule">Schedule</button>
@@ -34,8 +35,8 @@
       <div id="account" class="account" hidden>
         <img id="avatar" class="avatar" alt="" hidden>
         <span id="username" class="username"></span>
-        <!-- Admin-only: view the app as a sim-generated dummy coach. -->
-        <select id="view-as" class="view-as" hidden aria-label="View as a dummy coach">
+        <!-- Admin-only: view the app as any user in the league roster. -->
+        <select id="view-as" class="view-as" hidden aria-label="View as a user">
           <option value="">View as…</option>
         </select>
         <button id="stop-view-as" class="linkish" hidden>← Back to admin</button>
@@ -60,6 +61,15 @@
         Sign in with Discord
       </button>
       <p id="signin-error" class="error" hidden></p>
+
+      <!-- Dev-only: sign in as an existing account without Discord. Revealed by
+           app.js on localhost; the /dev/* routes only exist in Development. -->
+      <div id="dev-signin" class="dev-signin" hidden>
+        <label class="muted" for="dev-signin-select">Or sign in as (dev)</label>
+        <select id="dev-signin-select" class="dev-signin-select">
+          <option value="">Choose an account…</option>
+        </select>
+      </div>
     </section>
 
     <!-- Signed in -->
@@ -70,6 +80,10 @@
         <ul id="player-list" class="players-list">
           <li class="muted">Loading…</li>
         </ul>
+        <!-- Admin-only, before the draft starts: add a synthetic coach to fill the roster. -->
+        <button id="add-dummy" class="add-dummy" hidden>+ Add dummy</button>
+        <!-- Admin-only, before the draft starts: ready every existing dummy at once. -->
+        <button id="ready-all-dummies" class="add-dummy" hidden>✓ Ready up all dummies</button>
       </aside>
 
       <section class="draft">
@@ -121,6 +135,7 @@
               <input id="set-timeout" type="number" min="0" max="168" step="any" value="24">
             </label>
             <span class="setting-hint muted">Applied when you start the draft.</span>
+            <span id="weeks-hint" class="setting-hint muted"></span>
           </div>
         </div>
 
@@ -143,22 +158,37 @@
       </div>
 
       <div id="view-tierlist" class="view layout" hidden>
-        <aside class="filters card">
-          <div class="label">Filters</div>
-          <input id="tl-search" class="tl-search" type="search" placeholder="Search name…" autocomplete="off">
+        <!-- Mobile only: the filter panel collapses into this button and expands
+             out below it. Hidden on desktop, where the sidebar is always shown. -->
+        <button id="tl-filter-open" class="tl-filter-open" type="button">
+          <span class="tl-filter-icon" aria-hidden="true">☰</span> Filters
+        </button>
 
-          <div class="label tl-section">Tier</div>
-          <div id="tl-tiers" class="tl-checks"></div>
+        <aside id="tl-filters" class="filters card">
+          <!-- Inner wrapper is the animated element: the outer .filters collapses
+               its grid row to 0fr, this clips to nothing (mobile accordion). -->
+          <div class="filters-inner">
+            <div class="label tl-filters-title">Filters</div>
+            <input id="tl-search" class="tl-search" type="search" placeholder="Search name…" autocomplete="off">
 
-          <div class="label tl-section">Type</div>
-          <select id="tl-type1" class="tl-select"></select>
-          <select id="tl-type2" class="tl-select"></select>
+            <div class="label tl-section">Tier</div>
+            <div id="tl-tiers" class="tl-checks"></div>
 
-          <div class="label tl-section">Role</div>
-          <div id="tl-roles" class="tl-roles"></div>
+            <div class="label tl-section">Type</div>
+            <select id="tl-type1" class="tl-select"></select>
+            <select id="tl-type2" class="tl-select"></select>
 
-          <label class="tl-check"><input type="checkbox" id="tl-available"> Available only</label>
-          <button id="tl-clear" class="linkish tl-clear">Clear filters</button>
+            <div class="label tl-section">Role</div>
+            <div id="tl-roles" class="tl-roles"></div>
+
+            <label class="tl-check"><input type="checkbox" id="tl-available"> Available only</label>
+
+            <!-- Clear (left) and, on mobile only, Done (right) to collapse the panel. -->
+            <div class="filters-foot">
+              <button id="tl-clear" class="linkish tl-clear">Clear filters</button>
+              <button id="tl-done" class="tl-done" type="button">Done</button>
+            </div>
+          </div>
         </aside>
 
         <section class="tierlist">
@@ -198,6 +228,10 @@
           </div>
         </div>
         <div id="stats-body"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div id="view-scoreboard" class="view scoreboard-view" hidden>
+        <div id="scoreboard-body"><p class="muted">Loading…</p></div>
       </div>
 
       <div id="view-teambuilder" class="view" hidden>
@@ -247,12 +281,12 @@
     </div>
   </main>
 
-  <script src="config.js?v=203"></script>
-  <script src="auth-logic.js?v=203"></script>
-  <script src="auth.js?v=203"></script>
+  <script src="config.js?v=225"></script>
+  <script src="auth-logic.js?v=225"></script>
+  <script src="auth.js?v=225"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=203"></script>
-  <script src="teambuilder.js?v=204"></script>
-  <script src="app.js?v=203"></script>
+  <script src="pool-logic.js?v=225"></script>
+  <script src="teambuilder.js?v=225"></script>
+  <script src="app.js?v=225"></script>
 </body>
 </html>

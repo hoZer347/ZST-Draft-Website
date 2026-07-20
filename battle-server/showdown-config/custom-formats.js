@@ -25,22 +25,24 @@ exports.Formats = [
     gameType: 'doubles',
     ruleset: [
       'Standard NatDex',
+      'Sleep Clause Mod',     // only one of a side's mons may be asleep from an opponent at a time
       'Dynamax Clause',       // no Dynamax
       'Z-Move Clause',        // no Z-moves
       'Item Clause = 1',      // no two mons with the same item
       'OHKO Clause',          // no Fissure / Sheer Cold / etc.
-      'Evasion Moves Clause', // no Double Team / Minimize
+      'Evasion Clause',       // bans evasion abilities (Sand Veil, Snow Cloak), items (Bright Powder, Lax Incense) AND moves (Double Team / Minimize). Broader than Evasion Moves Clause, which it includes.
+      'Swagger Clause',       // bans the move Swagger (replaces the explicit banlist entry below)
     ],
     banlist: [
       'Power Construct',      // ability banned (Zygarde still draftable with other abilities)
-      'Swagger',
       'Revival Blessing',
       'Hidden Power',
       // Zippy Zap (+1 evasion via a 100% self-secondary) is NOT covered by the
-      // Evasion Moves Clause, so ban it explicitly. Double Team / Minimize are
-      // already banned BY that clause — listing them here too is a duplicate that
-      // Showdown rejects with "Rule already exists in Evasion Moves Clause",
-      // which crashes the server worker on load. Do not re-add them here.
+      // Evasion Clause, so ban it explicitly. Double Team / Minimize are already
+      // banned BY that clause (via its Evasion Moves Clause) — listing them here
+      // too is a duplicate that Showdown rejects with "Rule already exists in
+      // Evasion Moves Clause", which crashes the server worker on load. Do not
+      // re-add them here.
       'Zippy Zap',
       // All type gems banned; the plain Normal Gem stays legal.
       'Fire Gem', 'Water Gem', 'Electric Gem', 'Grass Gem', 'Ice Gem', 'Fighting Gem',

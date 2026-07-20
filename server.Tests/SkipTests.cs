@@ -21,6 +21,56 @@ public class SkipTests : DraftScenarioBase
             .First(t => Int(t, "id") == teamId).GetProperty("skipsRemaining").GetInt32();
 
     [Fact]
+    public async Task A_missed_pick_window_auto_skips_while_the_team_still_has_skips()
+    {
+        var (admin, draftId, _) = await StartWithAsync("coach-1", "coach-2");
+        var s = await StateAsync(admin, draftId);
+        var onClock = Int(s, "onClockTeamId");
+        var before = SkipsOf(s, onClock);
+
+        // The clock auto-picks for a coach who let their window lapse. With skips
+        // in hand it should DEFER (spend a skip) rather than force a Pokemon.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+        }
+
+        var after = await StateAsync(admin, draftId);
+        Assert.Empty(after.GetProperty("picks").EnumerateArray());   // no Pokemon forced
+        Assert.Equal(before - 1, SkipsOf(after, onClock));           // a skip token was spent
+        Assert.NotEqual(onClock, Int(after, "onClockTeamId"));       // and the clock advanced
+    }
+
+    [Fact]
+    public async Task A_missed_pick_window_auto_picks_a_tier_once_skips_are_gone()
+    {
+        var (admin, draftId, _) = await StartWithAsync("coach-1", "coach-2");
+        var onClock = Int(await StateAsync(admin, draftId), "onClockTeamId");
+
+        // Drain the on-clock team's skips, then let their window lapse.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var team = await db.Teams.FirstAsync(t => t.Id == onClock);
+            team.SkipsRemaining = 0;
+            await db.SaveChangesAsync();
+        }
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+        }
+
+        // With no skips left it falls back to auto-picking a tier (C-S).
+        var after = await StateAsync(admin, draftId);
+        var pick = after.GetProperty("picks").EnumerateArray().Single();
+        Assert.Equal(onClock, Int(pick, "teamId"));
+        Assert.True(pick.GetProperty("wasAutoPick").GetBoolean());
+    }
+
+    [Fact]
     public async Task Skipping_spends_one_token_and_moves_the_clock_on()
     {
         var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
@@ -113,6 +163,79 @@ public class SkipTests : DraftScenarioBase
 
         // The next team on the clock sees no stale options.
         Assert.Empty(await OfferedIdsAsync(admin, draftId));
+    }
+
+    [Fact]
+    public async Task A_voluntary_skip_records_the_options_it_passed_on()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
+        var onClock = Int(await StateAsync(admin, draftId), "onClockTeamId");
+
+        // Open a tier, note the options, then skip instead of picking.
+        (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/offer", new { teamId = onClock, tier = C }))
+            .EnsureSuccessStatusCode();
+        var offered = await OfferedIdsAsync(admin, draftId);
+        Assert.NotEmpty(offered);
+
+        (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/skip", new { teamId = onClock }))
+            .EnsureSuccessStatusCode();
+
+        // The skip carries the passed run: every option that was offered, same tier.
+        var skip = (await StateAsync(admin, draftId)).GetProperty("skips").EnumerateArray().Single();
+        Assert.False(skip.GetProperty("wasAuto").GetBoolean());
+        var others = JsonSerializer.Deserialize<List<JsonElement>>(skip.GetProperty("otherOptions").GetString()!)!;
+        Assert.Equal(offered.Count, others.Count);
+        Assert.All(others, o => Assert.Equal("C", o.GetProperty("tier").GetString()));
+    }
+
+    [Fact]
+    public async Task An_auto_skip_with_no_tier_opened_shows_the_lowest_tier_options()
+    {
+        var (admin, draftId, _) = await StartWithAsync("coach-1", "coach-2");
+
+        // The clock lapses without a tier ever opened → auto-skip. Even though the
+        // coach never picked a tier, the skip still shows a passed run sampled from
+        // the lowest tier they owe (C on a fresh roster), so a timed-out skip is
+        // never a blank row.
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+        }
+
+        var skip = (await StateAsync(admin, draftId)).GetProperty("skips").EnumerateArray().Single();
+        Assert.True(skip.GetProperty("wasAuto").GetBoolean());
+        Assert.Equal(JsonValueKind.String, skip.GetProperty("otherOptions").ValueKind);
+        var others = JsonSerializer.Deserialize<List<JsonElement>>(skip.GetProperty("otherOptions").GetString()!)!;
+        Assert.NotEmpty(others);
+        Assert.All(others, o => Assert.Equal("C", o.GetProperty("tier").GetString()));
+    }
+
+    [Fact]
+    public async Task An_auto_skip_after_opening_a_tier_shows_those_options()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
+        var onClock = Int(await StateAsync(admin, draftId), "onClockTeamId");
+
+        // Open a HIGHER tier (B) than the auto-skip fallback would pick, then let
+        // the window lapse. The passed run must be the B options they actually
+        // opened — not the C fallback.
+        (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/offer", new { teamId = onClock, tier = B }))
+            .EnsureSuccessStatusCode();
+        var offered = await OfferedIdsAsync(admin, draftId);
+        Assert.NotEmpty(offered);
+
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+        }
+
+        var skip = (await StateAsync(admin, draftId)).GetProperty("skips").EnumerateArray().Single();
+        Assert.True(skip.GetProperty("wasAuto").GetBoolean());
+        var others = JsonSerializer.Deserialize<List<JsonElement>>(skip.GetProperty("otherOptions").GetString()!)!;
+        Assert.Equal(offered.Count, others.Count);
+        Assert.All(others, o => Assert.Equal("B", o.GetProperty("tier").GetString()));
     }
 
     [Fact]

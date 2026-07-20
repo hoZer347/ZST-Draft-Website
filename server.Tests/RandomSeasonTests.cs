@@ -62,7 +62,9 @@ public class RandomSeasonTests : DraftScenarioBase
             {
                 using var scope = Factory.Services.CreateScope();
                 var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
-                Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+                // preferSkip: false so a timed-out turn fills a pick here rather
+                // than auto-skipping (this loop is modelling picks, not deferrals).
+                Assert.True((await engine.AutoPickAsync(draftId, preferSkip: false)).Ok);
             }
             else
             {

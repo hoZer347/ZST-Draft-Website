@@ -332,7 +332,9 @@ public class DraftTests : IAsyncLifetime
         using (var scope = _factory.Services.CreateScope())
         {
             var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
-            var result = await engine.AutoPickAsync(draftId);
+            // preferSkip: false so we exercise the pick path directly (a real
+            // timeout would auto-SKIP first while the team still holds skips).
+            var result = await engine.AutoPickAsync(draftId, preferSkip: false);
             Assert.True(result.Ok);
         }
 
@@ -354,7 +356,9 @@ public class DraftTests : IAsyncLifetime
         using (var scope = _factory.Services.CreateScope())
         {
             var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
-            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+            // preferSkip: false so this exercises the pick path (a real timeout
+            // would auto-SKIP first while the team still holds skips).
+            Assert.True((await engine.AutoPickAsync(draftId, preferSkip: false)).Ok);
         }
 
         var after = await StateAsync(admin, draftId);

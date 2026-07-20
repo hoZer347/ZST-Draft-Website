@@ -1,5 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using DraftLeague.Web.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DraftLeague.Web.Tests;
 
@@ -136,6 +139,18 @@ public class DraftSettingsTests : DraftScenarioBase
     public async Task The_clock_auto_picks_when_the_pick_deadline_passes()
     {
         var (admin, draftId, _) = await StartWithAsync("p1", "p2"); // default (long) timeout
+
+        // Drain the on-clock team's skips so a lapsed window falls through to an
+        // auto PICK. With skips in hand a missed window auto-SKIPS first instead
+        // (covered in SkipTests).
+        var onClock = Int(await StateAsync(admin, draftId), "onClockTeamId");
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var team = await db.Teams.FirstAsync(t => t.Id == onClock);
+            team.SkipsRemaining = 0;
+            await db.SaveChangesAsync();
+        }
 
         // Force the current pick's clock to have already expired…
         (await admin.PostAsync($"/dev/drafts/{draftId}/expire", null)).EnsureSuccessStatusCode();

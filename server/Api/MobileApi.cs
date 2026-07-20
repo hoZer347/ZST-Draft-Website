@@ -284,9 +284,10 @@ public static class MobileApi
                 .Include(d => d.Order)
                 .Include(d => d.Offered).ThenInclude(o => o.PokemonEntry)
                 .Include(d => d.Picks).ThenInclude(p => p.PokemonEntry)
-                // Split query: five independent collections (Teams, TierRules,
-                // Order, Offered, Picks) in one statement cartesian-multiply, so
-                // this GET got slower with every pick. Separate queries keep it flat.
+                .Include(d => d.Skips)
+                // Split query: several independent collections (Teams, TierRules,
+                // Order, Offered, Picks, Skips) in one statement cartesian-multiply,
+                // so this GET got slower with every pick. Separate queries keep it flat.
                 .AsSplitQuery()
                 .FirstOrDefaultAsync(d => d.Id == draftId, ct);
 
@@ -336,6 +337,12 @@ public static class MobileApi
                 canReady,
                 // Pre-start settings, so the admin panel can show current values.
                 weeks = draft.League.SeasonWeeks,
+                // The season is capped at one full round-robin, so with few players
+                // it runs shorter than the setting. This is what will actually be
+                // scheduled given who's in (readied players pre-start, teams after).
+                scheduledWeeks = Math.Min(
+                    draft.League.SeasonWeeks,
+                    ScheduleApi.SingleRoundRobinWeeks(draft.League.Teams.Count > 0 ? draft.League.Teams.Count : readyIds.Count)),
                 pickTimerSeconds = draft.League.PickTimerSeconds,
                 secondsRemaining = draft.PickDeadline is null
                     ? (int?)null
@@ -369,6 +376,11 @@ public static class MobileApi
                         // JSON snapshot of the options passed on this turn (client parses it).
                         p.OtherOptions,
                     }),
+                // Passed turns, interleaved into the feed client-side by
+                // afterPickNumber (the skip sits right after that pick).
+                skips = draft.Skips
+                    .OrderBy(s => s.Id)
+                    .Select(s => new { s.Id, s.TeamId, s.AfterPickNumber, s.WasAuto, s.OtherOptions }),
             });
         });
 
@@ -517,39 +529,147 @@ public static class MobileApi
             return r.Ok ? Results.Ok() : Results.BadRequest(new { error = r.Error });
         });
 
-        // A sim stand-in coach id is name-derived, so it has non-digits; a real
-        // Discord account id is an all-numeric snowflake. That's how we keep the
-        // view-as feature to dummies and never a real member.
-        static bool IsDummyId(string discordId) => discordId.Length > 0 && discordId.Any(c => !char.IsDigit(c));
+        // Admin: ready ANY account into the not-yet-started draft (dummy or real
+        // player), so a test roster can be filled without logging in as each. The
+        // coach's own /ready endpoint only readies themselves; this lets the admin
+        // do it on anyone's behalf.
+        admin.MapPost("/drafts/{draftId:int}/participants/{discordId}", async (
+            int draftId, string discordId, ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+            var draft = await db.Drafts.FindAsync([draftId], ct);
+            if (draft is null) return Results.NotFound();
+            if (draft.State != DraftState.NotStarted)
+                return Results.BadRequest(new { error = "The draft has already started." });
+            if (discordId == AuthApi.AdminDiscordId)
+                return Results.BadRequest(new { error = "The oversee-admin can't be a player." });
+            if (!await db.Users.AnyAsync(u => u.DiscordId == discordId, ct))
+                return Results.NotFound(new { error = "No such account." });
 
-        // The dummy coaches an admin may view as: a team's coach with a synthetic id.
+            if (!await db.DraftParticipants.AnyAsync(p => p.DraftId == draftId && p.DiscordId == discordId, ct))
+            {
+                db.DraftParticipants.Add(new DraftParticipant { DraftId = draftId, DiscordId = discordId });
+                await db.SaveChangesAsync(ct);
+                await notifier.ReadyChangedAsync(draftId, ct);
+            }
+            return Results.Ok();
+        });
+
+        // Admin: un-ready an account from the not-yet-started draft.
+        admin.MapDelete("/drafts/{draftId:int}/participants/{discordId}", async (
+            int draftId, string discordId, ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+            var draft = await db.Drafts.FindAsync([draftId], ct);
+            if (draft is null) return Results.NotFound();
+            if (draft.State != DraftState.NotStarted)
+                return Results.BadRequest(new { error = "The draft has already started." });
+
+            var removed = await db.DraftParticipants
+                .Where(p => p.DraftId == draftId && p.DiscordId == discordId)
+                .ExecuteDeleteAsync(ct);
+            if (removed > 0) await notifier.ReadyChangedAsync(draftId, ct);
+            return Results.Ok();
+        });
+
+        // The users an admin may view as: everyone in the league roster (the same
+        // left-hand player list), minus the admin themselves and the reserved
+        // oversee-admin identity (which isn't a real player).
         admin.MapGet("/dummies", async (ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
         {
             if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
-            var coaches = await db.Teams.Select(t => new { t.CoachId, t.CoachName }).ToListAsync(ct);
-            var dummies = coaches
-                .Where(c => IsDummyId(c.CoachId))
-                .GroupBy(c => c.CoachId)
-                .Select(g => g.First())
-                .OrderBy(c => c.CoachName, StringComparer.OrdinalIgnoreCase)
-                .Select(c => new { discordId = c.CoachId, username = c.CoachName })
-                .ToList();
-            return Results.Ok(dummies);
+            var meId = me.DiscordId();
+            var users = await db.Users
+                .Where(u => u.DiscordId != AuthApi.AdminDiscordId && u.DiscordId != meId)
+                .OrderBy(u => u.Username)
+                .Select(u => new { discordId = u.DiscordId, username = u.Username })
+                .ToListAsync(ct);
+            return Results.Ok(users);
         });
 
-        // Mint a session for a dummy coach so the admin can browse as them. Guarded
-        // twice: admin-only, and the target must be a synthetic, non-admin account —
-        // a real member's session can never be handed out this way.
+        // Create a fresh dummy coach (a synthetic, non-Discord account) and, if the
+        // draft hasn't started, ready it in so it joins the roster + draft. Admin-only
+        // and dev-friendly: the way to fill a test league now that the fixed debug
+        // slots are gone.
+        admin.MapPost("/dummies", async (ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            // Next free "dummy-N" id (N is 1-based and skips any that already exist).
+            var taken = (await db.Users.Where(u => u.DiscordId.StartsWith("dummy-")).Select(u => u.DiscordId).ToListAsync(ct))
+                .ToHashSet();
+            var n = 1;
+            while (taken.Contains($"dummy-{n}")) n++;
+            var id = $"dummy-{n}";
+            var user = new User { DiscordId = id, Username = $"Dummy {n}" };
+            db.Users.Add(user);
+
+            // Ready it into the current not-yet-started draft, so it shows as a readied
+            // player and gets a team at Start (like a coach who readied up).
+            var draft = await db.Drafts.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+            var readied = false;
+            if (draft is not null && draft.State == DraftState.NotStarted)
+            {
+                db.DraftParticipants.Add(new DraftParticipant { DraftId = draft.Id, DiscordId = id });
+                readied = true;
+            }
+
+            await db.SaveChangesAsync(ct);
+            await notifier.PlayersChangedAsync(ct); // roster grew — refresh everyone
+            return Results.Ok(new { discordId = id, username = user.Username, readied });
+        });
+
+        // Bulk companion to Add dummy: ready EVERY existing dummy coach into the
+        // current not-yet-started draft in one click, so a test roster fills without
+        // adding them one at a time. Admin-only. Real Discord accounts (all-digit
+        // snowflake ids) and the reserved oversee-admin are never touched.
+        admin.MapPost("/dummies/ready-all", async (ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            var draft = await db.Drafts.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+            if (draft is null || draft.State != DraftState.NotStarted)
+                return Results.BadRequest(new { error = "The draft has already started." });
+
+            // A dummy is any synthetic account: a non-numeric id (a real Discord id
+            // is an all-digit snowflake), excluding the oversee-admin. EF can't
+            // translate "has a non-digit char", so filter in memory.
+            var dummyIds = (await db.Users.Select(u => u.DiscordId).ToListAsync(ct))
+                .Where(id => id != AuthApi.AdminDiscordId && id.Length > 0 && id.Any(c => !char.IsDigit(c)))
+                .ToList();
+
+            var already = (await db.DraftParticipants
+                    .Where(p => p.DraftId == draft.Id)
+                    .Select(p => p.DiscordId)
+                    .ToListAsync(ct))
+                .ToHashSet();
+
+            var toAdd = dummyIds.Where(id => !already.Contains(id)).ToList();
+            foreach (var id in toAdd)
+                db.DraftParticipants.Add(new DraftParticipant { DraftId = draft.Id, DiscordId = id });
+
+            if (toAdd.Count > 0)
+            {
+                await db.SaveChangesAsync(ct);
+                await notifier.ReadyChangedAsync(draft.Id, ct);
+            }
+            return Results.Ok(new { readied = toAdd.Count });
+        });
+
+        // Mint a session for another user so the admin can browse as them. Admin-only.
+        // Any account in the league can be viewed as (bar the reserved oversee-admin);
+        // the caller is already an admin, so being handed a member's view is no
+        // privilege escalation.
         admin.MapPost("/impersonate", async (
             ImpersonateRequest req, ClaimsPrincipal me, AppDbContext db, TokenService tokens, CancellationToken ct) =>
         {
             if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
             if (string.IsNullOrWhiteSpace(req.DiscordId)) return Results.BadRequest(new { error = "No account given." });
+            if (req.DiscordId == AuthApi.AdminDiscordId)
+                return Results.BadRequest(new { error = "The oversee-admin identity can't be viewed as." });
 
             var target = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == req.DiscordId, ct);
             if (target is null) return Results.NotFound(new { error = "No such account." });
-            if (target.IsAdmin || !IsDummyId(target.DiscordId))
-                return Results.BadRequest(new { error = "Only simulated dummy accounts can be viewed as." });
 
             var pair = await tokens.IssueAsync(target, "Admin view-as", ct);
             return Results.Ok(new
