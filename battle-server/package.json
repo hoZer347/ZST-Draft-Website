@@ -5,7 +5,7 @@
   "type": "commonjs",
   "description": "Self-hosted Pokemon Showdown battle server + orchestration bridge for the draft league.",
   "scripts": {
-    "test": "node --test test/pack.test.js test/format.test.js test/server.test.js",
+    "test": "node --test test/pack.test.js test/format.test.js test/server.test.js test/random-team.test.js test/seed-teams.test.js",
     "sim": "node scripts/simulate.js",
     "showdown": "node scripts/showdown.js",
     "serve": "node scripts/serve.js",

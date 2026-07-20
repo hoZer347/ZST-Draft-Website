@@ -183,3 +183,23 @@ Live updates arrive on the `/hubs/draft` SignalR hub
 (`turnChanged`, `pickMade`, `optionsOffered`, `pickSkipped`, `pickRolledBack`,
 `draftStateChanged`); the client re-reads `GET /api/drafts/{id}` on each and
 falls back to 5s polling if the socket drops.
+
+## Frontend layout conventions
+
+- **No page-level horizontal scrollbar, at any width.** A scrollbar belongs on
+  the specific container that needs it — never on the page as a whole. The root
+  clips horizontal overflow (`html { overflow-x: hidden }` in
+  [web/style.css](web/style.css)); anything genuinely wider than the viewport
+  (e.g. the stats table) scrolls inside its own `overflow-x: auto` box.
+- **Full-bleed views** (`.layout`, `.stats-view`, `#view-teambuilder`) break out
+  of `main`'s centered 760px column with `width: 100vw` and a
+  `margin-left: calc(50% - 50vw)` pull. `100vw` counts the vertical scrollbar's
+  gutter, so without the root clip above it overflows a few px and yields a
+  permanent bottom scrollbar.
+- **Tier list fits the width by design.** `.tl-grid` is
+  `repeat(auto-fill, minmax(116px, 1fr))`: it packs as many cards per row as fit
+  and stretches them to fill, so the row count adapts to the viewport and never
+  overflows. Reflow the row density by changing the `116px` minimum, not by
+  adding scroll.
+- Prefer bounded, scoped scroll (`.sched-scroll` caps its own height) over
+  letting content push the page wider or taller than it needs to be.

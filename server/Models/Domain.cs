@@ -21,13 +21,20 @@ public class League
     /// <summary>Discord user id of the league owner.</summary>
     public required string OwnerId { get; set; }
 
+    /// <summary>Default pick timeout (24 hours) — restored on abort so the
+    /// settings panel shows a clean slate for the next draft.</summary>
+    public const int DefaultPickTimerSeconds = 86400;
+
+    /// <summary>Default season length, restored on abort alongside the timeout.</summary>
+    public const int DefaultSeasonWeeks = 8;
+
     /// <summary>Seconds each coach gets per pick before auto-pick fires. Default
     /// 24 hours — draft leagues usually pick asynchronously over days.</summary>
-    public int PickTimerSeconds { get; set; } = 86400;
+    public int PickTimerSeconds { get; set; } = DefaultPickTimerSeconds;
 
     /// <summary>How many weeks the season runs — the default the round-robin
     /// schedule is generated over. Set before the draft starts.</summary>
-    public int SeasonWeeks { get; set; } = 8;
+    public int SeasonWeeks { get; set; } = DefaultSeasonWeeks;
 
     public List<Team> Teams { get; set; } = [];
     public List<PokemonEntry> Pool { get; set; } = [];
@@ -75,7 +82,9 @@ public class Team
 
     /// <summary>
     /// Total battle turns across every game this team has played, scraped from
-    /// the replays. The denominator for each of its mons' Presence.
+    /// the replays. The denominator for each of its mons' Presence. Counts each
+    /// turn once (not per field slot), so the team's mons sum to 100% in singles
+    /// and 200% in doubles, where two are active per turn.
     /// </summary>
     public int BattleTurns { get; set; }
 
@@ -270,14 +279,36 @@ public class PokemonStat
     /// <summary>Turns this mon was on the field, summed across its games.</summary>
     public int ActiveTurns { get; set; }
 
-    /// <summary>Cumulative % of a full HP bar dealt to opponents.</summary>
-    public double DamageDealt { get; set; }
-    /// <summary>Cumulative % of a full HP bar taken.</summary>
-    public double DamageTaken { get; set; }
+    /// <summary>
+    /// Total turns of the games this mon actually played in, summed — i.e. each
+    /// game's full turn count added once per game the mon was brought to. The
+    /// denominator for in-game ("usage") presence: ActiveTurns / PlayedTurns is
+    /// the share of the field it held across only the games it appeared in,
+    /// independent of how often it was brought. (Season presence divides
+    /// ActiveTurns by the team's BattleTurns across every game instead.)
+    /// </summary>
+    public int PlayedTurns { get; set; }
+
+    /// <summary>Direct (move) damage dealt to opponents, cumulative % of a full HP bar.</summary>
+    public double DamageDealtDirect { get; set; }
+    /// <summary>Indirect damage dealt to opponents — hazards, status chip, Rocky Helmet, Leech Seed — cumulative %.</summary>
+    public double DamageDealtIndirect { get; set; }
+    /// <summary>Direct friendly-fire damage dealt to your own allies (spread moves), cumulative %. Excluded from Dealt by default.</summary>
+    public double DamageDealtAllyDirect { get; set; }
+    /// <summary>Indirect friendly-fire damage dealt to allies, cumulative % (rare). Excluded from Dealt by default.</summary>
+    public double DamageDealtAllyIndirect { get; set; }
+    /// <summary>Direct (move) damage taken from opponents, cumulative %.</summary>
+    public double DamageTakenDirect { get; set; }
+    /// <summary>Indirect damage taken from others — opposing hazards, status, weather — cumulative %.</summary>
+    public double DamageTakenIndirect { get; set; }
+    /// <summary>Self-inflicted damage — recoil, Life Orb, Toxic/Flame Orb, confusion, crash, HP-cost moves — cumulative %. Kept out of the taken totals.</summary>
+    public double DamageTakenSelf { get; set; }
     /// <summary>Self-healing (Recover/Roost/Leftovers/drain…), cumulative %.</summary>
     public double HpRecovered { get; set; }
     /// <summary>Healing given to allies, cumulative %.</summary>
     public double HpHealed { get; set; }
+    /// <summary>Healing given to opponents (Heal Pulse on a foe, your Grassy Terrain healing them), cumulative %. Excluded from Healed by default.</summary>
+    public double HpHealedEnemy { get; set; }
     public int Crits { get; set; }
 }
 
@@ -299,6 +330,18 @@ public class Match
     public MatchResult Result { get; set; } = MatchResult.Pending;
     public DateTimeOffset? ScheduledFor { get; set; }
     public string? ReplayUrl { get; set; }
+
+    /// <summary>
+    /// The scored battle log for this match — from the headless sim or fetched from
+    /// a submitted replay. Kept so the result + per-mon stats can be backed out
+    /// (and recomputed) if the replay is changed or removed, without re-fetching.
+    /// Null while the match is Pending (no replay).
+    /// </summary>
+    public string? ReplayLog { get; set; }
+
+    /// <summary>Which battle side ("p1"/"p2") was the home team in ReplayLog — needed
+    /// to attribute the stored log's stats back to the right team on a back-out.</summary>
+    public string? ReplayHomeSide { get; set; }
 
     /// <summary>
     /// Pokémon left standing on each side, read off the submitted replay — the

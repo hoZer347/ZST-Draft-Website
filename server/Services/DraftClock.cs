@@ -65,7 +65,24 @@ public class DraftClock(IServiceScopeFactory scopes, ILogger<DraftClock> log) : 
             if (remaining <= 0)
             {
                 _warned.RemoveWhere(w => w.DraftId == d.Id);
-                await engine.AutoPickAsync(d.Id, ct);
+
+                // Drain every already-expired pick in this one sweep, rather than
+                // one per 1s tick. With a normal timeout the next pick's deadline
+                // lands in the future and the loop stops after a single auto-pick;
+                // with a ~0 timeout each new deadline is already past, so the whole
+                // draft fast-forwards to completion here (simulating a quick draft).
+                // The guard is a backstop against an unexpected non-advancing state.
+                for (var guard = 0; guard < 2000; guard++)
+                {
+                    var r = await engine.AutoPickAsync(d.Id, ct);
+                    if (!r.Ok) break; // draft complete, paused, or errored
+
+                    var next = await db.Drafts
+                        .Where(x => x.Id == d.Id && x.State == DraftState.Running)
+                        .Select(x => x.PickDeadline)
+                        .FirstOrDefaultAsync(ct);
+                    if (next is null || next.Value > DateTimeOffset.UtcNow) break; // caught up
+                }
                 continue;
             }
 

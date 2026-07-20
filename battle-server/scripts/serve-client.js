@@ -29,6 +29,93 @@ const MIME = {
 };
 const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '.txt']);
 
+// Auto-login the coach into the self-hosted Showdown client when the draft app's
+// Teambuilder tab opens it with ?name=<coach>. Our server runs noguestsecurity,
+// so a chosen name needs no login-server assertion — we send `/trn <name>,0,`.
+// Kept in our launcher, not the vendored client, so it survives a client rebuild.
+//
+// Two parts, because timing matters:
+//  - CAPTURE_HEAD runs FIRST (injected right after <head>), before any client
+//    script. The classic client strips the query string during init
+//    (history.replaceState in dispatchFragment); on our same-origin dev host that
+//    init now runs immediately, so a bottom-of-page read would find ?name already
+//    gone. Capturing it up top — into window + sessionStorage — beats that race.
+//  - AUTOLOGIN runs LAST (appended after the client scripts, once `app` exists)
+//    and drives the login off the captured name.
+// The team-seeding logic lives in lib/seed-teams.js (pure + unit-tested). We inline
+// its SOURCE into the page so the browser and the Node tests run the identical code
+// — the file attaches `seedTeams` to window. A second script then reads the URL +
+// localStorage, calls it, and writes the result back.
+const SEED_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'seed-teams.js'), 'utf8');
+
+const CAPTURE_HEAD = `<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  try {
+    var n = q.get('name');
+    if (n) { window.__zstName = n; try { sessionStorage.setItem('zst_name', n); } catch (e) {} }
+  } catch (e) {}
+})();
+</script>
+<script>${SEED_LIB}</script>
+<script>
+(function () {
+  // Seed matchup weeks (blank) + demo teams (filled) into localStorage before the
+  // client loads teams from it. All the rules live in seedTeams (lib/seed-teams.js).
+  // ?matchups = [{w: week, o: opponentName}]; ?demo = [{player, team}].
+  try {
+    var q = new URLSearchParams(location.search);
+    var matchups = []; try { var mp = q.get('matchups'); if (mp) matchups = JSON.parse(mp) || []; } catch (e) {}
+    var demo = []; try { var dm = q.get('demo'); if (dm) demo = JSON.parse(dm) || []; } catch (e) {}
+    if ((matchups.length || demo.length) && typeof seedTeams === 'function') {
+      var raw = ''; try { raw = localStorage.getItem('showdown_teams') || ''; } catch (e) {}
+      var res = seedTeams(raw, { matchups: matchups, demo: demo });
+      if (res.changed) { try { localStorage.setItem('showdown_teams', res.text); } catch (e) {} }
+    }
+  } catch (e) {}
+})();
+</script>`;
+
+const AUTOLOGIN = `
+<script>
+(function () {
+  try {
+    var name = window.__zstName;
+    if (!name) { try { name = sessionStorage.getItem('zst_name'); } catch (e) {} }
+    if (!name) return;
+    var clean = name.replace(/[|,;]+/g, '');
+    var wantId = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    var tries = 0, lastSend = -999;
+    var iv = setInterval(function () {
+      if (++tries > 480) { clearInterval(iv); return; } // ~120s then give up
+      // Wait for the classic client's app + a received challstr.
+      if (!window.app || !app.user || !app.user.challstr) return;
+      var uid = app.user.get && app.user.get('userid');
+      if (uid === wantId) {
+        // Logged in as the desired name. Force the top-right userbar to re-render
+        // (its 'change' handler can miss the first update if the topbar wasn't
+        // built yet), then stop.
+        if (app.topbar && app.topbar.updateUserbar) app.topbar.updateUserbar();
+        clearInterval(iv);
+        return;
+      }
+      // Keep resending /trn (empty token; our server runs noguestsecurity) every
+      // ~1.5s until the rename lands. The common failure is a coach reopening the
+      // teambuilder while their just-closed tab's same-name session is still
+      // registered server-side: handleRename refuses the merge with |nametaken|
+      // until that stale connection drops, after which the same-IP merge
+      // succeeds. The server runs with nothrottle on, so repeated renames aren't
+      // rate-limited. (This used to cap at 3 sends and gave up while the old
+      // session was still lingering, leaving the coach an unnamed Guest.)
+      if (tries - lastSend >= 6) {
+        app.send('/trn ' + clean + ',0,');
+        lastSend = tries;
+      }
+    }, 250);
+  } catch (e) { /* never break the client over auto-login */ }
+})();
+</script>`;
+
 // path -> { mtimeMs, raw, gz } — files don't change at runtime, so cache the
 // gzipped bytes after the first hit instead of recompressing 15 MB per request.
 const cache = new Map();
@@ -37,8 +124,23 @@ function load(file) {
   const stat = fs.statSync(file); // throws if missing → caught by caller
   const hit = cache.get(file);
   if (hit && hit.mtimeMs === stat.mtimeMs) return hit;
-  const raw = fs.readFileSync(file);
+  let raw = fs.readFileSync(file);
   const ext = path.extname(file);
+  // The SPA shell is served for every client-side route. This shell has no
+  // <head>/<body> — it goes straight to <meta>/<script> tags. Inject CAPTURE_HEAD
+  // before the FIRST <script> so it grabs ?name before any client script can
+  // strip the query string, and append AUTOLOGIN after the client scripts so it
+  // runs last, once `app` exists.
+  if (path.basename(file) === 'index-old.html') {
+    let html = raw.toString('utf8');
+    // Insert before the first EXTERNAL script (`<script ... src=`). The very
+    // first <script> in this shell is inside an `<!--[if lte IE 8]>` conditional
+    // comment, so a naive `<script` match would bury CAPTURE_HEAD in a block
+    // modern browsers never run. The first external script is the earliest real
+    // client JS, so running just before it still beats the query-string strip.
+    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n';
+    raw = Buffer.from(html, 'utf8');
+  }
   const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;
   const entry = { mtimeMs: stat.mtimeMs, raw, gz, ext };
   cache.set(file, entry);
@@ -47,6 +149,30 @@ function load(file) {
 
 http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
+
+  // Stand in for the Showdown login server's action.php. We don't run one; the
+  // battle server uses `noguestsecurity`, so coaches log in by name via the
+  // teambuilder's `/trn <name>,0,` auto-login. But the classic client, on every
+  // `|challstr|`, POSTs `act=upkeep` here and sets `app.user.loaded = true` ONLY
+  // in that request's SUCCESS callback (client.js receiveChallstr). With no
+  // login server the POST 404s, `loaded` never flips, and the top-left userbar
+  // is stuck on a disabled "Loading…" button forever (client-topbar.js:
+  // `if (!app.user.loaded) buf = 'Loading…'`). Reply with a minimal "no session"
+  // upkeep body so `loaded` flips true and the userbar renders; the `/trn`
+  // auto-login then names the coach. The leading `]` is the anti-JSON-hijack
+  // prefix the client's Storage.safeJSON strips. A non-empty body is required:
+  // safeJSON bails on an empty response, which would leave `loaded` false.
+  if (url.endsWith('/action.php')) {
+    const body = ']' + JSON.stringify({ username: '', loggedin: false, assertion: '' });
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-cache',
+      'access-control-allow-origin': '*',
+    });
+    res.end(body);
+    return;
+  }
+
   if (url.endsWith('/')) url += 'index-old.html';
   const file = path.join(ROOT, url);
   if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
@@ -58,11 +184,12 @@ http.createServer((req, res) => {
     // SPA (index-old.html). Missing assets (with an extension) are a real 404.
     if (!path.extname(url)) {
       try { entry = load(path.join(ROOT, 'index-old.html')); }
-      catch { res.writeHead(404).end(); return; }
+      catch { console.log('404', req.url); res.writeHead(404).end(); return; }
     } else {
-      res.writeHead(404).end(); return;
+      console.log('404', req.url); res.writeHead(404).end(); return;
     }
   }
+  console.log('200', req.url);
 
   const headers = {
     'content-type': MIME[entry.ext] || 'application/octet-stream',

@@ -21,6 +21,9 @@ public class DraftLeagueFactory : WebApplicationFactory<Program>, IAsyncLifetime
     private readonly string _dbPath =
         Path.Combine(Path.GetTempPath(), $"draftleague-test-{Guid.NewGuid():N}.db");
 
+    /// <summary>Shared secret the /api/showdown/report tests send as X-Report-Secret.</summary>
+    public const string ReportSecret = "test-report-secret";
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
@@ -28,7 +31,12 @@ public class DraftLeagueFactory : WebApplicationFactory<Program>, IAsyncLifetime
         // Tests must not reach out to the live Google Sheet on every draft start
         // (slow, flaky, offline in CI). Blank disables the pool sync.
         builder.ConfigureAppConfiguration(cfg =>
-            cfg.AddInMemoryCollection(new Dictionary<string, string?> { ["Pokedex:SheetCsvUrl"] = "" }));
+            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Pokedex:SheetCsvUrl"] = "",
+                // Lets the server-to-server /api/showdown/report path be exercised.
+                ["Showdown:ReportSecret"] = ReportSecret,
+            }));
 
         builder.ConfigureServices(services =>
         {

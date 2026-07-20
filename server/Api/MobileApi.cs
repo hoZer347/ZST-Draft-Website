@@ -154,6 +154,81 @@ public static class MobileApi
             return Results.Ok(pool);
         });
 
+        // Pre-built random teams from the signed-in coach's own drafted roster —
+        // the teambuilder's "pre-build my teams" seed (a ready starter team per
+        // week the coach can then edit). Best-effort: empty if the roster or the
+        // generator is unavailable.
+        api.MapGet("/teams/random", async (int? count, ClaimsPrincipal me, AppDbContext db, NodeTeamGenerator gen, CancellationToken ct) =>
+        {
+            var discordId = me.DiscordId();
+            if (discordId is null) return Results.Unauthorized();
+
+            var team = await db.Teams.FirstOrDefaultAsync(t => t.CoachId == discordId, ct);
+            if (team is null) return Results.Ok(new { teams = Array.Empty<string>() });
+
+            var picks = await db.Picks.Include(p => p.PokemonEntry)
+                .Where(p => p.TeamId == team.Id).ToListAsync(ct);
+            var roster = picks.Select(p =>
+                !string.IsNullOrWhiteSpace(p.PokemonEntry.Sprite) && !p.PokemonEntry.Sprite.StartsWith("http")
+                    ? p.PokemonEntry.Sprite
+                    : p.PokemonEntry.Name).ToList();
+
+            var teams = await gen.GenerateAsync(roster, Math.Clamp(count ?? 1, 1, 30), ct) ?? [];
+            return Results.Ok(new { teams });
+        });
+
+        // Admin-only: one demo random team per player who's READIED UP for the draft,
+        // keyed by the player's name — for the admin to seed onto their own device (a
+        // folder per player) as examples. A demo team is built from the player's
+        // drafted roster if they have one, otherwise from the whole league pool (so it
+        // works before the draft, when readied players have no picks yet). Falls back
+        // to one team per existing Team when nobody has readied (e.g. a sim league).
+        // Best-effort: a player the generator can't build gets an empty team.
+        api.MapGet("/teams/demo", async (ClaimsPrincipal me, AppDbContext db, NodeTeamGenerator gen, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            var draft = await db.Drafts.Include(d => d.League).ThenInclude(l => l.Teams)
+                .OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+            if (draft is null) return Results.Ok(new { teams = Array.Empty<object>() });
+
+            static string Slug(PokemonEntry e) =>
+                !string.IsNullOrWhiteSpace(e.Sprite) && !e.Sprite.StartsWith("http") ? e.Sprite : e.Name;
+
+            // The full pool — the source for a player who hasn't drafted yet.
+            var pool = (await db.Pokemon.Where(p => p.LeagueId == draft.LeagueId).ToListAsync(ct))
+                .Select(Slug).ToList();
+
+            // Each team's drafted roster, so a player who HAS drafted gets their own mons.
+            var teamIds = draft.League.Teams.Select(t => t.Id).ToList();
+            var rosterByTeam = (await db.Picks.Include(p => p.PokemonEntry)
+                    .Where(p => teamIds.Contains(p.TeamId)).ToListAsync(ct))
+                .GroupBy(p => p.TeamId)
+                .ToDictionary(g => g.Key, g => g.Select(p => Slug(p.PokemonEntry)).ToList());
+
+            var users = (await db.Users.ToListAsync(ct)).ToDictionary(u => u.DiscordId, u => u.Username);
+
+            // The readied-up players, in ready order. If nobody's readied, fall back to
+            // whatever teams exist (covers a simulated league with no ready-ups).
+            var readied = await db.DraftParticipants.Where(p => p.DraftId == draft.Id)
+                .OrderBy(p => p.ReadyAt).Select(p => p.DiscordId).ToListAsync(ct);
+
+            var coaches = readied.Count > 0
+                ? readied.Select(id => (
+                    name: users.GetValueOrDefault(id, id),
+                    teamId: draft.League.Teams.FirstOrDefault(t => t.CoachId == id)?.Id)).ToList()
+                : draft.League.Teams.OrderBy(t => t.Id).Select(t => (name: t.CoachName, teamId: (int?)t.Id)).ToList();
+
+            var rosters = coaches
+                .Select(c => (IReadOnlyList<string>)(c.teamId is int tid
+                    && rosterByTeam.TryGetValue(tid, out var r) && r.Count > 0 ? r : pool))
+                .ToList();
+            var packed = await gen.GenerateBatchAsync(rosters, ct) ?? [];
+
+            var result = coaches.Select((c, i) => new { player = c.name, team = i < packed.Count ? packed[i] : "" });
+            return Results.Ok(new { teams = result });
+        });
+
         // Accrued battle stats for every drafted mon that has played, scraped
         // from the season's replays. One row per pick (a mon on a team).
         api.MapGet("/stats", async (AppDbContext db, CancellationToken ct) =>
@@ -171,11 +246,17 @@ public static class MobileApi
                     trainer = s.Pick.Team.CoachName,
                     team = s.Pick.Team.Name,
                     activeTurns = s.ActiveTurns,
+                    playedTurns = s.PlayedTurns, // denominator for in-game (usage) presence
                     teamTurns = s.Pick.Team.BattleTurns,
                     gp = s.GamesPlayed,
                     k = s.Kills, d = s.Deaths, w = s.Wins, l = s.Losses,
-                    dealt = s.DamageDealt, taken = s.DamageTaken,
-                    recovered = s.HpRecovered, healed = s.HpHealed, crits = s.Crits,
+                    dealt = s.DamageDealtDirect + s.DamageDealtIndirect,
+                    dealtDirect = s.DamageDealtDirect, dealtIndirect = s.DamageDealtIndirect,
+                    dealtAllyDirect = s.DamageDealtAllyDirect, dealtAllyIndirect = s.DamageDealtAllyIndirect,
+                    taken = s.DamageTakenDirect + s.DamageTakenIndirect,
+                    takenDirect = s.DamageTakenDirect, takenIndirect = s.DamageTakenIndirect,
+                    takenSelf = s.DamageTakenSelf,
+                    recovered = s.HpRecovered, healed = s.HpHealed, healedEnemy = s.HpHealedEnemy, crits = s.Crits,
                 })
                 .ToListAsync(ct);
             return Results.Ok(rows);
@@ -229,8 +310,7 @@ public static class MobileApi
                 .ToListAsync(ct);
             var myReady = myDiscordId is not null && readyIds.Contains(myDiscordId);
             var canReady = draft.State == DraftState.NotStarted
-                           && myDiscordId is not null
-                           && myDiscordId != DebugSlotsApi.AdminDiscordId;
+                           && myDiscordId is not null;
 
             // Progress is measured in actual picks, not order positions: skips and
             // finished-team auto-skips make the position index sparse, so the
@@ -299,8 +379,6 @@ public static class MobileApi
         {
             var discordId = me.DiscordId();
             if (discordId is null) return Results.Unauthorized();
-            if (discordId == DebugSlotsApi.AdminDiscordId)
-                return Results.BadRequest(new { error = "The admin oversees the draft and doesn't play." });
 
             var draft = await db.Drafts.FindAsync([draftId], ct);
             if (draft is null) return Results.NotFound();
@@ -398,14 +476,15 @@ public static class MobileApi
             // numbers the admin sees on the panel are the ones the draft runs with.
             // StartAsync reads PickTimerSeconds off this same tracked league, so the
             // new clock takes effect immediately.
+            //
+            // Never 400 the Start over settings. Weeks stays sane (the round-robin
+            // needs at least one). The pick timeout is taken exactly as given — even
+            // 0, which makes every pick auto-fire immediately so a draft can be
+            // fast-forwarded/simulated. Negatives (a past deadline) behave like 0.
             if (req is not null)
             {
-                if (req.Weeks is < 1 or > 52)
-                    return Results.BadRequest(new { error = "Weeks must be between 1 and 52." });
-                if (req.PickTimerSeconds is < 30 or > 604800)
-                    return Results.BadRequest(new { error = "Timeout must be between 30 seconds and 7 days." });
-                draft.League.SeasonWeeks = req.Weeks;
-                draft.League.PickTimerSeconds = req.PickTimerSeconds;
+                draft.League.SeasonWeeks = Math.Clamp(req.Weeks, 1, 52);
+                draft.League.PickTimerSeconds = Math.Max(0, req.PickTimerSeconds);
                 await db.SaveChangesAsync(ct);
             }
 
@@ -418,8 +497,7 @@ public static class MobileApi
             if (!r.Ok) return Results.BadRequest(new { error = r.Error });
 
             // Teams exist now that the draft has started, so lay down the season's
-            // round-robin automatically — there's no separate "generate" step. The
-            // week count is the league's SeasonWeeks (set on the Draft settings).
+            // round-robin automatically over the configured number of weeks.
             await ScheduleApi.GenerateAsync(db, draft.LeagueId, draft.League.SeasonWeeks, ct);
             await hub.Clients.All.SendAsync("scheduleChanged", new { leagueId = draft.LeagueId }, ct);
             return Results.Ok();
@@ -439,8 +517,53 @@ public static class MobileApi
             return r.Ok ? Results.Ok() : Results.BadRequest(new { error = r.Error });
         });
 
+        // A sim stand-in coach id is name-derived, so it has non-digits; a real
+        // Discord account id is an all-numeric snowflake. That's how we keep the
+        // view-as feature to dummies and never a real member.
+        static bool IsDummyId(string discordId) => discordId.Length > 0 && discordId.Any(c => !char.IsDigit(c));
+
+        // The dummy coaches an admin may view as: a team's coach with a synthetic id.
+        admin.MapGet("/dummies", async (ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+            var coaches = await db.Teams.Select(t => new { t.CoachId, t.CoachName }).ToListAsync(ct);
+            var dummies = coaches
+                .Where(c => IsDummyId(c.CoachId))
+                .GroupBy(c => c.CoachId)
+                .Select(g => g.First())
+                .OrderBy(c => c.CoachName, StringComparer.OrdinalIgnoreCase)
+                .Select(c => new { discordId = c.CoachId, username = c.CoachName })
+                .ToList();
+            return Results.Ok(dummies);
+        });
+
+        // Mint a session for a dummy coach so the admin can browse as them. Guarded
+        // twice: admin-only, and the target must be a synthetic, non-admin account —
+        // a real member's session can never be handed out this way.
+        admin.MapPost("/impersonate", async (
+            ImpersonateRequest req, ClaimsPrincipal me, AppDbContext db, TokenService tokens, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+            if (string.IsNullOrWhiteSpace(req.DiscordId)) return Results.BadRequest(new { error = "No account given." });
+
+            var target = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == req.DiscordId, ct);
+            if (target is null) return Results.NotFound(new { error = "No such account." });
+            if (target.IsAdmin || !IsDummyId(target.DiscordId))
+                return Results.BadRequest(new { error = "Only simulated dummy accounts can be viewed as." });
+
+            var pair = await tokens.IssueAsync(target, "Admin view-as", ct);
+            return Results.Ok(new
+            {
+                accessToken = pair.AccessToken,
+                refreshToken = pair.RefreshToken,
+                accessExpiresAt = pair.AccessExpiresAt,
+                user = await AuthApi.BuildMeAsync(db, target, ct),
+            });
+        });
     }
 }
+
+public record ImpersonateRequest(string DiscordId);
 
 public static class PrincipalExtensions
 {

@@ -341,4 +341,39 @@ public class DraftTests : IAsyncLifetime
         Assert.Contains(Int(pick, "pokemonEntryId"), offeredIds);
         Assert.True(pick.GetProperty("wasAutoPick").GetBoolean());
     }
+
+    [Fact]
+    public async Task An_auto_pick_with_no_tier_opened_still_snapshots_passed_options()
+    {
+        // A coach whose clock expires WITHOUT ever opening a tier had nothing
+        // offered to snapshot — the feed used to show them with an empty "passed"
+        // run. Now the engine samples the picked tier's remaining pool so an
+        // auto-pick reads like a manual one.
+        var (admin, draftId, _) = await StartWithAsync("p1", "p2");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId)).Ok);
+        }
+
+        var after = await StateAsync(admin, draftId);
+        var pick = after.GetProperty("picks").EnumerateArray().Single();
+        Assert.True(pick.GetProperty("wasAutoPick").GetBoolean());
+
+        // otherOptions is a JSON string of the passed run.
+        var othersRaw = pick.GetProperty("otherOptions");
+        Assert.Equal(JsonValueKind.String, othersRaw.ValueKind);
+        var others = JsonSerializer.Deserialize<List<JsonElement>>(othersRaw.GetString()!)!;
+        Assert.NotEmpty(others);
+
+        // Every passed option is the SAME tier as the pick and is NOT the pick itself.
+        var pickedName = pick.GetProperty("name").GetString();
+        var pickedTier = pick.GetProperty("tier").GetString();
+        Assert.All(others, o =>
+        {
+            Assert.Equal(pickedTier, o.GetProperty("tier").GetString());
+            Assert.NotEqual(pickedName, o.GetProperty("name").GetString());
+        });
+    }
 }

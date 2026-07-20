@@ -79,13 +79,30 @@ fs.writeFileSync(tablePath, "exports.BattleTeambuilderTable = JSON.parse('" + js
 // Make our tier codes typeable in the teambuilder's Pokémon search: add each as
 // a "tier" token to the (sorted) search index, so typing S / A / X / etc. offers
 // a tier filter just like typing OU/Uber does. Idempotent.
+//
+// CRITICAL: search-index.js exports FOUR things — BattleSearchIndex plus the
+// parallel BattleSearchIndexOffset (per-entry word-boundary metadata for
+// typeahead) and BattleSearchCountIndex / BattleArticleTitles. Earlier this
+// rewrote the file with ONLY BattleSearchIndex, so the offset table vanished and
+// the teambuilder's Pokémon search threw "BattleSearchIndexOffset is not defined"
+// on every keystroke — no filtering by ability/move/type at all. We keep the
+// offset paired with its entry through the filter+sort (it's per-entry metadata,
+// not a position, so re-sorting is safe) and re-emit all the exports.
 const idxPath = path.join(ROOT, 'client', 'play.pokemonshowdown.com', 'data', 'search-index.js');
-const { BattleSearchIndex: idx } = require(idxPath);
+const searchMod = require(idxPath);
+const idx = searchMod.BattleSearchIndex;
+const off = searchMod.BattleSearchIndexOffset || [];
 const TOKENS = ['s', 'a', 'b', 'c', 'x', 'z'];
-const cleaned = idx.filter((e) => !(e[1] === 'tier' && TOKENS.includes(e[0])));
-for (const t of TOKENS) cleaned.push([t, 'tier']);
-cleaned.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)); // index is sorted by id
-fs.writeFileSync(idxPath, 'exports.BattleSearchIndex = ' + JSON.stringify(cleaned) + ';\n');
+let pairs = idx.map((e, i) => ({ e, o: off[i] != null ? off[i] : '' }));
+pairs = pairs.filter((p) => !(p.e[1] === 'tier' && TOKENS.includes(p.e[0])));
+// A tier token is one word, so its offset string is all zeros (one per char).
+for (const t of TOKENS) pairs.push({ e: [t, 'tier'], o: '0'.repeat(t.length) });
+pairs.sort((a, b) => (a.e[0] < b.e[0] ? -1 : a.e[0] > b.e[0] ? 1 : 0)); // index stays sorted by id
+let out = 'exports.BattleSearchIndex = ' + JSON.stringify(pairs.map((p) => p.e)) + ';\n';
+out += 'exports.BattleSearchIndexOffset = ' + JSON.stringify(pairs.map((p) => p.o)) + ';\n';
+if (searchMod.BattleSearchCountIndex) out += 'exports.BattleSearchCountIndex = ' + JSON.stringify(searchMod.BattleSearchCountIndex) + ';\n';
+if (searchMod.BattleArticleTitles) out += 'exports.BattleArticleTitles = ' + JSON.stringify(searchMod.BattleArticleTitles) + ';\n';
+fs.writeFileSync(idxPath, out);
 
 for (const [k, counts] of Object.entries(report)) {
   if (counts) console.log(k.padEnd(18), JSON.stringify(counts));

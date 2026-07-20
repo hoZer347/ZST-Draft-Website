@@ -18,9 +18,11 @@ exports.Formats = [
   },
   {
     name: "[Gen 9] ZST Season 4",
-    desc: "National Dex draft league. Megas legal (base form + stone). Custom bans and clauses below.",
+    desc: "National Dex Doubles draft league. Megas legal (base form + stone). Custom bans and clauses below.",
     mod: 'gen9',
-    // Singles. Built on the National Dex standard so megas / origin formes work.
+    // Doubles (2v2, bring 4). Built on the National Dex standard so megas /
+    // origin formes work; gameType switches it from singles to doubles.
+    gameType: 'doubles',
     ruleset: [
       'Standard NatDex',
       'Dynamax Clause',       // no Dynamax
@@ -34,6 +36,12 @@ exports.Formats = [
       'Swagger',
       'Revival Blessing',
       'Hidden Power',
+      // Zippy Zap (+1 evasion via a 100% self-secondary) is NOT covered by the
+      // Evasion Moves Clause, so ban it explicitly. Double Team / Minimize are
+      // already banned BY that clause — listing them here too is a duplicate that
+      // Showdown rejects with "Rule already exists in Evasion Moves Clause",
+      // which crashes the server worker on load. Do not re-add them here.
+      'Zippy Zap',
       // All type gems banned; the plain Normal Gem stays legal.
       'Fire Gem', 'Water Gem', 'Electric Gem', 'Grass Gem', 'Ice Gem', 'Fighting Gem',
       'Poison Gem', 'Ground Gem', 'Flying Gem', 'Psychic Gem', 'Bug Gem', 'Rock Gem',

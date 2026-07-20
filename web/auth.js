@@ -18,6 +18,9 @@ const Auth = (() => {
   const STORE = 'draft.auth';
   const VERIFIER = 'draft.pkce.verifier';
   const STATE = 'draft.oauth.state';
+  // While an admin is "viewing as" a dummy coach, their own session is stashed
+  // here so they can pop straight back without re-logging-in.
+  const IMPERSONATOR = 'draft.auth.impersonator';
 
   const load = () => { try { return JSON.parse(localStorage.getItem(STORE)) ?? null; } catch { return null; } };
   const save = (v) => localStorage.setItem(STORE, JSON.stringify(v));
@@ -31,8 +34,63 @@ const Auth = (() => {
 
   const randomString = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 
+  // SubtleCrypto (crypto.subtle) only exists in a secure context — HTTPS or
+  // localhost. Opening the dev site on a phone over the LAN (plain http://<ip>)
+  // leaves crypto.subtle undefined, and `crypto.subtle.digest(...)` threw
+  // "Cannot read properties of undefined (reading 'digest')" during login. This
+  // pure-JS SHA-256 is the fallback so the S256 PKCE challenge still works there;
+  // production runs over HTTPS and uses the native digest.
+  function sha256(bytes) {
+    const K = new Uint32Array([
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]);
+    let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a,
+      h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+    const l = bytes.length, bitLen = l * 8, withOne = l + 1;
+    const total = withOne + (56 - (withOne % 64) + 64) % 64 + 8;
+    const m = new Uint8Array(total);
+    m.set(bytes);
+    m[l] = 0x80;
+    const dv = new DataView(m.buffer);
+    dv.setUint32(total - 8, Math.floor(bitLen / 0x100000000));
+    dv.setUint32(total - 4, bitLen >>> 0);
+    const w = new Uint32Array(64), rotr = (x, n) => (x >>> n) | (x << (32 - n));
+    for (let off = 0; off < total; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+      for (let i = 0; i < 64; i++) {
+        const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+        const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+      h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+    }
+    const out = new Uint8Array(32), od = new DataView(out.buffer);
+    [h0, h1, h2, h3, h4, h5, h6, h7].forEach((h, i) => od.setUint32(i * 4, h));
+    return out;
+  }
+
   async function challengeFor(verifier) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    const data = new TextEncoder().encode(verifier);
+    const digest = crypto.subtle
+      ? await crypto.subtle.digest('SHA-256', data)
+      : sha256(data);
     return b64url(digest);
   }
 
@@ -43,7 +101,17 @@ const Auth = (() => {
   // ── login / logout ───────────────────────────────────────────────────
 
   async function login() {
-    const cfg = await fetch(`${apiBase}/api/auth/config`).then((r) => r.json());
+    // Guard the response: when the API is down/restarting, the Cloudflare tunnel
+    // returns an HTML error page, and a bare .json() throws the cryptic
+    // "Unexpected token '<'". Turn that into a clear, retryable message.
+    let cfg;
+    try {
+      const res = await fetch(`${apiBase}/api/auth/config`);
+      if (!res.ok) throw new Error(`server returned ${res.status}`);
+      cfg = await res.json();
+    } catch {
+      throw new Error('Server is unavailable right now — please try again in a moment.');
+    }
     if (!cfg.configured) {
       throw new Error('Discord login is not configured on the server (see AUTH_SETUP.md)');
     }
@@ -65,68 +133,51 @@ const Auth = (() => {
     location.assign(`${cfg.authorizeUrl}?${params}`);
   }
 
-  // ── debug slots (dev only) ───────────────────────────────────────────
-  // Four fixed dummy players either client can claim instead of a Discord
-  // login. The server tracks claims and shares them across clients, so the web
-  // app and the phone see the same slots as taken. All of this 404s against a
-  // deployed server — the endpoints only exist in Development.
+  // ── admin: view as a simulated dummy coach ───────────────────────────
 
-  const CLIENT = 'draft.debug.client';
-
-  /** A stable id for this browser, so "claimed by web-abc123" means something. */
-  function clientId() {
-    let id = localStorage.getItem(CLIENT);
-    if (!id) { id = 'web-' + randomString().slice(0, 6); localStorage.setItem(CLIENT, id); }
-    return id;
-  }
-
-  async function devSlots() {
-    const res = await fetch(`${apiBase}/dev/slots`);
-    if (!res.ok) throw new Error('Debug slots need the API running in Development');
+  /** Admin-only: the sim-generated coaches an admin can browse as. */
+  async function loadDummies() {
+    const res = await authFetch('/api/admin/dummies');
+    if (!res.ok) throw new Error('Could not load dummy accounts');
     return res.json();
   }
 
   /**
-   * Claim a slot and sign in as it. Stores a session shape-identical to a real
-   * Discord login, plus the slot index so logout can release it. Returns the
-   * server's body (notably previousHolder — who, if anyone, held it before).
+   * Swap the current admin session for a dummy coach's, stashing the admin one so
+   * stopImpersonating() can restore it. Only the first swap stashes, so a chain of
+   * view-as jumps still returns to the real admin.
    */
-  async function claimSlot(index) {
-    const res = await fetch(`${apiBase}/dev/slots/${index}/claim`, {
+  async function impersonate(discordId) {
+    const res = await authFetch('/api/admin/impersonate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client: clientId() }),
+      body: JSON.stringify({ discordId }),
     });
-    if (!res.ok) throw new Error('Could not claim that slot — is the API in Development?');
-
-    const body = await res.json();
-    save({
-      accessToken: body.accessToken,
-      refreshToken: body.refreshToken,
-      expiresAt: body.accessExpiresAt,
-      user: body.user,
-      slotIndex: index,
-    });
-    return body;
-  }
-
-  /**
-   * Sign in as the reserved admin — no Discord, no slot, and not listed as a
-   * player. Stores a session shaped like a real login (no slotIndex, so logout
-   * just revokes the token). Dev-only: the endpoint 404s on a deployed server.
-   */
-  async function adminLogin() {
-    const res = await fetch(`${apiBase}/dev/admin`, { method: 'POST' });
-    if (!res.ok) throw new Error('Admin sign-in needs the API running in Development');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error ?? 'Could not view as that account');
+    }
+    if (!localStorage.getItem(IMPERSONATOR)) {
+      const cur = localStorage.getItem(STORE);
+      if (cur) localStorage.setItem(IMPERSONATOR, cur);
+    }
     save(await res.json());
   }
 
+  /** The stashed admin's user, if currently viewing as a dummy — else null. */
+  function impersonator() {
+    try { return JSON.parse(localStorage.getItem(IMPERSONATOR))?.user ?? null; } catch { return null; }
+  }
+
+  /** Restore the stashed admin session. No network call. */
+  function stopImpersonating() {
+    const stash = localStorage.getItem(IMPERSONATOR);
+    if (stash) { localStorage.setItem(STORE, stash); localStorage.removeItem(IMPERSONATOR); }
+  }
+
   async function logout() {
+    localStorage.removeItem(IMPERSONATOR);
     const s = load();
-    // Free the debug slot first so the other clients see it open again.
-    if (s?.slotIndex != null) {
-      try { await fetch(`${apiBase}/dev/slots/${s.slotIndex}/release`, { method: 'POST' }); } catch { /* stale claim is harmless */ }
-    }
     if (s?.refreshToken) {
       // Best-effort: the local session goes regardless.
       try {
@@ -199,18 +250,27 @@ const Auth = (() => {
     const s = load();
     if (!s?.refreshToken) return false;
 
-    const res = await fetch(`${apiBase}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: s.refreshToken }),
-    });
-    if (!res.ok) { clear(); return false; }
+    let res;
+    try {
+      res = await fetch(`${apiBase}/api/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: s.refreshToken }),
+      });
+    } catch {
+      // Network error / server unreachable — transient. Keep the session so a
+      // later call can retry; the local dev API restarts constantly (watchdog),
+      // and clearing here logged the user in and out every time it blipped.
+      return classifyRefresh({ networkError: true }) === 'save';
+    }
 
-    // The refresh response has no slotIndex; carry the debug slot across so
-    // logout can still release it after a token rotation.
-    const fresh = await res.json();
-    if (s.slotIndex != null) fresh.slotIndex = s.slotIndex;
-    save(fresh);
+    // classifyRefresh keeps the login-logout-flicker rule in one testable place:
+    // only a definitive 401/403 clears; a 5xx (server restarting) is transient.
+    const decision = classifyRefresh({ status: res.status, ok: res.ok });
+    if (decision === 'clear') { clear(); return false; }
+    if (decision !== 'save') return false;
+
+    save(await res.json());
     return true;
   }
 
@@ -239,9 +299,10 @@ const Auth = (() => {
    */
   function forget() {
     clear();
+    localStorage.removeItem(IMPERSONATOR);
     sessionStorage.removeItem(VERIFIER);
     sessionStorage.removeItem(STATE);
   }
 
-  return { login, devSlots, claimSlot, adminLogin, clientId, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch };
+  return { login, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch, loadDummies, impersonate, impersonator, stopImpersonating };
 })();

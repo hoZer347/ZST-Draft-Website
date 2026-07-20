@@ -66,17 +66,20 @@ public class ReadyTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task The_reserved_admin_cannot_ready_up()
+    public async Task The_reserved_admin_can_ready_up_to_opt_in_as_a_coach()
     {
+        // The admin oversees the league without appearing as a player UNLESS they
+        // opt in by readying up (see PlayersApi) — then they're a coach like anyone.
         var admin = await Factory.SignedInAsAsync("admin", admin: true);
         var draftId = await DraftIdAsync(admin);
 
         var res = await admin.PostAsync($"/api/drafts/{draftId}/ready", null);
-        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
 
-        // …and canReady is false for the admin.
         var s = await StateAsync(admin, draftId);
-        Assert.False(s.GetProperty("canReady").GetBoolean());
+        Assert.True(s.GetProperty("canReady").GetBoolean());
+        var ready = s.GetProperty("ready").EnumerateArray().Select(x => x.GetString()).ToList();
+        Assert.Contains("admin", ready);
     }
 
     [Fact]

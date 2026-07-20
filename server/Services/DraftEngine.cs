@@ -38,6 +38,22 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     private static string RandomTera() => TeraTypes[Random.Shared.Next(TeraTypes.Length)];
 
     /// <summary>
+    /// Some C-tier mons are barred from a Tera type by league rule: megas (they
+    /// already transform, so a Tera on top is too much) and Shedinja specifically
+    /// (Tera would give its 1-HP shell a real defensive typing). Megas are the
+    /// "M-" name prefix or a "-mega" sprite slug — matched WITH the hyphen so a
+    /// species that merely contains "mega" (Meganium, Yanmega) isn't caught.
+    /// Shedinja is matched by name.
+    /// </summary>
+    private static bool TeraBarred(string name, string? sprite) =>
+        name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
+        || (sprite?.Contains("-mega", StringComparison.OrdinalIgnoreCase) ?? false)
+        || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
+
+    private static string? RollTera(Tier tier, string name, string? sprite) =>
+        tier == Tier.C && !TeraBarred(name, sprite) ? RandomTera() : null;
+
+    /// <summary>
     /// Offers a coach a random sample from a tier's remaining pool.
     ///
     /// Options are persisted, so calling this twice in one turn returns the
@@ -88,8 +104,9 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                     DraftId = draft.Id,
                     PokemonEntryId = p.Id,
                     Tier = tier,
-                    // C tier draws a Tera type; other tiers don't have one.
-                    TeraType = tier == Tier.C ? RandomTera() : null,
+                    // C tier draws a Tera type; other tiers don't have one — and
+                    // megas / Shedinja are barred even in C (see TeraBarred).
+                    TeraType = RollTera(tier, p.Name, p.Sprite),
                 });
 
             await db.SaveChangesAsync(ct);
@@ -167,15 +184,17 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                     // Randomise client-side. Ordering by Guid.NewGuid() is a SQL
                     // Server idiom that EF cannot translate for SQLite, and it
                     // threw on every tick — silently wedging the whole clock.
-                    var ids = await db.Pokemon
+                    var candidates = await db.Pokemon
                         .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier && p.DraftedByTeamId == null
                                     && !teamDex.Contains(p.DexNumber))
-                        .Select(p => p.Id)
+                        .Select(p => new { p.Id, p.Name, p.Sprite })
                         .ToListAsync(ct);
 
-                    candidateId = ids.Count == 0 ? null : ids[Random.Shared.Next(ids.Count)];
-                    // A fresh C-tier pick still needs a Tera type rolled for it.
-                    teraType = candidateId is not null && tier == Tier.C ? RandomTera() : null;
+                    var chosen = candidates.Count == 0 ? null : candidates[Random.Shared.Next(candidates.Count)];
+                    candidateId = chosen?.Id;
+                    // A fresh C-tier pick still needs a Tera type rolled for it,
+                    // unless it's a mega or Shedinja (see TeraBarred).
+                    teraType = chosen is null ? null : RollTera(tier, chosen.Name, chosen.Sprite);
                 }
 
                 if (candidateId is null) continue;
@@ -295,6 +314,12 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             draft.State = DraftState.NotStarted;
             draft.PickDeadline = null;
 
+            // Abort is a full reset, so the settings panel should offer the
+            // defaults again for the next draft, not whatever the aborted run
+            // was configured with (e.g. a 0s quick-draft timeout).
+            draft.League.SeasonWeeks = League.DefaultSeasonWeeks;
+            draft.League.PickTimerSeconds = League.DefaultPickTimerSeconds;
+
             // The schedule is downstream of the draft — clear it too, so a re-run
             // starts from a clean slate rather than fixtures for teams that are
             // about to re-draft.
@@ -335,15 +360,15 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             if (draft.State == DraftState.Running) return DraftActionResult.Fail("Already running");
 
             // Roster = coaches who readied up for this draft, in the order they
-            // did so. The reserved admin oversees the draft but never plays, and
-            // signing in no longer auto-enrols anyone — readiness is opt-in.
+            // did so. Signing in no longer auto-enrols anyone — readiness is opt-in
+            // — and the admin plays too if they choose to ready up.
             var readyIds = await db.DraftParticipants
                 .Where(p => p.DraftId == draft.Id)
                 .OrderBy(p => p.ReadyAt)
                 .Select(p => p.DiscordId)
                 .ToListAsync(ct);
             var readyUsers = await db.Users
-                .Where(u => readyIds.Contains(u.DiscordId) && u.DiscordId != Api.DebugSlotsApi.AdminDiscordId)
+                .Where(u => readyIds.Contains(u.DiscordId))
                 .ToListAsync(ct);
             // Preserve ready order (the DB Contains query doesn't guarantee it).
             var players = readyIds
@@ -480,6 +505,21 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 tier = o.Tier.ToString(),
             })
             .ToList();
+        // An auto-pick where the coach never opened a tier has nothing offered to
+        // snapshot — so sample the same tier's still-available mons to fill the
+        // "passed" run, matching what a manual pick on that tier would have shown.
+        if (others.Count == 0 && auto)
+        {
+            var offered = draft.League.TierRules.FirstOrDefault(r => r.Tier == tier)?.OptionsOffered ?? 3;
+            var pool = await db.Pokemon
+                .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier
+                            && p.DraftedByTeamId == null && p.Id != pokemonId)
+                .Select(p => new { p.Name, p.Sprite, p.DexNumber })
+                .ToListAsync(ct);
+            others = pool.OrderBy(_ => Random.Shared.Next()).Take(Math.Max(0, offered - 1))
+                .Select(p => new { name = p.Name, sprite = p.Sprite, dexNumber = p.DexNumber, tier = tier.ToString() })
+                .ToList();
+        }
         pick.OtherOptions = others.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(others) : null;
 
         db.Picks.Add(pick);

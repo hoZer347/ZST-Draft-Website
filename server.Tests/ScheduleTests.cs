@@ -24,7 +24,8 @@ public class ScheduleTests : DraftScenarioBase
         var sched = await admin.GetFromJsonAsync<JsonElement>($"/api/leagues/{leagueId}/schedule");
         var matches = sched.GetProperty("matches").EnumerateArray().ToList();
 
-        // Two teams → exactly one match per week, spanning every configured week.
+        // The schedule spans the configured number of weeks; two teams → one match
+        // per week.
         Assert.Equal(weeks, matches.Count);
         var byWeek = matches.Select(m => Int(m, "week")).OrderBy(w => w).ToList();
         Assert.Equal(Enumerable.Range(1, weeks), byWeek);
@@ -41,6 +42,22 @@ public class ScheduleTests : DraftScenarioBase
 
         // Nothing played yet, so the current week is week 1.
         Assert.Equal(1, Int(sched, "currentWeek"));
+    }
+
+    [Fact]
+    public async Task Aborting_the_draft_clears_the_schedule_but_keeps_the_teams()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
+        var leagueId = LeagueId(await StateAsync(admin, draftId));
+
+        var before = await admin.GetFromJsonAsync<JsonElement>($"/api/leagues/{leagueId}/schedule");
+        Assert.NotEmpty(before.GetProperty("matches").EnumerateArray());
+
+        (await admin.PostAsync($"/api/admin/drafts/{draftId}/abort", null)).EnsureSuccessStatusCode();
+
+        var after = await admin.GetFromJsonAsync<JsonElement>($"/api/leagues/{leagueId}/schedule");
+        Assert.Empty(after.GetProperty("matches").EnumerateArray()); // matches gone
+        Assert.NotEmpty(after.GetProperty("teams").EnumerateArray()); // teams remain (standings reset)
     }
 
     [Fact]

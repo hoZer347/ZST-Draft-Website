@@ -8,6 +8,12 @@ namespace DraftLeague.Web.Services;
 /// ally-heal, and crits. Everything is attributed by battle slot (p1a…p2b) and
 /// resolved to a drafted <see cref="Pick"/> via the supplied resolver.
 ///
+/// Indirect damage counts too, credited to its source: entry hazards (Stealth
+/// Rock, Spikes, Toxic Spikes, G-Max Steelsurge) to whoever set them, status
+/// chip (poison/burn) to whoever inflicted it, and contact/bind effects (Rocky
+/// Helmet, Rough Skin, Leech Seed) to the [of] mon — and a faint from any of
+/// these is a kill for that source, even after it has left the field.
+///
 /// HP in the log is a fraction — own side shows real HP (200/281), the opponent
 /// shows a percent (88/100) — so working in "% of max" keeps both consistent.
 ///
@@ -19,7 +25,19 @@ public static class ReplayStatsScraper
     public sealed class GameStat
     {
         public int Kills, Deaths, Crits, ActiveTurns;
-        public double Dealt, Taken, Recovered, Healed;
+        // Damage is split by source (direct = a mon's own move landing; indirect =
+        // everything else it caused/suffered — hazards, status chip, weather, Rocky
+        // Helmet, Leech Seed, recoil, Life Orb) and, for damage dealt / healing
+        // given, by target side. Dealt*/Healed count opponents / allies (the useful
+        // default); the Ally/Enemy buckets hold friendly-fire damage and enemy
+        // healing separately, so the UI can fold them in only when asked.
+        public double DealtDirect, DealtIndirect, TakenDirect, TakenIndirect, Recovered, Healed;
+        public double DealtAllyDirect, DealtAllyIndirect, HealedEnemy;
+        // Self-inflicted damage (recoil, Life Orb, own Toxic/Flame Orb, confusion,
+        // crash, HP-cost moves) is kept out of Taken — it's a mon hurting itself.
+        public double TakenSelf;
+        public double Dealt => DealtDirect + DealtIndirect;
+        public double Taken => TakenDirect + TakenIndirect;
     }
 
     /// <summary>Per-mon stats for one game, plus that game's total turn count.</summary>
@@ -39,9 +57,26 @@ public static class ReplayStatsScraper
         var slots = new Dictionary<string, SlotState>();
         SlotState Slot(string id) => slots.TryGetValue(id, out var s) ? s : slots[id] = new SlotState();
 
-        string? attacker = null;                             // slot of the move currently resolving
-        var lastDamager = new Dictionary<string, string>();  // victim slot → attacker slot (for KO credit)
-        var statusSource = new Dictionary<string, string>(); // afflicted slot → who inflicted it
+        // The mon currently occupying a slot, or null. Used to resolve a source
+        // slot to the Pick to credit.
+        Pick? PickAt(string? id) => id is not null && slots.TryGetValue(id, out var s) ? s.Pick : null;
+
+        // Swap two slot keys in a per-slot map (for Ally Switch), preserving the
+        // "missing" state so a slot that had no entry doesn't gain a stale one.
+        static void SwapKeys<T>(Dictionary<string, T> d, string a, string b)
+        {
+            var hasA = d.TryGetValue(a, out var va);
+            var hasB = d.TryGetValue(b, out var vb);
+            if (hasB) d[a] = vb!; else d.Remove(a);
+            if (hasA) d[b] = va!; else d.Remove(b);
+        }
+
+        string? attacker = null;                            // slot of the move currently resolving
+        var lastKiller = new Dictionary<string, Pick>();    // victim slot → who gets the KO if it faints
+        var statusSource = new Dictionary<string, Pick>();  // afflicted slot → who inflicted the status
+        var statusSelf = new HashSet<string>();             // slots whose status is self-inflicted (Toxic/Flame Orb)
+        var hazardOwner = new Dictionary<string, Pick>();   // "side:hazardid" → who set the hazard
+        (Pick pick, string side)? grassyTerrain = null;     // who set Grassy Terrain, and their side
         var turns = 0;
 
         foreach (var rawLine in log.Split('\n'))
@@ -63,8 +98,26 @@ public static class ReplayStatsScraper
                     slot.Pick = resolve(sid[..2], parts[3].Split(',')[0].Trim());
                     slot.Hp = parts.Length > 4 ? ParseHp(parts[4]) : 1;
                     if (slot.Pick is not null) Stat(slot.Pick); // switching in counts as "brought" (GP)
-                    lastDamager.Remove(sid);
+                    lastKiller.Remove(sid);
                     statusSource.Remove(sid);
+                    statusSelf.Remove(sid);
+                    break;
+                }
+
+                case "swap":
+                {
+                    // Ally Switch trades the two active mons on a side (…a ↔ …b).
+                    // Every per-slot fact must follow the mon to its new slot, or
+                    // damage/heal after the switch is credited to the wrong Pick.
+                    if (parts.Length < 3) break;
+                    var side = SideOf(SlotId(parts[2]));
+                    string slotA = side + "a", slotB = side + "b";
+                    SwapKeys(slots, slotA, slotB);
+                    SwapKeys(lastKiller, slotA, slotB);
+                    SwapKeys(statusSource, slotA, slotB);
+                    bool selfA = statusSelf.Contains(slotA), selfB = statusSelf.Contains(slotB);
+                    if (selfB) statusSelf.Add(slotA); else statusSelf.Remove(slotA);
+                    if (selfA) statusSelf.Add(slotB); else statusSelf.Remove(slotB);
                     break;
                 }
 
@@ -99,13 +152,73 @@ public static class ReplayStatsScraper
 
                 case "-status":
                 {
-                    // Remember who inflicted a status, so its residual chip can be
-                    // credited. Item/ability self-status (Toxic Orb, Flame Body on
-                    // the holder) has a [from] tag — don't credit an attacker then.
-                    if (parts.Length > 2 && attacker is not null && Tags(parts).name is null)
-                        statusSource[SlotId(parts[2])] = attacker;
+                    // Classify where a status came from, so its residual chip (and any
+                    // KO it leads to) is credited to the opponent that inflicted it, or
+                    // marked self-inflicted when it's the mon's own Toxic/Flame Orb.
+                    if (parts.Length < 3) break;
+                    var victimSlot = SlotId(parts[2]);
+                    var (skind, sname, sof) = Tags(parts);
+                    statusSource.Remove(victimSlot);
+                    statusSelf.Remove(victimSlot);
+                    if (sname is null && attacker is not null)
+                    {
+                        // Bare -status → the mon that just moved inflicted it.
+                        var inflictor = PickAt(attacker);
+                        if (inflictor is not null) statusSource[victimSlot] = inflictor;
+                    }
+                    else if (sname is not null && ToId(sname) == "toxicspikes")
+                    {
+                        // Poisoned on switch-in by Toxic Spikes — credit its setter.
+                        var owner = hazardOwner.GetValueOrDefault(HazardKey(SideOf(victimSlot), "Toxic Spikes"));
+                        if (owner is not null) statusSource[victimSlot] = owner;
+                    }
+                    else if (sof is not null)
+                    {
+                        // An opponent's contact ability (Flame Body, Poison Point,
+                        // Effect Spore) — the [of] mon inflicted it.
+                        var inflictor = PickAt(sof);
+                        if (inflictor is not null) statusSource[victimSlot] = inflictor;
+                    }
+                    else if (skind is "item" or "ability")
+                    {
+                        // Own Toxic Orb / Flame Orb (no [of]) — self-inflicted, so its
+                        // chip is the mon's own doing.
+                        statusSelf.Add(victimSlot);
+                    }
                     break;
                 }
+
+                case "-sidestart":
+                {
+                    // A hazard just went down. The setter is whoever just moved;
+                    // remember them so the chip it does on switch-ins is credited.
+                    if (parts.Length < 4 || attacker is null) break;
+                    var owner = PickAt(attacker);
+                    if (owner is not null) hazardOwner[HazardKey(SideOf(parts[2]), CondName(parts[3]))] = owner;
+                    break;
+                }
+
+                case "-sideend":
+                    // Hazard cleared (Rapid Spin, Defog…) — drop its owner so a
+                    // re-set later can't inherit stale credit.
+                    if (parts.Length >= 4) hazardOwner.Remove(HazardKey(SideOf(parts[2]), CondName(parts[3])));
+                    break;
+
+                case "-fieldstart":
+                {
+                    // Grassy Terrain, set by the move (attacker) or Grassy Surge on
+                    // switch-in (the [of] mon). Remember the setter and their side so
+                    // the HP it heals their allies with is credited to them.
+                    if (parts.Length < 3 || ToId(CondName(parts[2])) != "grassyterrain") break;
+                    var setter = Tags(parts).ofSlot ?? attacker;
+                    var owner = PickAt(setter);
+                    if (owner is not null && setter is not null) grassyTerrain = (owner, SideOf(setter));
+                    break;
+                }
+
+                case "-fieldend":
+                    if (parts.Length >= 3 && ToId(CondName(parts[2])) == "grassyterrain") grassyTerrain = null;
+                    break;
 
                 case "-damage":
                 {
@@ -117,17 +230,54 @@ public static class ReplayStatsScraper
                     if (delta <= 0) break;
 
                     var (_, from, ofSlot) = Tags(parts);
-                    string? dealer =
-                        from is null ? attacker :                          // direct move damage
-                        IsResidual(from) ? statusSource.GetValueOrDefault(sid) : // psn/brn/hazard chip
-                        ofSlot;                                            // Rocky Helmet, Rough Skin, Leech Seed…
-
-                    if (slot.Pick is not null) Stat(slot.Pick).Taken += delta;
-                    if (dealer is not null && dealer != sid &&
-                        slots.TryGetValue(dealer, out var d) && d.Pick is not null)
+                    // Classify the source. Direct = a move landing (no [from]). Self =
+                    // the mon hurting itself (recoil, Life Orb, own Toxic/Flame Orb,
+                    // confusion, or a move's HP cost / crash that lands on the user).
+                    // Otherwise indirect, credited to: an entry hazard's setter (even
+                    // after they've left); the status inflictor; or the [of] mon of a
+                    // contact/bind effect (Rocky Helmet, Rough Skin, Leech Seed).
+                    // dealerSlot is kept only where the source is on the field, to
+                    // tell ally from enemy.
+                    var direct = from is null;
+                    Pick? dealer; string? dealerSlot; bool self;
+                    if (direct)
                     {
-                        Stat(d.Pick).Dealt += delta;
-                        lastDamager[sid] = dealer;
+                        dealer = PickAt(attacker); dealerSlot = attacker;
+                        self = ReferenceEquals(dealer, slot.Pick); // a move's HP cost / crash on the user
+                    }
+                    else if (IsSelfSource(from!)) { dealer = null; dealerSlot = null; self = true; }
+                    else if (IsHazard(from!)) { dealer = hazardOwner.GetValueOrDefault(HazardKey(SideOf(sid), from!)); dealerSlot = null; self = false; }
+                    else if (from is "psn" or "brn")
+                    {
+                        if (statusSource.TryGetValue(sid, out var inflictor)) { dealer = inflictor; dealerSlot = null; self = false; }
+                        else { dealer = null; dealerSlot = null; self = statusSelf.Contains(sid); } // own Toxic/Flame Orb
+                    }
+                    else if (IsResidual(from!)) { dealer = statusSource.GetValueOrDefault(sid); dealerSlot = null; self = false; }
+                    else { dealer = PickAt(ofSlot); dealerSlot = ofSlot; self = false; }
+
+                    if (slot.Pick is not null)
+                    {
+                        var v = Stat(slot.Pick);
+                        if (self) v.TakenSelf += delta;
+                        else if (direct) v.TakenDirect += delta;
+                        else v.TakenIndirect += delta;
+                    }
+                    if (!self && dealer is not null && !ReferenceEquals(dealer, slot.Pick))
+                    {
+                        // Friendly fire (a spread move hitting your own ally) is kept
+                        // apart so it never inflates damage-to-opponents, and never
+                        // scores a kill.
+                        var ally = dealerSlot is not null && SameSide(dealerSlot, sid);
+                        var d = Stat(dealer);
+                        if (ally)
+                        {
+                            if (direct) d.DealtAllyDirect += delta; else d.DealtAllyIndirect += delta;
+                        }
+                        else
+                        {
+                            if (direct) d.DealtDirect += delta; else d.DealtIndirect += delta;
+                            lastKiller[sid] = dealer; // this source gets the KO if the mon faints
+                        }
                     }
                     break;
                 }
@@ -141,21 +291,54 @@ public static class ReplayStatsScraper
                     slot.Hp = ParseHp(parts[3]);
                     if (heal <= 0) break;
 
-                    var (kind, name, ofSlot) = Tags(parts);
-                    // Who to credit: a drain move heals its user (this slot); an
-                    // explicit [of] names the healer; a field/spread heal move
-                    // (Life Dew, Lunar Blessing, Pollen Puff) has no [of], so the
-                    // caster is whoever just moved. Everything else — Recover,
-                    // Roost, Leftovers, Regenerator, item/ability — is self.
-                    string? healer =
-                        name == "drain" ? sid
-                        : ofSlot is not null ? ofSlot
-                        : kind == "move" ? attacker
-                        : sid;
+                    var (_, name, ofSlot) = Tags(parts);
+                    var silent = false;
+                    for (var i = 4; i < parts.Length; i++)
+                        if (parts[i].Trim() == "[silent]") { silent = true; break; }
 
-                    if (healer is not null && healer != sid)
+                    // Who to credit. Grassy Terrain (from the move or Grassy Surge)
+                    // heals every grounded mon each turn: the HP it restores to the
+                    // setter's teammates is ally-healing credited to the setter, while
+                    // its own tick and the opponents' are self-recovery. Otherwise:
+                    // Showdown emits a BARE |-heal| (no [from]/[of]) for a move's
+                    // healing — including the ally half of Life Dew / Lunar Blessing /
+                    // Pollen Puff / Heal Pulse — so a tag-less heal on someone other
+                    // than the mon that just moved is that mover healing an ally; a
+                    // tag-less heal on the mover itself (Recover, Roost) is self.
+                    // Anything with a [from] is a self source (Leftovers, Regenerator,
+                    // Aqua Ring, Wish…) except drain, whose [of] is the victim not a
+                    // healer. [silent] heals (Leech Seed, Rest) fire at end of turn
+                    // with a stale attacker, so are never credited to it.
+                    // Resolve the healer and their side. Healing someone other than
+                    // the healer is credited as ally-healing (same side) or enemy-
+                    // healing (Heal Pulse on a foe, your Grassy Terrain topping them
+                    // up); a healerSide of null means it resolved to self-recovery.
+                    Pick? healerPick; string? healerSide;
+                    if (name is not null && ToId(name) == "grassyterrain" && grassyTerrain is not null && !ReferenceEquals(grassyTerrain.Value.pick, slot.Pick))
                     {
-                        if (slots.TryGetValue(healer, out var h) && h.Pick is not null) Stat(h.Pick).Healed += heal;
+                        healerPick = grassyTerrain.Value.pick; healerSide = grassyTerrain.Value.side;
+                    }
+                    else if (silent || name == "drain")
+                    {
+                        healerPick = slot.Pick; healerSide = null; // drain / Leech Seed / Rest → self
+                    }
+                    else if (ofSlot is not null)
+                    {
+                        healerPick = PickAt(ofSlot); healerSide = ofSlot is null ? null : SideOf(ofSlot);
+                    }
+                    else if (name is null && attacker is not null && attacker != sid)
+                    {
+                        healerPick = PickAt(attacker); healerSide = SideOf(attacker); // a move healing someone else
+                    }
+                    else
+                    {
+                        healerPick = slot.Pick; healerSide = null; // Recover, Leftovers, Regenerator, Wish… → self
+                    }
+
+                    if (healerPick is not null && healerSide is not null && !ReferenceEquals(healerPick, slot.Pick))
+                    {
+                        var s = Stat(healerPick);
+                        if (healerSide == SideOf(sid)) s.Healed += heal; else s.HealedEnemy += heal;
                     }
                     else if (slot.Pick is not null)
                     {
@@ -175,16 +358,42 @@ public static class ReplayStatsScraper
                     var slot = Slot(sid);
                     slot.Hp = 0;
                     if (slot.Pick is not null) Stat(slot.Pick).Deaths++;
-                    if (lastDamager.TryGetValue(sid, out var killer) &&
-                        slots.TryGetValue(killer, out var k) && k.Pick is not null &&
-                        !ReferenceEquals(k.Pick, slot.Pick))
-                        Stat(k.Pick).Kills++;
+                    if (lastKiller.TryGetValue(sid, out var killer) &&
+                        slot.Pick is not null && !ReferenceEquals(killer, slot.Pick))
+                        Stat(killer).Kills++;
                     break;
                 }
             }
         }
         return new Result(stats, turns);
     }
+
+    /// <summary>Showdown-style id: lowercase, alphanumerics only.</summary>
+    public static string ToId(string s)
+    {
+        Span<char> buf = stackalloc char[s.Length];
+        var n = 0;
+        foreach (var c in s)
+            if (char.IsLetterOrDigit(c)) buf[n++] = char.ToLowerInvariant(c);
+        return new string(buf[..n]);
+    }
+
+    /// <summary>
+    /// Species id with the mega suffix stripped, so a mon drafted as "M-Salamence"
+    /// (sprite "salamence-mega") and the replay's base "Salamence" both key to the
+    /// same pick. Regional/other forms are kept — they're distinct draft picks.
+    /// </summary>
+    public static string BaseId(string species)
+    {
+        var id = ToId(species);
+        if (id.EndsWith("megax") || id.EndsWith("megay")) return id[..^5];
+        if (id.EndsWith("mega")) return id[..^4];
+        return id;
+    }
+
+    /// <summary>True if two slot ids share a side (p1a/p1b, or p2a/p2b).</summary>
+    private static bool SameSide(string a, string b) =>
+        a.Length >= 2 && b.Length >= 2 && a[0] == b[0] && a[1] == b[1];
 
     /// <summary>"p1a: Nickname" → "p1a" (also handles a bare "p1a").</summary>
     private static string SlotId(string s)
@@ -193,11 +402,44 @@ public static class ReplayStatsScraper
         return (colon >= 0 ? s[..colon] : s).Trim();
     }
 
-    /// <summary>Passive chip that isn't a mon's direct hit.</summary>
+    /// <summary>An entry hazard that chips a mon on switch-in, credited to its setter.</summary>
+    private static bool IsHazard(string from) => from is
+        "Stealth Rock" or "Spikes" or "G-Max Steelsurge";
+
+    /// <summary>
+    /// Damage a mon inflicts on itself. Recoil (and Struggle) is `recoil`; Life Orb
+    /// and Sticky Barb are the holder's own item; confusion is a self-hit. Own-Orb
+    /// poison/burn is caught separately via statusSelf, and a move's HP cost / crash
+    /// via the direct-damage-on-the-user check — both are also self.
+    /// </summary>
+    private static bool IsSelfSource(string from) => from is
+        "recoil" or "Life Orb" or "Sticky Barb" or "confusion";
+
+    /// <summary>
+    /// Tag-less chip we currently leave uncredited to a dealer (still counted as the
+    /// victim's indirect damage taken): weather (Sandstorm/Hail — capitalised, the
+    /// effect.fullname), Curse/Nightmare/Salt Cure, and partial-trap "trapped".
+    /// Poison/burn are handled before this (their inflictor is remembered, or they're
+    /// self via statusSelf). NOT listed here — so they fall through to the [of] branch
+    /// — are effects that name their source: Rocky Helmet, Rough Skin/Iron Barbs,
+    /// Aftermath, Bad Dreams, Liquid Ooze, Leech Seed.
+    /// </summary>
     private static bool IsResidual(string from) => from is
-        "psn" or "brn" or "tox" or "confusion" or "Leech Seed" or "Curse" or "Nightmare"
-        or "Stealth Rock" or "Spikes" or "G-Max Steelsurge" or "sandstorm" or "hail"
-        or "Salt Cure" or "Bad Dreams" or "trapped" or "powder";
+        "Curse" or "Nightmare" or "Sandstorm" or "Hail" or "Salt Cure" or "trapped";
+
+    /// <summary>"p1a: Nickname" | "p1: Alice" | "p1a" → the side "p1"/"p2".</summary>
+    private static string SideOf(string s) { var id = SlotId(s); return id.Length >= 2 ? id[..2] : id; }
+
+    /// <summary>"move: Stealth Rock" | "Spikes" → the bare effect name.</summary>
+    private static string CondName(string cond)
+    {
+        cond = cond.Trim();
+        var colon = cond.IndexOf(':');
+        return colon >= 0 ? cond[(colon + 1)..].Trim() : cond;
+    }
+
+    /// <summary>Key for the per-side hazard owner map, e.g. ("p1", "Stealth Rock") → "p1:stealthrock".</summary>
+    private static string HazardKey(string side, string name) => side + ":" + ToId(name);
 
     /// <summary>
     /// Pull the [from] effect and [of] slot. `kind` is the prefix (item/ability/

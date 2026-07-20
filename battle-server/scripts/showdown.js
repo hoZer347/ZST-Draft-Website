@@ -32,12 +32,55 @@ function ensureLocalDevConfig() {
   let cfg;
   try { cfg = fs.readFileSync(cfgPath, 'utf8'); }
   catch { return; } // no config yet — server will create/complain on its own
-  if (/exports\.noipchecks\s*=\s*true/.test(cfg)) return; // already on
-  const patched = /exports\.noipchecks\s*=\s*false\s*;/.test(cfg)
-    ? cfg.replace(/exports\.noipchecks\s*=\s*false\s*;/, 'exports.noipchecks = true;')
-    : cfg + '\n// [draft-league] local dev: allow same-IP matchmaking\nexports.noipchecks = true;\n';
-  fs.writeFileSync(cfgPath, patched);
-  console.log('[showdown] enabled noipchecks for local same-IP matchmaking');
+
+  // Idempotently turn a boolean Config setting on. Flips an existing
+  // `exports.x = false;`, or appends `exports.x = true;` if it's absent.
+  function ensureOn(name, note) {
+    if (new RegExp(`exports\\.${name}\\s*=\\s*true`).test(cfg)) return false;
+    const off = new RegExp(`exports\\.${name}\\s*=\\s*false\\s*;`);
+    cfg = off.test(cfg)
+      ? cfg.replace(off, `exports.${name} = true;`)
+      : cfg + `\n// [draft-league] ${note}\nexports.${name} = true;\n`;
+    return true;
+  }
+
+  // noipchecks: allow same-IP matchmaking (both tabs are 127.0.0.1 on one box).
+  // noguestsecurity: accept a chosen name without a login-server assertion, so the
+  // league app can log a coach in as their Discord username (the teambuilder
+  // auto-login sends /trn <name>,0, with an empty token). Non-trusted userids
+  // only — trusted/admin names still require a real token (see users.js
+  // validateToken).
+  const a = ensureOn('noipchecks', 'local dev: allow same-IP matchmaking');
+  const b = ensureOn('noguestsecurity', 'accept Discord-name logins without a loginserver');
+  // nothrottle: lift the unregistered-rename cap (default 3 per 2 min). The
+  // teambuilder auto-login resends /trn until the rename lands, because a coach
+  // reopening the tab often collides with their just-closed session that the
+  // server still has registered (users.js handleRename refuses the merge with
+  // |nametaken| until that stale connection drops). Without nothrottle those
+  // retries hit the rate limit and the coach is left a Guest, not shown joined.
+  const c = ensureOn('nothrottle', 'dev: no rename/chat throttle so /trn auto-login can retry until a stale same-name session clears');
+
+  // Force a SINGLE worker. Showdown defaults to one worker per CPU core (~8 on
+  // this box); incoming connections round-robin across them, and on a heavily
+  // loaded dev machine some workers stall — that connection then never gets its
+  // |challstr|/|formats|, so the client's format list, match-queue button, and
+  // "Choose name" button hang on "Loading". One worker is plenty for a league
+  // and behaves deterministically. Idempotent.
+  let workersChanged = false;
+  if (/exports\.workers\s*=\s*\d+/.test(cfg)) {
+    if (!/exports\.workers\s*=\s*1\b/.test(cfg)) {
+      cfg = cfg.replace(/exports\.workers\s*=\s*\d+\s*;?/, 'exports.workers = 1;');
+      workersChanged = true;
+    }
+  } else {
+    cfg += `\n// [draft-league] single worker: reliable on a loaded dev box\nexports.workers = 1;\n`;
+    workersChanged = true;
+  }
+
+  if (a || b || c || workersChanged) {
+    fs.writeFileSync(cfgPath, cfg);
+    console.log('[showdown] patched dev config (noipchecks, noguestsecurity, nothrottle, workers=1)');
+  }
 }
 
 ensureLocalDevConfig();
@@ -60,14 +103,46 @@ function installCustomFormats() {
 
 installCustomFormats();
 
+// Install our auto-report chat plugin. On every finished battle it POSTs the log
+// to the .NET league server, which records the scheduled match. The bundled
+// server only loads plugins from dist/server/chat-plugins/, so (like the custom
+// formats) we copy our repo file in on every start.
+function installReportPlugin() {
+  const src = path.join(__dirname, '..', 'showdown-config', 'chat-plugins', 'draft-report.js');
+  const dest = path.join(psDir, 'dist', 'server', 'chat-plugins', 'draft-report.js');
+  try {
+    fs.copyFileSync(src, dest);
+    console.log('[showdown] installed draft-report plugin → dist/server/chat-plugins/');
+  } catch (e) {
+    console.warn('[showdown] could not install draft-report plugin:', e.message);
+  }
+}
+
+installReportPlugin();
+
 // The bundled server has optional chat plugins (youtube, mafia, seasons, …) that
 // persist JSON into config/chat-plugins/. That dir doesn't ship, so they log
 // noisy (non-fatal) ENOENT "CRASH" lines on write. Create it so they stay quiet.
 try { fs.mkdirSync(path.join(psDir, 'config', 'chat-plugins'), { recursive: true }); } catch { /* best effort */ }
 
+// Showdown writes each format's ladder to config/ladders/<formatid>.tsv when a
+// rated battle ends. That dir doesn't ship either, and unlike the read path (which
+// swallows ENOENT into an empty ladder) the WRITE crashes the whole worker with
+// ENOENT — taking the server down after the first laddered ZST game. Create it.
+try { fs.mkdirSync(path.join(psDir, 'config', 'ladders'), { recursive: true }); } catch { /* best effort */ }
+
+// Where the report plugin sends finished battles, and the shared-secret file the
+// .NET server writes. Passed to the server process so the plugin (running inside
+// it) can read them.
+const reportEnv = {
+  DRAFT_REPORT_URL: process.env.DRAFT_REPORT_URL || 'http://localhost:5211/api/showdown/report',
+  DRAFT_REPORT_SECRET_FILE: path.resolve(__dirname, '..', '.report-secret'),
+};
+
 const child = spawn(process.execPath, ['pokemon-showdown', 'start', port, '--skip-build'], {
   cwd: psDir,
   stdio: 'inherit',
+  env: { ...process.env, ...reportEnv },
 });
 
 child.on('exit', (code) => process.exit(code ?? 0));

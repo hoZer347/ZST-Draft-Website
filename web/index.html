@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=177">
-  <link rel="stylesheet" href="style.css?v=177">
+  <link rel="icon" href="favicon.ico?v=203">
+  <link rel="stylesheet" href="style.css?v=203">
 </head>
 <body>
   <header>
@@ -34,6 +34,11 @@
       <div id="account" class="account" hidden>
         <img id="avatar" class="avatar" alt="" hidden>
         <span id="username" class="username"></span>
+        <!-- Admin-only: view the app as a sim-generated dummy coach. -->
+        <select id="view-as" class="view-as" hidden aria-label="View as a dummy coach">
+          <option value="">View as…</option>
+        </select>
+        <button id="stop-view-as" class="linkish" hidden>← Back to admin</button>
         <button id="logout" class="linkish">Sign out</button>
       </div>
     </div>
@@ -55,15 +60,6 @@
         Sign in with Discord
       </button>
       <p id="signin-error" class="error" hidden></p>
-
-      <!-- Dev-only. Revealed by app.js on localhost; the endpoint it calls only
-           exists when the API runs in Development. -->
-      <div id="dev-login" class="dev-login" hidden>
-        <p class="muted">Debug slots — no Discord. Claim one to play as that team.</p>
-        <ul id="dev-slots" class="dev-slots"></ul>
-        <button id="dev-admin" class="dev-admin-btn">Sign in as admin (not a player)</button>
-        <button id="dev-refresh" class="linkish">Refresh</button>
-      </div>
     </section>
 
     <!-- Signed in -->
@@ -93,7 +89,20 @@
             </div>
             <div class="draft-actions">
               <button id="play" class="play-btn" hidden>▶ Start draft</button>
-              <button id="sim-season" class="linkish" hidden>Simulate season (test)</button>
+              <div class="sim-group">
+                <div class="sim-row">
+                  <button id="sim-season" class="linkish" hidden>Load ZST 3</button>
+                </div>
+                <div class="sim-row">
+                  <button id="sim-random-season" class="linkish" hidden>Simulate random</button>
+                  <label id="sim-battles-label" class="setting sim-battles" hidden>
+                    <input type="checkbox" id="sim-battles" checked> Simulate battles
+                  </label>
+                  <label id="demo-teams-label" class="setting sim-battles" hidden>
+                    <input type="checkbox" id="demo-teams"> Build demo teams
+                  </label>
+                </div>
+              </div>
               <button id="rollback" class="linkish" hidden>Undo last pick</button>
               <button id="abort" class="abort-btn" hidden>Abort draft</button>
             </div>
@@ -109,7 +118,7 @@
               <input id="set-weeks" type="number" min="1" max="52" value="8">
             </label>
             <label class="setting">Pick timeout (hours)
-              <input id="set-timeout" type="number" min="0.5" max="168" step="0.5" value="24">
+              <input id="set-timeout" type="number" min="0" max="168" step="any" value="24">
             </label>
             <span class="setting-hint muted">Applied when you start the draft.</span>
           </div>
@@ -180,6 +189,12 @@
             <label class="stats-filter">Trainer
               <select id="stats-filter-trainer"><option value="all">All</option></select>
             </label>
+            <label class="stats-filter stats-check" title="Count friendly-fire damage (spread moves hitting your own ally) in the Dealt columns.">
+              <input type="checkbox" id="stats-ally-dmg"> Damage to allies
+            </label>
+            <label class="stats-filter stats-check" title="Count HP restored to opponents (Heal Pulse on a foe, your Grassy Terrain topping them up) in the Ally-heal column.">
+              <input type="checkbox" id="stats-enemy-heal"> Healing to enemies
+            </label>
           </div>
         </div>
         <div id="stats-body"><p class="muted">Loading…</p></div>
@@ -232,10 +247,12 @@
     </div>
   </main>
 
-  <script src="config.js?v=177"></script>
-  <script src="auth.js?v=177"></script>
+  <script src="config.js?v=203"></script>
+  <script src="auth-logic.js?v=203"></script>
+  <script src="auth.js?v=203"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=177"></script>
-  <script src="app.js?v=177"></script>
+  <script src="pool-logic.js?v=203"></script>
+  <script src="teambuilder.js?v=204"></script>
+  <script src="app.js?v=203"></script>
 </body>
 </html>

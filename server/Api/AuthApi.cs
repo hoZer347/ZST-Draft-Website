@@ -22,6 +22,14 @@ public record TeamSummary(int TeamId, string TeamName, int LeagueId, string Leag
 /// </summary>
 public static class AuthApi
 {
+    /// <summary>
+    /// A reserved identity for a dev/admin token that oversees the league without
+    /// being a coach. Deliberately not a Discord snowflake (those are numeric), so a
+    /// real account can never collide with it, and the roster filters it out. Only
+    /// minted via the dev-only /dev/token route.
+    /// </summary>
+    public const string AdminDiscordId = "admin";
+
     public static void MapAuthApi(this WebApplication app, string? corsPolicy = null)
     {
         var auth = app.MapGroup("/api/auth");

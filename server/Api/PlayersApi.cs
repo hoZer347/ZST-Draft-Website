@@ -7,10 +7,8 @@ namespace DraftLeague.Web.Api;
 
 /// <summary>
 /// The roster the frontend renders down the left: every player known to the
-/// league. These are the real user rows — a person created on their first
-/// Discord login, or a debug coach once its slot has been claimed. Unclaimed
-/// dummy slots are not listed here; they live in the debug login panel until
-/// someone claims one.
+/// league. These are the real user rows, one per person created on their first
+/// Discord login (plus any synthetic coaches a simulation created).
 /// </summary>
 public static class PlayersApi
 {
@@ -23,9 +21,16 @@ public static class PlayersApi
 
         g.MapGet("/", async (AppDbContext db, CancellationToken ct) =>
         {
+            // The reserved admin oversees the league without appearing as a
+            // player — UNLESS they've opted in by readying up or already hold a
+            // team, in which case they're a coach like anyone else and belong in
+            // the roster.
+            var adminPlays =
+                await db.DraftParticipants.AnyAsync(p => p.DiscordId == AuthApi.AdminDiscordId, ct)
+                || await db.Teams.AnyAsync(t => t.CoachId == AuthApi.AdminDiscordId, ct);
+
             var players = await db.Users
-                // The reserved admin oversees the league but isn't a player.
-                .Where(u => u.DiscordId != DebugSlotsApi.AdminDiscordId)
+                .Where(u => u.DiscordId != AuthApi.AdminDiscordId || adminPlays)
                 .Select(u => new PlayerDto(
                     u.DiscordId,
                     u.Username,
@@ -42,10 +47,8 @@ public static class PlayersApi
                 .ThenBy(p => p.Username, StringComparer.OrdinalIgnoreCase));
         });
 
-        // Remove a player. Admin-only — this deletes a real account, same class
-        // of destructive op as the admin draft controls. A removed dummy coach
-        // simply reappears (unclaimed) from the seed list, and is recreated in
-        // full the next time that slot is claimed.
+        // Remove a player. Admin-only, this deletes a real account, same class of
+        // destructive op as the admin draft controls.
         g.MapDelete("/{discordId}", async (
             string discordId, ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
         {
@@ -124,8 +127,11 @@ public static class PlayersApi
                         d = p.Stat.Deaths,
                         w = p.Stat.Wins,
                         l = p.Stat.Losses,
-                        dealt = p.Stat.DamageDealt,
-                        taken = p.Stat.DamageTaken,
+                        dealt = p.Stat.DamageDealtDirect + p.Stat.DamageDealtIndirect,
+                        dealtDirect = p.Stat.DamageDealtDirect, dealtIndirect = p.Stat.DamageDealtIndirect,
+                        taken = p.Stat.DamageTakenDirect + p.Stat.DamageTakenIndirect,
+                        takenDirect = p.Stat.DamageTakenDirect, takenIndirect = p.Stat.DamageTakenIndirect,
+                        takenSelf = p.Stat.DamageTakenSelf,
                         recovered = p.Stat.HpRecovered,
                         healed = p.Stat.HpHealed,
                         crits = p.Stat.Crits,

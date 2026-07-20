@@ -52,22 +52,49 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
         await db.Teams.Where(t => t.LeagueId == leagueId).ExecuteDeleteAsync(ct);
 
         // ── teams (one per trainer, in first-seen order) ───────────────────
+        // A canned trainer is bound to a real logged-in account when one exists,
+        // so a member who has signed in owns their sim team (and sees it as "my
+        // team") instead of a name-derived stand-in. Real accounts are matched by
+        // normalised handle — the same ToId the stand-in id is built from — so
+        // Discord handles like ".hozer"/"hoZer" and "mr.whale."/"mrwhale" still
+        // line up. A stand-in is only fabricated for trainers nobody has claimed.
         var trainerOrder = data.Picks.Select(p => p.Trainer).Distinct().ToList();
         var teamByTrainer = new Dictionary<string, Team>();
+
+        var realByHandle = (await db.Users.ToListAsync(ct))
+            .Where(u => u.DiscordId != ToId(u.Username))   // a real account, not a prior stand-in
+            .GroupBy(u => ToId(u.Username))
+            .ToDictionary(g => g.Key, g => g.First());
+
         foreach (var trainer in trainerOrder)
         {
             var row = data.Picks.First(p => p.Trainer == trainer);
-            var discordId = ToId(trainer);
+            var handle = ToId(trainer);
 
-            // A roster row for the schedule/roster; and a matching user so the
-            // player list shows them (upserted — a sim trainer may already exist).
-            var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId, ct);
-            if (user is null)
-                db.Users.Add(new User { DiscordId = discordId, Username = trainer });
+            string coachId, coachName;
+            if (realByHandle.TryGetValue(handle, out var real))
+            {
+                // Bind the real account; drop any leftover stand-in for this
+                // trainer so the roster doesn't list them twice.
+                coachId = real.DiscordId;
+                coachName = real.Username;
+                await db.Users.Where(u => u.DiscordId == handle).ExecuteDeleteAsync(ct);
+            }
             else
-                user.Username = trainer;
+            {
+                // No account claimed yet — keep the name-derived stand-in so the
+                // player list still shows them (upserted; a prior sim may exist).
+                coachId = handle;
+                coachName = trainer;
+                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == handle, ct);
+                if (user is null)
+                    db.Users.Add(new User { DiscordId = handle, Username = trainer });
+                else
+                    user.Username = trainer;
+            }
 
-            var team = new Team { LeagueId = leagueId, Name = row.Team, CoachId = discordId, CoachName = trainer };
+            // Team is shown by its coach's username / dummy name — no separate team name.
+            var team = new Team { LeagueId = leagueId, Name = coachName, CoachId = coachId, CoachName = coachName };
             db.Teams.Add(team);
             teamByTrainer[trainer] = team;
         }
@@ -245,7 +272,9 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
             var team = side == "p1" ? home : away;
             return pickByTeamBase.TryGetValue(team.Id, out var map) ? map.GetValueOrDefault(BaseId(species)) : null;
         });
-        // Both teams played the same number of turns — the Presence denominator.
+        // Season-presence denominator: the game's turn count (one field slot per
+        // turn). A team's mons sum to 100% in singles and 200% in doubles, where
+        // two mons are active each turn.
         home.BattleTurns += scraped.Turns;
         away.BattleTurns += scraped.Turns;
         foreach (var (pick, gs) in scraped.Stats)
@@ -256,10 +285,18 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
             st.Deaths += gs.Deaths;
             st.Crits += gs.Crits;
             st.ActiveTurns += gs.ActiveTurns;
-            st.DamageDealt += gs.Dealt;
-            st.DamageTaken += gs.Taken;
+            st.PlayedTurns += scraped.Turns; // this game's turns count toward usage presence
+
+            st.DamageDealtDirect += gs.DealtDirect;
+            st.DamageDealtIndirect += gs.DealtIndirect;
+            st.DamageDealtAllyDirect += gs.DealtAllyDirect;
+            st.DamageDealtAllyIndirect += gs.DealtAllyIndirect;
+            st.DamageTakenDirect += gs.TakenDirect;
+            st.DamageTakenIndirect += gs.TakenIndirect;
+            st.DamageTakenSelf += gs.TakenSelf;
             st.HpRecovered += gs.Recovered;
             st.HpHealed += gs.Healed;
+            st.HpHealedEnemy += gs.HealedEnemy;
             if (result != MatchResult.Draw)
             {
                 var isHome = pick.TeamId == home.Id;

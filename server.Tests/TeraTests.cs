@@ -29,8 +29,18 @@ public class TeraTests : DraftScenarioBase
         return (teamId, client, offered);
     }
 
+    /// <summary>Mirrors DraftEngine.TeraBarred: megas and Shedinja get no Tera.</summary>
+    private static bool TeraBarred(JsonElement o)
+    {
+        var name = Str(o, "name") ?? "";
+        var sprite = Str(o, "sprite") ?? "";
+        return name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
+            || sprite.Contains("-mega", StringComparison.OrdinalIgnoreCase) // "-mega": not Meganium/Yanmega
+            || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
-    public async Task Every_C_tier_option_carries_a_known_tera_type()
+    public async Task Every_C_tier_option_carries_a_known_tera_type_unless_barred()
     {
         var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
         var (_, _, offered) = await OpenTierAsync(admin, draftId, byTeam, C);
@@ -39,9 +49,51 @@ public class TeraTests : DraftScenarioBase
         foreach (var o in offered)
         {
             var tera = Str(o, "teraType");
-            Assert.NotNull(tera);
-            Assert.Contains(tera!, KnownTeraTypes);
+            if (TeraBarred(o))
+            {
+                // Megas and Shedinja are denied a Tera type even in C tier.
+                Assert.Null(tera);
+            }
+            else
+            {
+                Assert.NotNull(tera);
+                Assert.Contains(tera!, KnownTeraTypes);
+            }
         }
+    }
+
+    [Fact]
+    public async Task C_tier_megas_and_shedinja_never_carry_a_tera_type()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("coach-1", "coach-2");
+
+        // Sweep C-tier offers across successive turns and assert any mega or
+        // Shedinja that surfaces never carries a Tera type. The general per-offer
+        // rule is covered deterministically above; this exercises the barred path
+        // on real offered options without depending on the random sample (which
+        // mon shows up varies run to run).
+        var offersChecked = 0;
+        for (var turn = 0; turn < 20; turn++)
+        {
+            var s = await StateAsync(admin, draftId);
+            if (Str(s, "state") != "Running") break;
+            var teamId = Int(s, "onClockTeamId");
+            var client = byTeam[teamId];
+
+            var resp = await client.PostAsJsonAsync($"/api/drafts/{draftId}/offer", new { teamId, tier = C });
+            if (!resp.IsSuccessStatusCode) break; // C tier exhausted for this team
+            var offered = (await StateAsync(admin, draftId)).GetProperty("offered").EnumerateArray().ToList();
+            offersChecked += offered.Count;
+
+            foreach (var o in offered.Where(TeraBarred))
+                Assert.Null(Str(o, "teraType"));
+
+            // Take the first option to advance the draft to the next coach.
+            (await client.PostAsJsonAsync($"/api/drafts/{draftId}/pick",
+                new { teamId, pokemonEntryId = Int(offered.First(), "pokemonEntryId") })).EnsureSuccessStatusCode();
+        }
+
+        Assert.True(offersChecked > 0, "expected the draft to offer C-tier options to sweep");
     }
 
     [Theory]

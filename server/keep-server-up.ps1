@@ -14,11 +14,27 @@
 
 $ErrorActionPreference = 'Continue'
 $root  = $PSScriptRoot
-$exe   = Join-Path $root 'bin\Debug\net9.0\DraftLeague.Web.exe'
+# Run a RENAMED COPY (DraftLeagueLive.exe) from run/, NOT the build output. The
+# VS Code C# Dev Kit hard-kills the running server so it can rebuild — and it
+# targets it by PROCESS NAME ("DraftLeague.Web"), so a same-named copy in run/
+# still got killed. DraftLeagueLive.exe is the same apphost renamed (it still
+# loads DraftLeague.Web.dll by the DLL's embedded name), so its process name is
+# "DraftLeagueLive" and the Dev Kit no longer matches it. Confirmed the deaths
+# were TerminateProcess (crash logs end mid-request, no shutdown message).
+# Promote a new build to live with deploy-run.ps1 (which re-creates the rename).
+$exe   = Join-Path $root 'run\DraftLeagueLive.exe'
 $pause = Join-Path $root '.server-paused'
 $pidf  = Join-Path $root '.watchdog.pid'
 $alive = Join-Path $root '.watchdog.alive'
 $logf  = Join-Path $root 'keep-server-up.log'
+# Server stdout/stderr, captured so we can see WHY it exits. Rotated to .prev on
+# each relaunch, so right after a death the .prev files hold the dead run's final
+# output: a graceful "Application is shutting down" (something asked it to stop),
+# an exception (it crashed), or an abrupt cutoff mid-log (it was hard-killed).
+$outlog  = Join-Path $root 'server.out.log'
+$errlog  = Join-Path $root 'server.err.log'
+$outprev = Join-Path $root 'server.out.prev.log'
+$errprev = Join-Path $root 'server.err.prev.log'
 # Public tunnel: a named Cloudflare tunnel exposes the local :5211 server (which
 # serves both the web app and the API) at https://dev.loomhozer.ca, and the
 # Showdown battle server (:8787) at https://showdown.loomhozer.ca. Config lives
@@ -40,9 +56,12 @@ while ($true) {
     try {
         "$(Get-Date -Format 'HH:mm:ss')" | Out-File -FilePath $alive -Encoding ascii -NoNewline
         if (-not (Test-Path $pause)) {
-            $running = Get-Process -Name 'DraftLeague.Web' -ErrorAction SilentlyContinue
+            $running = Get-Process -Name 'DraftLeagueLive' -ErrorAction SilentlyContinue
             if (-not $running -and (Test-Path $exe)) {
-                Start-Process -FilePath $exe -WorkingDirectory $root -WindowStyle Hidden
+                # Preserve the previous (just-died) run's output before overwriting.
+                if (Test-Path $outlog) { Move-Item -Force $outlog $outprev -ErrorAction SilentlyContinue }
+                if (Test-Path $errlog) { Move-Item -Force $errlog $errprev -ErrorAction SilentlyContinue }
+                Start-Process -FilePath $exe -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $outlog -RedirectStandardError $errlog
                 Log "relaunched server"
             }
         }

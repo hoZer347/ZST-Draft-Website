@@ -22,7 +22,12 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         string? Error = null,
         MatchResult Outcome = MatchResult.Pending,
         int HomeScore = 0,
-        int AwayScore = 0);
+        int AwayScore = 0,
+        // On success, the raw battle log and which Showdown side ("p1"/"p2")
+        // played the home team — everything the stats recorder needs to attribute
+        // per-mon stats without fetching or re-parsing the replay again.
+        string? Log = null,
+        string? HomeSide = null);
 
     /// <summary>
     /// Fetches and scores <paramref name="replayUrl"/> against the two teams in
@@ -30,25 +35,51 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
     /// </summary>
     public async Task<Result> ScoreAsync(Match match, string replayUrl, CancellationToken ct = default)
     {
-        if (!TryNormalize(replayUrl, out var jsonUrl))
-            return new(false, "That doesn't look like a pokemonshowdown.com replay link.");
+        var (ok, log, error) = await FetchLogAsync(replayUrl, ct);
+        if (!ok) return new(false, error);
+        return await ScoreLogAsync(match, log, ct);
+    }
 
-        string log;
+    /// <summary>
+    /// Auto-attributes a pasted pokemonshowdown.com replay to a scheduled match —
+    /// the URL equivalent of <see cref="ReportAsync"/>. For coaches who play their
+    /// game on the official Showdown server and submit the replay link afterwards.
+    /// </summary>
+    public async Task<AutoReport> ReportFromUrlAsync(string replayUrl, CancellationToken ct = default)
+    {
+        var (ok, log, error) = await FetchLogAsync(replayUrl, ct);
+        if (!ok) return new(false, error);
+        return await ReportAsync(log, ct);
+    }
+
+    /// <summary>Normalises a replay URL and pulls the battle log out of its JSON.</summary>
+    private async Task<(bool Ok, string Log, string? Error)> FetchLogAsync(string replayUrl, CancellationToken ct)
+    {
+        if (!TryNormalize(replayUrl, out var jsonUrl))
+            return (false, "", "That doesn't look like a pokemonshowdown.com replay link.");
         try
         {
             var body = await http.GetStringAsync(jsonUrl, ct);
             using var doc = JsonDocument.Parse(body);
             if (!doc.RootElement.TryGetProperty("log", out var logProp))
-                return new(false, "The replay had no battle log.");
-            log = logProp.GetString() ?? "";
+                return (false, "", "The replay had no battle log.");
+            return (true, logProp.GetString() ?? "", null);
         }
         catch (Exception ex)
         {
-            log = ""; // set for the compiler; the return below is the real path
             logger.LogWarning(ex, "Could not fetch replay {Url}", jsonUrl);
-            return new(false, "Couldn't fetch that replay — check the link and try again.");
+            return (false, "", "Couldn't fetch that replay — check the link and try again.");
         }
+    }
 
+    /// <summary>
+    /// Scores an already-in-hand battle log against the two teams in
+    /// <paramref name="match"/> — same logic as <see cref="ScoreAsync"/> minus the
+    /// fetch. Used when the log comes straight off our own Showdown server (the
+    /// auto-report path) rather than a pasted replay URL.
+    /// </summary>
+    public async Task<Result> ScoreLogAsync(Match match, string log, CancellationToken ct = default)
+    {
         var parsed = ParseLog(log);
         if (parsed.Winner is null && !parsed.Tie)
             return new(false, "The replay doesn't look finished — no winner is recorded.");
@@ -80,7 +111,8 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var awayScore = Math.Max(0, awayBrought - parsed.Faints.GetValueOrDefault(awaySide));
 
         if (parsed.Tie)
-            return new(true, Outcome: MatchResult.Draw, HomeScore: homeScore, AwayScore: awayScore);
+            return new(true, Outcome: MatchResult.Draw, HomeScore: homeScore, AwayScore: awayScore,
+                Log: log, HomeSide: homeSide);
 
         // Winner line carries a Showdown username; resolve it to a side, then to
         // home/away via the assignment we just chose.
@@ -90,7 +122,75 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
             return new(false, "Couldn't tell which side won from the replay.");
 
         var outcome = winnerSide == homeSide ? MatchResult.HomeWin : MatchResult.AwayWin;
-        return new(true, Outcome: outcome, HomeScore: homeScore, AwayScore: awayScore);
+        return new(true, Outcome: outcome, HomeScore: homeScore, AwayScore: awayScore,
+            Log: log, HomeSide: homeSide);
+    }
+
+    /// <summary>The pending match a battle log belongs to, plus its score, or why not.</summary>
+    public record AutoReport(
+        bool Ok, string? Reason = null, int MatchId = 0,
+        MatchResult Outcome = MatchResult.Pending, int HomeScore = 0, int AwayScore = 0,
+        string? HomeSide = null, string? Log = null);
+
+    /// <summary>
+    /// Given a finished battle's log (from our own Showdown server), works out which
+    /// scheduled match it is by mapping each side's revealed species to the team that
+    /// drafted them, then finds the still-pending match between those two teams and
+    /// scores it. Returns Ok=false (with a reason) for anything that isn't a league
+    /// game — teambuilder test battles, already-reported matches, etc. — so the caller
+    /// can ignore it quietly.
+    /// </summary>
+    public async Task<AutoReport> ReportAsync(string log, CancellationToken ct = default)
+    {
+        var parsed = ParseLog(log);
+        if (parsed.Winner is null && !parsed.Tie) return new(false, "no winner recorded");
+
+        var p1 = parsed.Brought.GetValueOrDefault("p1") ?? [];
+        var p2 = parsed.Brought.GetValueOrDefault("p2") ?? [];
+        if (p1.Count == 0 || p2.Count == 0) return new(false, "no mons revealed");
+
+        // species id -> the team that drafted it. Each mon belongs to exactly one
+        // team, so a side's mons resolve to a single owner: that coach's team.
+        var drafted = await db.Pokemon
+            .Where(p => p.DraftedByTeamId != null)
+            .Select(p => new { p.Name, p.Sprite, TeamId = p.DraftedByTeamId!.Value })
+            .ToListAsync(ct);
+        var owner = new Dictionary<string, int>();
+        foreach (var d in drafted)
+        {
+            owner[ToId(d.Name)] = d.TeamId;
+            if (!string.IsNullOrEmpty(d.Sprite)) owner[ToId(d.Sprite)] = d.TeamId;
+        }
+        owner.Remove("");
+
+        int? TeamOf(HashSet<string> mons)
+        {
+            var tally = new Dictionary<int, int>();
+            foreach (var m in mons)
+                if (owner.TryGetValue(m, out var tid)) tally[tid] = tally.GetValueOrDefault(tid) + 1;
+            return tally.Count == 0 ? null : tally.OrderByDescending(kv => kv.Value).First().Key;
+        }
+
+        var t1 = TeamOf(p1);
+        var t2 = TeamOf(p2);
+        if (t1 is null || t2 is null || t1 == t2)
+            return new(false, "couldn't map both sides to distinct drafted teams");
+
+        // These two teams may be scheduled against each other more than once (a
+        // double round-robin, or a longer season that wraps). Attribute the game to
+        // the most recent still-pending matchup between them.
+        var match = await db.Matches
+            .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
+            .Where(m => m.Result == MatchResult.Pending &&
+                ((m.HomeTeamId == t1 && m.AwayTeamId == t2) || (m.HomeTeamId == t2 && m.AwayTeamId == t1)))
+            .OrderByDescending(m => m.Week).ThenByDescending(m => m.ScheduledFor).ThenByDescending(m => m.Id)
+            .FirstOrDefaultAsync(ct);
+        if (match is null) return new(false, "no pending scheduled match between these teams");
+
+        var score = await ScoreLogAsync(match, log, ct);
+        if (!score.Ok) return new(false, score.Error);
+        return new(true, MatchId: match.Id, Outcome: score.Outcome, HomeScore: score.HomeScore,
+            AwayScore: score.AwayScore, HomeSide: score.HomeSide, Log: score.Log);
     }
 
     private async Task<HashSet<string>> RosterIdsAsync(int teamId, CancellationToken ct)

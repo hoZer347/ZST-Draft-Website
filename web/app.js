@@ -5,11 +5,15 @@ const $ = (id) => document.getElementById(id);
 const el = {
   signin: $('signin'), signinError: $('signin-error'), app: $('app'),
   account: $('account'), avatar: $('avatar'), username: $('username'),
+  viewAs: $('view-as'), stopViewAs: $('stop-view-as'),
   tabs: $('tabs'), ready: $('ready'), playerList: $('player-list'),
   navToggle: $('nav-toggle'), navBackdrop: $('nav-backdrop'),
   // draft
   onClock: $('on-clock'), onClockBox: $('on-clock-box'), pickNo: $('pick-no'), timer: $('timer'),
-  play: $('play'), rollback: $('rollback'), abort: $('abort'), simSeason: $('sim-season'), banner: $('state-banner'),
+  play: $('play'), rollback: $('rollback'), abort: $('abort'), simSeason: $('sim-season'),
+  simRandomSeason: $('sim-random-season'), simBattles: $('sim-battles'), simBattlesLabel: $('sim-battles-label'),
+  demoTeams: $('demo-teams'), demoTeamsLabel: $('demo-teams-label'),
+  banner: $('state-banner'),
   turn: $('turn'), turnLabel: $('turn-label'), tiers: $('tiers'), options: $('options'),
   skip: $('skip'), draftError: $('draft-error'), picks: $('picks'),
   // pre-start settings (admin)
@@ -60,8 +64,30 @@ async function signedIn() {
   if (user.avatarUrl) { el.avatar.src = user.avatarUrl; el.avatar.hidden = false; }
   else { el.avatar.hidden = true; el.avatar.removeAttribute('src'); }
 
+  renderImpersonation(user);
   loadPlayers();
   await initDraft();
+}
+
+// Admin-only "view as a dummy coach" control. Shows the picker for a real admin;
+// once viewing as someone, swaps to a "back to admin" button instead.
+async function renderImpersonation(user) {
+  // Defensive: a cached HTML/JS mismatch (missing #view-as) must not throw and
+  // break sign-in — the impersonation controls are simply absent then.
+  if (!el.viewAs || !el.stopViewAs) return;
+  const impersonating = !!Auth.impersonator();
+  el.stopViewAs.hidden = !impersonating;
+  const canPick = !impersonating && !!user.isAdmin;
+  el.viewAs.hidden = !canPick;
+  if (!canPick) return;
+  try {
+    const dummies = await Auth.loadDummies();
+    el.viewAs.replaceChildren(
+      new Option('View as…', ''),
+      ...dummies.map((d) => new Option(d.username, d.discordId)),
+    );
+    el.viewAs.hidden = dummies.length === 0;
+  } catch { el.viewAs.hidden = true; }
 }
 
 // ── players ──────────────────────────────────────────────────────────────
@@ -373,7 +399,7 @@ function battlePanel(s) {
     row('W / L', `${s.w} – ${s.l}`, { text: `${wr}%`, cls: 'tm-brow-sub' }),
     row('KO / Faint', `${s.k} / ${s.d}`, { text: sign(diff), cls: diff >= 0 ? 'good' : 'bad' }),
     row('Dmg ratio', { text: ratio, cls: s.dealt >= s.taken ? 'good' : 'bad' }),
-    row('Presence', presence),
+    row('Overall Presence', presence),
   );
   return b;
 }
@@ -482,6 +508,10 @@ async function initDraft() {
     draftId = drafts[0].id;
     leagueId = drafts[0].leagueId ?? null;
 
+    // Warm the schedule so the Teambuilder tab can seed a blank team per matchup on
+    // the very first open (best-effort, non-blocking).
+    if (leagueId != null) warmMatchups().catch(() => {});
+
     await refreshDraft();
     // Now that draft state (incl. the ready set) is loaded, re-render the roster
     // so ready markers show on first paint.
@@ -588,6 +618,9 @@ function render(s) {
   // the live site too — the server runs in Development so the endpoint exists,
   // and it's admin-gated server-side.
   el.simSeason.hidden = !(isAdmin && s.state === 'NotStarted');
+  el.simRandomSeason.hidden = !(isAdmin && s.state === 'NotStarted');
+  el.simBattlesLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // the random-sim battles toggle
+  el.demoTeamsLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // build demo teams for every player
 
   renderTurn(mine, isAdmin, s);
   renderPicks(s);
@@ -678,7 +711,8 @@ function pickRow(p) {
   const li = document.createElement('li');
   li.className = `pick pick--${p.tier}`;
 
-  // Column 1 — the draft pick itself: number, sprite, name. Left.
+  // Column 1 — the draft pick itself: number, sprite, name, and (C-tier) its Tera
+  // chip right after the name so it reads as part of the pick, not the passed run.
   const main = document.createElement('div');
   main.className = 'pick-main';
   const num = document.createElement('span');
@@ -688,14 +722,14 @@ function pickRow(p) {
   name.className = 'pick-name';
   name.textContent = p.name;
   main.append(num, monImg(p), name);
+  if (p.teraType) {
+    const tera = document.createElement('span');
+    tera.className = 'pick-tera';
+    tera.append(teraTag(p.teraType));
+    main.append(tera);
+  }
 
-  // Column 2 — the C-tier Tera type in its own aligned column (empty otherwise,
-  // so the column reserves the same width down the whole feed).
-  const tera = document.createElement('span');
-  tera.className = 'pick-tera';
-  if (p.teraType) tera.append(teraTag(p.teraType));
-
-  // Column 3 — the options offered but passed on this turn (dimmed sprites). Left.
+  // Column 2 — the options offered but passed on this turn (dimmed sprites). Left.
   const passed = document.createElement('div');
   passed.className = 'pick-others';
   let others = [];
@@ -716,7 +750,7 @@ function pickRow(p) {
     }
   }
 
-  // Column 4 — who drafted it and the tier (+ auto badge). Right.
+  // Column 3 — who drafted it and the tier (+ auto badge). Right.
   const end = document.createElement('div');
   end.className = 'pick-end';
   const who = document.createElement('span');
@@ -733,7 +767,7 @@ function pickRow(p) {
     end.append(auto);
   }
 
-  li.append(main, tera, passed, end);
+  li.append(main, passed, end);
   return li;
 }
 
@@ -772,6 +806,14 @@ function renderPicks(s) {
 function sizePicks() {
   const view = document.getElementById('view-draft');
   if (!el.picks || !view || view.hidden) return;
+  // On the stacked narrow layout the roster sits above the draft, so the pick
+  // card starts low (often below the fold). Pinning its bottom to the viewport
+  // would leave ~0 height and no way to reach it — so drop the cap and let the
+  // list flow at full height and the whole page scroll to it instead.
+  if (window.matchMedia('(max-width: 620px)').matches) {
+    el.picks.style.maxHeight = '';
+    return;
+  }
   const card = el.picks.closest('.card');
   if (!card) return;
   // Anchor the *card's* bottom to the viewport, not the list's top. The card wraps
@@ -1159,29 +1201,23 @@ function matchCard(m, size) {
     head.append(when);
   }
 
-  // home — score — away, with the winner emphasised once it's been played.
+  // Only a coach in this match, or an admin, gets the replay control.
+  const canEdit = m.mine || !!draft?.isAdmin;
+
+  // home — score(+replay button) — away, with the winner emphasised once played.
   const homeWon = m.result === 'HomeWin';
   const awayWon = m.result === 'AwayWin';
   const row = document.createElement('div');
   row.className = 'match-row';
   row.append(
     teamSide(m.homeName, m.homeTeamId === m.myTeamId, homeWon, 'home'),
-    matchMiddle(m),
+    matchMiddle(m, card, canEdit),
     teamSide(m.awayName, m.awayTeamId === m.myTeamId, awayWon, 'away'),
   );
   card.append(head, row);
 
   // Your own unplayed game: submit a replay to score it.
-  if (m.mine && !m.played) card.append(replayForm(m));
-  else if (m.replayUrl) {
-    const link = document.createElement('a');
-    link.className = 'match-replay-link';
-    link.href = m.replayUrl;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = 'Watch replay';
-    card.append(link);
-  }
+  if (!m.played && m.mine) card.append(replayForm(m));
   return card;
 }
 
@@ -1201,7 +1237,13 @@ function teamSide(name, isMe, won, which) {
   return side;
 }
 
-function matchMiddle(m) {
+// The centre of the score/players row: the score, plus — for a played match and
+// only for the two coaches in it or an admin — a dynamic replay button that
+// toggles an inline watch/edit panel beneath the card.
+function matchMiddle(m, card, canEdit) {
+  const wrap = document.createElement('div');
+  wrap.className = 'match-mid-wrap';
+
   const mid = document.createElement('div');
   mid.className = 'match-mid';
   if (m.played && m.homeScore != null && m.awayScore != null) {
@@ -1212,10 +1254,61 @@ function matchMiddle(m) {
   } else {
     mid.textContent = 'vs';
   }
-  return mid;
+  wrap.append(mid);
+
+  if (m.played && canEdit) {
+    const actions = document.createElement('div');
+    actions.className = 'match-mid-actions';
+
+    // Watch: a plain link to the replay (only when one exists).
+    if (m.replayUrl) {
+      const watch = document.createElement('a');
+      watch.className = 'match-replay-link';
+      watch.href = m.replayUrl;
+      watch.target = '_blank';
+      watch.rel = 'noopener';
+      watch.textContent = 'Watch replay';
+      actions.append(watch);
+    }
+
+    // Edit/Add: toggles the inline link editor beneath the card.
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'match-replay-btn';
+    edit.textContent = m.replayUrl ? 'Edit replay' : 'Add replay';
+    let panel = null;
+    edit.onclick = () => {
+      if (!panel) {
+        panel = replayForm(m, { prefill: m.replayUrl, submitLabel: 'Save link' });
+        panel.hidden = true; // start hidden so this first click reveals it
+        card.append(panel);
+      }
+      panel.hidden = !panel.hidden;
+      edit.classList.toggle('open', !panel.hidden);
+    };
+    actions.append(edit);
+
+    // Remove: drop the replay and return the match to Pending — the server backs
+    // its result + stats out under the hood.
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'match-replay-btn match-remove';
+    remove.textContent = 'Remove';
+    remove.onclick = async () => {
+      if (!confirm('Remove this replay? The match goes back to unplayed and its result + stats are backed out.')) return;
+      remove.disabled = true;
+      const res = await Auth.authFetch(`/api/matches/${m.id}/replay`, { method: 'DELETE' });
+      if (res.ok) { statsData = null; await ensureSchedule(); }
+      else { remove.disabled = false; showDraftError('Failed to remove the replay.'); }
+    };
+    actions.append(remove);
+
+    wrap.append(actions);
+  }
+  return wrap;
 }
 
-function replayForm(m) {
+function replayForm(m, opts = {}) {
   const form = document.createElement('form');
   form.className = 'replay-form';
 
@@ -1224,11 +1317,12 @@ function replayForm(m) {
   input.className = 'replay-input';
   input.placeholder = 'Paste your Showdown replay link…';
   input.required = true;
+  if (opts.prefill) input.value = opts.prefill;
 
   const btn = document.createElement('button');
   btn.type = 'submit';
   btn.className = 'replay-btn';
-  btn.textContent = 'Submit result';
+  btn.textContent = opts.submitLabel || 'Submit result';
 
   const msg = document.createElement('span');
   msg.className = 'replay-msg';
@@ -1250,6 +1344,17 @@ function replayForm(m) {
     await ensureSchedule();
   };
 
+  // When editing an existing link, offer a Watch link right in the panel so the
+  // coach/admin can check the replay before changing it.
+  if (opts.watchUrl) {
+    const watch = document.createElement('a');
+    watch.className = 'match-replay-link replay-watch';
+    watch.href = opts.watchUrl;
+    watch.target = '_blank';
+    watch.rel = 'noopener';
+    watch.textContent = 'Watch replay';
+    form.append(watch);
+  }
   form.append(input, btn, msg);
   return form;
 }
@@ -1270,32 +1375,46 @@ function showView(name) {
 
 let statsData = null;
 let statsSort = { key: 'plusminus', dir: -1 };
-let statsFilter = { tier: 'all', trainer: 'all' };
+let statsFilter = { tier: 'all', trainer: 'all', includeAllyDamage: false, includeEnemyHeal: false };
 let statsFiltersWired = false;
 
 const STAT_COLS = [
   { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon.' },
   { key: 'trainer', label: 'Trainer', tip: 'The coach who drafted it.' },
   { key: 'tier', label: 'Tier', badge: true, tip: 'Draft tier.' },
-  { key: 'gp', label: 'GP', num: true, tip: 'Games played — games this mon was brought to.' },
+  { key: 'gp', label: 'GP', num: true, tip: 'Games this mon was brought to.' },
   { key: 'presence', label: 'Season Pres.', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
-    tip: "Season presence — the share of ALL your team's battle turns this season that this mon was on the field. Games it wasn't brought to count as absence, so it rewards being used often." },
+    tip: "Field turns ÷ team's total turns across the season. Games it skipped count as absence, rewarding usage. Teammates sum to 100% (singles) or 200% (doubles)." },
   { key: 'gamePresence', label: 'Game Pres.', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
-    tip: 'Game presence — of the turns in only the games this mon was actually brought to, the share it stayed on the field. Independent of how often it is used.' },
+    tip: 'Of only the games it played, the share of turns it stayed on the field. Independent of usage.' },
   { key: 'k', label: 'KOs', num: true, tip: 'Opposing Pokémon knocked out.' },
   { key: 'd', label: 'Faints', num: true, tip: 'Times this mon was knocked out.' },
   { key: 'plusminus', label: '+/−', num: true, fmt: (v) => (v > 0 ? `+${v}` : `${v}`), tip: 'KOs minus Faints.' },
-  { key: 'record', label: 'W–L', num: true, text: (r) => `${r.w}–${r.l}`, tip: 'Wins–losses of the games this mon played in.' },
+  { key: 'record', label: 'W–L', num: true, text: (r) => `${r.w}–${r.l}`, tip: 'Record of games it played.' },
   { key: 'winrate', label: 'Win%', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
-    tip: 'Win rate over games played. Ties are broken by most games played.' },
-  { key: 'dealt', label: 'Dealt%', num: true, fmt: (v) => Math.round(v), tip: 'Total damage dealt, as a cumulative % of a full HP bar.' },
-  { key: 'taken', label: 'Taken%', num: true, fmt: (v) => Math.round(v), tip: 'Total damage taken, as a cumulative % of a full HP bar.' },
-  { key: 'recovered', label: 'Self-heal%', num: true, fmt: (v) => Math.round(v),
-    tip: 'HP this mon restored to itself (Recover, Roost, Leftovers, drain…), as a cumulative % of a full HP bar.' },
-  { key: 'healed', label: 'Ally-heal%', num: true, fmt: (v) => Math.round(v),
-    tip: 'HP this mon restored to allies (Heal Pulse, Life Dew, Pollen Puff…), as a cumulative % of a full HP bar.' },
+    tip: 'Win rate over games played; ties break on games played.' },
   { key: 'ratio', label: 'Dmg ratio', num: true, fmt: (v) => (v === Infinity ? '∞' : v.toFixed(2)),
     tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
+  { key: 'dealt', label: 'Dealt%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Damage dealt to opponents (direct + indirect), cumulative % of an HP bar. "Damage to allies" toggle adds friendly fire.' },
+  { key: 'dealtDirect', label: 'Dealt·dir%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Direct damage to opponents (your moves landing), cumulative %.' },
+  { key: 'dealtIndirect', label: 'Dealt·ind%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Indirect damage to opponents (hazards, poison/burn, Rocky Helmet, Leech Seed), cumulative %.' },
+  { key: 'taken', label: 'Taken%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Damage taken from others (direct + indirect), excluding self, cumulative %.' },
+  { key: 'takenDirect', label: 'Taken·dir%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Direct damage taken (opposing moves landing), cumulative %.' },
+  { key: 'takenIndirect', label: 'Taken·ind%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Indirect damage taken (opposing hazards, status, weather), cumulative %.' },
+  { key: 'takenSelf', label: 'Self-dmg%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Self-inflicted damage (recoil, Life Orb, own status, confusion, crash, HP-cost moves), cumulative %. Excluded from Taken.' },
+  { key: 'heal', label: 'Heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP restored to itself plus allies, cumulative % of an HP bar.' },
+  { key: 'recovered', label: 'Self-heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP restored to itself (Recover, Roost, Leftovers, drain), cumulative %.' },
+  { key: 'healed', label: 'Ally-heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP restored to allies (Life Dew, Pollen Puff, Grassy Terrain), cumulative %. "Healing to enemies" toggle adds heals to foes.' },
   { key: 'crits', label: 'Crits', num: true, tip: 'Critical hits landed.' },
 ];
 
@@ -1309,17 +1428,22 @@ async function ensureStats() {
     statsData = (await res.json()).map((r) => ({
       ...r,
       dexNumber: r.dex,
-      // Derived: +/− is KOs minus faints; win rate over games with a result;
-      // damage ratio ignores 0-taken (nothing to divide by) — a mon that dealt
-      // damage but took none is ∞.
+      // Damage-to-opponents and ally-healing are the defaults; friendly-fire
+      // damage and enemy-healing are kept in their own fields so the toggles can
+      // fold them into the shown Dealt / Ally-heal columns without a reload. The
+      // displayed dealt*/healed/dealt/ratio are (re)derived by applyDamageToggles.
+      dealtDirectEnemy: r.dealtDirect, dealtIndirectEnemy: r.dealtIndirect,
+      dealtAllyDirect: r.dealtAllyDirect || 0, dealtAllyIndirect: r.dealtAllyIndirect || 0,
+      healedAlly: r.healed, healedEnemy: r.healedEnemy || 0,
+      // Derived: +/− is KOs minus faints; win rate over games with a result.
       plusminus: r.k - r.d,
       winrate: (r.w + r.l) ? r.w / (r.w + r.l) : 0,
-      ratio: r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0),
       // Season presence: turns on the field ÷ the team's total battle turns (all
       // games). Game presence: ÷ the turns of only the games it actually played.
       presence: r.teamTurns > 0 ? r.activeTurns / r.teamTurns : 0,
       gamePresence: r.playedTurns > 0 ? r.activeTurns / r.playedTurns : 0,
     }));
+    applyDamageToggles();
     wireStatsFilters();
     renderStats();
   } catch (e) {
@@ -1330,6 +1454,24 @@ async function ensureStats() {
 }
 
 const TIER_RANK = { S: 0, A: 1, B: 2, C: 3 };
+
+// Recomputes the shown damage/heal columns from the raw buckets per the two
+// toggles: friendly-fire damage folds into Dealt only when "Damage to allies" is
+// on; enemy healing folds into Ally-heal only when "Healing to enemies" is on.
+// Also rebuilds the total dealt and the damage ratio. Cheap; run on every toggle.
+function applyDamageToggles() {
+  if (!statsData) return;
+  const ally = statsFilter.includeAllyDamage;
+  const foe = statsFilter.includeEnemyHeal;
+  for (const r of statsData) {
+    r.dealtDirect = r.dealtDirectEnemy + (ally ? r.dealtAllyDirect : 0);
+    r.dealtIndirect = r.dealtIndirectEnemy + (ally ? r.dealtAllyIndirect : 0);
+    r.healed = r.healedAlly + (foe ? r.healedEnemy : 0);
+    r.dealt = r.dealtDirect + r.dealtIndirect;
+    r.heal = r.recovered + r.healed; // total HP restored: to itself + to allies
+    r.ratio = r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0);
+  }
+}
 
 function statVal(r, key) {
   if (key === 'record') return r.w + r.l; // sort the W–L column by games decided
@@ -1348,10 +1490,15 @@ function wireStatsFilters() {
   trainerSel.value = statsFilter.trainer;
   $('stats-filter-tier').value = statsFilter.tier;
 
+  $('stats-ally-dmg').checked = statsFilter.includeAllyDamage;
+  $('stats-enemy-heal').checked = statsFilter.includeEnemyHeal;
+
   if (statsFiltersWired) return;
   statsFiltersWired = true;
   $('stats-filter-tier').addEventListener('change', (e) => { statsFilter.tier = e.target.value; renderStats(); });
   trainerSel.addEventListener('change', (e) => { statsFilter.trainer = e.target.value; renderStats(); });
+  $('stats-ally-dmg').addEventListener('change', (e) => { statsFilter.includeAllyDamage = e.target.checked; applyDamageToggles(); renderStats(); });
+  $('stats-enemy-heal').addEventListener('change', (e) => { statsFilter.includeEnemyHeal = e.target.checked; applyDamageToggles(); renderStats(); });
 }
 
 function renderStats() {
@@ -1439,22 +1586,57 @@ window.addEventListener('resize', sizePicks);
 // The teambuilder lives on our own Showdown server now, not an embed. We open
 // the official Showdown client pointed at our server (the ~~host:port syntax) —
 // that's how you reach a custom server's rooms without hosting the client too.
+// The teambuilder URL for the signed-in coach (self-hosted Showdown client with
+// our league tiers baked in). buildTeambuilderUrl / openTeambuilderWith live in
+// teambuilder.js so the "opened URL carries ?name" invariant is unit-tested.
 function teambuilderUrl() {
-  // Our self-hosted Showdown client — it connects to our server and has the
-  // league tiers (X/S/A/B/C/Z) baked into its teambuilder data. Pass the signed-in
-  // Discord username so the client auto-logs in as it (see serve-client.js).
-  const name = Auth.user()?.username;
-  const q = name ? `?name=${encodeURIComponent(name)}` : '';
-  // TEMP: local client (bypasses Cloudflare's cache override while we iterate on
-  // the tier data). Switch back to https://play.loomhozer.ca once the Cloudflare
-  // Browser-Cache-TTL setting is on "Respect Existing Headers".
-  return `http://localhost:8791/teambuilder${q}`;
+  return buildTeambuilderUrl(Auth.user()?.username, null);
 }
 
+// The signed-in coach's season matchups as [{w: week, o: opponentName}], sorted
+// by week, read from the already-loaded schedule (no fetch). Passed to the
+// teambuilder so it can seed a folder of blank teams, one per matchup (see
+// serve-client.js). Sync so openTeambuilder stays a single window.open that
+// reliably carries ?name for auto-login.
+function myMatchupsFromCache() {
+  const d = scheduleData;
+  if (!d || !Array.isArray(d.matches) || d.myTeamId == null) return [];
+  return d.matches
+    .filter((m) => m.mine)
+    .sort((a, b) => a.week - b.week)
+    .map((m) => ({ w: m.week, o: m.homeTeamId === d.myTeamId ? m.awayName : m.homeName }));
+}
+
+// Ensure the schedule is cached, then return the matchups. Fired in the
+// background (on boot and after a cold teambuilder open) so the next open seeds.
+async function warmMatchups() {
+  if (!scheduleData && leagueId != null) {
+    try {
+      const res = await Auth.authFetch(`/api/leagues/${leagueId}/schedule`);
+      if (res.ok) scheduleData = await res.json();
+    } catch { /* best-effort — seeding is optional */ }
+  }
+  return myMatchupsFromCache();
+}
+
+// Pre-built random teams (packed strings) from the coach's own roster — one per
+// matchup — cached so a cold teambuilder open can seed a filled team per week.
+// A single window.open on the click gesture can't await a fetch, so these are
+// warmed in the background ahead of time (see boot + a cold open).
+// Admin "build demo teams": [{player, team}] for every player, seeded as a folder
+// per player onto the admin's own device on the next teambuilder open.
+let demoTeamsCache = null;
+
 // Reuse one named tab so repeated opens focus the same window instead of piling
-// up duplicates.
+// up duplicates. A SINGLE synchronous window.open in the click gesture keeps the
+// popup unblocked and reliably carries ?name for auto-login.
 function openTeambuilder() {
-  window.open(teambuilderUrl(), 'draft-teambuilder', 'noopener');
+  const matchups = myMatchupsFromCache();
+  // The "Week X vs <opponent>" folder is seeded with BLANK teams for the coach to
+  // fill — we never pre-fill them. Only the admin's demo teams (when built) carry
+  // content; those ride along in demoTeamsCache.
+  openTeambuilderWith((...a) => window.open(...a), Auth.user()?.username, matchups, null, demoTeamsCache);
+  if (!matchups.length) warmMatchups().catch(() => {});
 }
 
 // ── mobile nav drawer ────────────────────────────────────────────────────
@@ -1522,12 +1704,12 @@ on('abort', async () => {
 
 on('skip', () => skip());
 
-// Dev-only: replace the league with a canned, fully-played test season.
+// Dev-only: replace the league with the canned, fully-played ZST 3 test season.
 on('sim-season', async () => {
-  if (!confirm('Replace this league with a simulated test season — 14 teams, full drafted rosters, and 54 played matches? This wipes the current draft.')) return;
+  if (!confirm('Load ZST 3 — replace this league with the canned test season (real teams, drafted rosters, played matches)? This wipes the current draft.')) return;
   el.simSeason.disabled = true;
   const label = el.simSeason.textContent;
-  el.simSeason.textContent = 'Simulating… (fetching replays)';
+  el.simSeason.textContent = 'Loading… (fetching replays)';
   try {
     const res = await Auth.authFetch('/dev/simulate-season', { method: 'POST' });
     if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -1542,6 +1724,66 @@ on('sim-season', async () => {
     el.simSeason.disabled = false;
     el.simSeason.textContent = label;
   }
+});
+
+// Purely-random season: synthetic teams, a random valid draft, random stats. No
+// replays, so it returns instantly. Same wipe warning as the real one.
+on('sim-random-season', async () => {
+  const battles = el.simBattles.checked;
+  const how = battles
+    ? 'real headless Showdown battles (results + stats recorded from the logs)'
+    : 'no battles (the schedule stays pending)';
+  if (!confirm(`Replace this league with a RANDOM test season — synthetic teams, random draft, and ${how}? This wipes the current draft.`)) return;
+  el.simRandomSeason.disabled = true;
+  const label = el.simRandomSeason.textContent;
+  el.simRandomSeason.textContent = battles ? 'Simulating battles…' : 'Simulating…';
+  try {
+    const res = await Auth.authFetch(`/dev/simulate-random-season?real=${battles}`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    const r = await res.json();
+    statsData = null; // fresh season → drop cached stats
+    await refreshDraft();
+    loadPlayers();
+    let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles — schedule left pending'}).`;
+
+    // Build demo teams: an example team for every player, cached to seed onto THIS
+    // (the admin's) device as a folder per player the next time the Teambuilder opens.
+    if (el.demoTeams.checked) {
+      el.simRandomSeason.textContent = 'Building demo teams…';
+      const n = await prepareDemoTeams();
+      if (n != null) msg += ` Demo teams for ${n} players ready — open Teambuilder to see them.`;
+    }
+    showDraftError(msg);
+  } catch (e) {
+    showDraftError(`Sim failed — ${e.message}`);
+  } finally {
+    el.simRandomSeason.disabled = false;
+    el.simRandomSeason.textContent = label;
+  }
+});
+
+// Fetch one demo team per readied-up participant (roster if drafted, else a random
+// team from the pool) and cache it to seed onto the admin's device on the next
+// Teambuilder open. Returns the player count, or null on failure. Best-effort.
+async function prepareDemoTeams() {
+  try {
+    const dres = await Auth.authFetch('/api/teams/demo');
+    if (!dres.ok) return null;
+    demoTeamsCache = ((await dres.json()).teams || []).filter((t) => t.team);
+    return demoTeamsCache.length;
+  } catch { return null; }
+}
+
+// Checking "Build demo teams" prepares them immediately — no sim required — so a
+// real league with readied-up players can seed example teams. Unchecking clears.
+el.demoTeams?.addEventListener('change', async () => {
+  if (!el.demoTeams.checked) { demoTeamsCache = null; return; }
+  const label = el.demoTeamsLabel;
+  if (label) label.style.opacity = '0.6';
+  const n = await prepareDemoTeams();
+  if (label) label.style.opacity = '';
+  if (n != null) showDraftError(`Demo teams for ${n} players ready — open Teambuilder to see them.`);
+  else { el.demoTeams.checked = false; showDraftError('Could not build demo teams (no readied players yet?).'); }
 });
 
 // Ready up / leave before the draft starts. The broadcast updates other clients;
@@ -1587,64 +1829,16 @@ on('logout', async () => {
   signedOut();
 });
 
-// Debug slots are only offered on localhost; production users never see them,
-// and the endpoints they drive are gone outside Development anyway.
-const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-if (isLocal) { const panel = $('dev-login'); if (panel) { panel.hidden = false; loadDevSlots(); } }
-
-on('dev-refresh', () => loadDevSlots());
-
-on('dev-admin', async () => {
-  try { await Auth.adminLogin(); await signedIn(); }
-  catch (e) { el.signinError.textContent = e.message; el.signinError.hidden = false; }
-});
-
-// Render the four slots with their live claim state. A slot held by another
-// client is still claimable (last-claim-wins) but warns first.
-async function loadDevSlots() {
-  const list = $('dev-slots');
-  if (!list) return;
-  list.textContent = 'Loading…';
-
-  let slots;
-  try { slots = await Auth.devSlots(); }
-  catch (e) { list.textContent = e.message; return; }
-
-  const mine = Auth.clientId();
-  list.textContent = '';
-  for (const s of slots) {
-    const taken = s.claimedBy && s.claimedBy !== mine;
-
-    const name = document.createElement('span');
-    name.className = 'dev-slot-name';
-    name.textContent = s.username + (s.isAdmin ? ' · admin' : '');
-
-    const team = document.createElement('span');
-    team.className = 'dev-slot-team';
-    team.textContent = s.teamName;
-
-    const state = document.createElement('span');
-    state.className = 'dev-slot-state';
-    state.textContent = s.claimedBy ? (s.claimedBy === mine ? 'you' : `taken · ${s.claimedBy}`) : 'free';
-
-    const btn = document.createElement('button');
-    btn.className = 'dev-slot' + (taken ? ' taken' : '');
-    btn.append(name, team, state);
-    btn.onclick = () => claimAndEnter(s.index, taken);
-
-    const li = document.createElement('li');
-    li.appendChild(btn);
-    list.appendChild(li);
-  }
-}
-
-async function claimAndEnter(index, taken) {
-  if (taken && !confirm('Another client is on that slot. Take it over?')) return;
-  try {
-    await Auth.claimSlot(index);
-    await signedIn();
-  } catch (e) { el.signinError.textContent = e.message; el.signinError.hidden = false; }
-}
+// Admin: pick a dummy coach to view as, or pop back to your own account. Guarded
+// like the on() handlers — a missing #view-as (cached HTML/JS mismatch) must not
+// throw here at module load, which would stop boot() and kill the whole app.
+if (el.viewAs) el.viewAs.onchange = async (e) => {
+  const id = e.target.value;
+  if (!id) return;
+  try { await Auth.impersonate(id); location.reload(); }
+  catch (err) { alert(err.message); e.target.value = ''; }
+};
+on('stop-view-as', () => { Auth.stopImpersonating(); location.reload(); });
 
 // The signed-in session lives in localStorage, so a normal reload stays logged
 // in. A hard reload — Ctrl+F5, or Ctrl/Cmd+Shift+R — is the deliberate "start

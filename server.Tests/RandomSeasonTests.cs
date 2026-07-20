@@ -115,10 +115,17 @@ public class RandomSeasonTests : DraftScenarioBase
         {
             var tier = p.GetProperty("tier").GetString()!;
             var tera = Str(p, "teraType");
+            var name = p.GetProperty("name").GetString()!;
 
-            // Tera is a C-tier-only mechanic.
-            if (tier == "C") Assert.False(string.IsNullOrEmpty(tera), "C-tier pick must have a Tera type");
-            else Assert.True(string.IsNullOrEmpty(tera), $"{tier}-tier pick must not have a Tera type");
+            // Tera is a C-tier-only mechanic — and even in C, megas and Shedinja
+            // are barred from one (see DraftEngine.TeraBarred). Megas all carry the
+            // "M-" name prefix.
+            var teraBarred = name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
+            if (tier == "C" && !teraBarred)
+                Assert.False(string.IsNullOrEmpty(tera), "C-tier pick must have a Tera type");
+            else
+                Assert.True(string.IsNullOrEmpty(tera), $"{tier}-tier pick must not have a Tera type (barred={teraBarred})");
 
             // The "passed options" snapshot, when present, must be the rest of the
             // options actually offered that turn: one fewer than the tier's offer
