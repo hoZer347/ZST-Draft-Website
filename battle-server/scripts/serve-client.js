@@ -131,6 +131,34 @@ const AUTOLOGIN = `
 // LoginPopup's submit is an unnamed type="submit", so it is unaffected.
 const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[name="login"] { display: none !important; }</style>`;
 
+// Some of the league's custom megas (see showdown-config/custom-megas.js) only have
+// a FRONT sprite on the CDN and no back sprite, so they'd render blank from the
+// player's own side. As a fallback, we inject a small client patch: for those mons
+// only, a request for the BACK sprite returns the FRONT sprite instead (their own
+// mega art, just facing the camera — never the base form). Which mons lack a back
+// sprite is computed against the CDN at startup, so this self-heals as the CDN adds
+// the real back sprites (a mon that gains one drops off the list on the next start).
+const CUSTOM_MEGAS = (() => { try { return require('../showdown-config/custom-megas.js'); } catch { return { Pokedex: {} }; } })();
+const spriteToID = (s) => ('' + (s || '')).toLowerCase().replace(/[^a-z0-9]+/g, '');
+let MEGA_BACK_FALLBACK = '';
+async function computeMegaBackFallback() {
+  const CDN = 'https://play.pokemonshowdown.com/sprites/';
+  const has = async (p) => { try { return (await fetch(CDN + p, { method: 'HEAD' })).ok; } catch { return false; } };
+  const noBack = {};
+  await Promise.all(Object.values(CUSTOM_MEGAS.Pokedex || {}).map(async (sp) => {
+    const id = spriteToID(sp.baseSpecies) + '-' + spriteToID(sp.forme); // Showdown sprite id, e.g. malamar-mega
+    if (!(await has(`ani-back/${id}.gif`)) && !(await has(`gen5-back/${id}.png`))) noBack[id] = 1;
+  }));
+  const n = Object.keys(noBack).length;
+  // Patch the ModdedDex PROTOTYPE once (covers Dex and every modded dex, incl. the
+  // champions mod battles use). getSpriteData is a prototype method; wrapping it so a
+  // back request for a no-back mon re-calls for the front sprite.
+  MEGA_BACK_FALLBACK = n === 0 ? '' : `<script>
+(function(){var NB=${JSON.stringify(noBack)};function patch(){var D=window.Dex;if(!D)return false;var pr=Object.getPrototypeOf(D);if(!pr||typeof pr.getSpriteData!=='function')return false;if(pr.__megaBackFallback)return true;var orig=pr.getSpriteData;pr.getSpriteData=function(pokemon,isFront,options){if(!isFront){try{var forme=(window.Pokemon&&pokemon instanceof window.Pokemon)?pokemon.getSpeciesForme():pokemon;var sid=this.species.get(forme).spriteid;if(NB[sid])return orig.call(this,pokemon,true,options);}catch(e){}}return orig.call(this,pokemon,isFront,options);};pr.__megaBackFallback=true;return true;}var iv=setInterval(function(){if(patch())clearInterval(iv);},150);setTimeout(function(){clearInterval(iv);},30000);})();
+</script>`;
+  console.log(`[serve-client] custom-mega back-sprite fallback: ${n} mon(s) will use their front sprite`);
+}
+
 // path -> { mtimeMs, raw, gz } — files don't change at runtime, so cache the
 // gzipped bytes after the first hit instead of recompressing 15 MB per request.
 const cache = new Map();
@@ -153,7 +181,7 @@ function load(file) {
     // comment, so a naive `<script` match would bury CAPTURE_HEAD in a block
     // modern browsers never run. The first external script is the earliest real
     // client JS, so running just before it still beats the query-string strip.
-    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n';
+    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + MEGA_BACK_FALLBACK + '\n';
     raw = Buffer.from(html, 'utf8');
   }
   const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;
@@ -161,6 +189,13 @@ function load(file) {
   cache.set(file, entry);
   return entry;
 }
+
+// Probe the CDN for missing back sprites, then drop the cached shell so the next
+// request re-injects the patch with the populated list. Best-effort and off the
+// hot path — the server starts serving immediately.
+computeMegaBackFallback()
+  .catch((e) => console.warn('[serve-client] mega back-sprite fallback failed:', e.message))
+  .finally(() => cache.delete(path.join(ROOT, 'index-old.html')));
 
 http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);
