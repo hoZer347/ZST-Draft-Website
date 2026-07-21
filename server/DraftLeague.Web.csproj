@@ -14,6 +14,15 @@
     <None Include="Data\pokemon-pool.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Data\pokemon-extra.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Data\sim-season.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Move type + damage category (id -> [type, category]), and item icon sprite
+         numbers (id -> spritenum), dumped from pokemon-showdown, so the build page can
+         colour/badge each move and show each held item's icon. -->
+    <None Include="Data\moves.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Data\items.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Forme-changing items (mega stones, origin orbs/cores, ...): item id ->
+         [forme, base, spriteSlug, dex], so the build page can show a base mon holding
+         its forme item as that forme. -->
+    <None Include="Data\formeitems.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
