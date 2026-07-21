@@ -1,19 +1,18 @@
-# Draft League — data model & draft process
+# Data model & draft process
 
-How the pieces fit together, from identity through a completed snake draft. The
-database is the single source of truth; the server engine owns every mutation,
-and the web/app clients only render state and post intents.
+The database is the single source of truth. The server engine owns every mutation
+under one lock; clients only render state and post intents.
 
 ## Layers
 
-| Layer | What it does | Where |
+| Layer | Does | Where |
 | --- | --- | --- |
-| **Web client** | Renders the draft, posts tier/pick/start intents, listens for live updates | [web/](web/) |
-| **API** | Authenticated HTTP endpoints, thin over the engine | [server/Api/](server/Api/) |
-| **Engine** | All draft mutations, serialized under one lock | [server/Services/DraftEngine.cs](server/Services/DraftEngine.cs) |
-| **Clock** | Background service; fires auto-pick when a pick's deadline passes | [server/Services/DraftClock.cs](server/Services/DraftClock.cs) |
-| **Hub** | SignalR push of turn/pick/state changes | [server/Hubs/DraftHub.cs](server/Hubs/DraftHub.cs) |
-| **DB** | EF Core + SQLite, source of truth | [server/Data/](server/Data/) |
+| Web client | Renders, posts tier/pick/start intents, listens for live updates | [web/](web/) |
+| API | Authenticated HTTP, thin over the engine | [server/Api/](server/Api/) |
+| Engine | All draft mutations, serialized under one lock | [server/Services/DraftEngine.cs](server/Services/DraftEngine.cs) |
+| Clock | Background service; auto-picks when a deadline passes | [server/Services/DraftClock.cs](server/Services/DraftClock.cs) |
+| Hub | SignalR push of turn/pick/state changes | [server/Hubs/DraftHub.cs](server/Hubs/DraftHub.cs) |
+| DB | EF Core + SQLite | [server/Data/](server/Data/) |
 
 ## Entities
 
@@ -29,75 +28,45 @@ erDiagram
     Draft ||--o{ OfferedOption : "current turn"
     Draft ||--o{ Pick : "history"
     Team ||--o{ Pick : makes
-    Team ||--o{ DraftSlot : "appears in"
-    PokemonEntry ||--o{ OfferedOption : offered
     PokemonEntry ||--o{ Pick : drafted
     Team ||--o{ PokemonEntry : "drafted (DraftedByTeamId)"
 ```
 
-### Identity
-
-- **User** — one row per Discord account. `DiscordId` (the snowflake) is the
-  system-wide identity: `Team.CoachId`, `DeviceRegistration.UserId` and
-  `NotificationRecord.UserId` all hold it. `Username`/`AvatarHash` are cached for
-  display only. `IsAdmin` gates start/abort/rollback. The reserved id `"admin"`
-  (from `/dev/admin`) is an admin who is deliberately **not** a player and is
-  filtered out of the roster.
-- **RefreshToken** — long-lived, hashed; access tokens (JWTs) are short and
-  carry the `admin` role claim when `IsAdmin`.
-
-### League configuration
-
-- **League** — one season: its own `Pool`, `Teams`, `TierRules`, and one
-  `Draft`. `PickTimerSeconds` (default 300) is the per-pick clock.
-- **TierRule** — per-tier format, unique per `(LeagueId, Tier)`:
-  - `SlotsPerTeam` — how many of this tier each team must draft.
-  - `OptionsOffered` — how many random options a coach is shown when they open
-    this tier.
-- **Team** — a coach's team. `CoachId` = the coach's `DiscordId`.
-
-Current format (from the seed):
-
-| Tier | Rarity colour | SlotsPerTeam | OptionsOffered |
-| --- | --- | --- | --- |
-| S | orange (legendary) | 1 | 3 |
-| A | purple (epic) | 2 | 4 |
-| B | green (uncommon) | 3 | 5 |
-| C | blue (rare) | 4 | 7 |
-
-So each team drafts **S A A B B B C C C C** — 10 mons over 10 snake rounds.
-
-### Pool
-
-- **PokemonEntry** — one draftable mon in a league's pool. `Tier` (S/A/B/C),
-  `DexNumber`, and `Sprite` (the Pokémon Showdown slug, e.g. `charizard-megay`,
-  which distinguishes mega/regional forms that share a dex number). Unique per
-  `(LeagueId, Name)`. `DraftedByTeamId` is `null` while available and set once
-  drafted — **this is how a mon leaves the pool**. The pool is imported from the
-  source sheet into [server/Data/pokemon-pool.json](server/Data/pokemon-pool.json)
-  (tiers S/A/B/C only; the sheet's Z/X rows are excluded) and loaded by
+- **User**: one row per Discord account. `DiscordId` (the snowflake) is the
+  system-wide identity (`Team.CoachId`, `DeviceRegistration.UserId`,
+  `NotificationRecord.UserId` all hold it). `Username`/`AvatarHash` are display-only.
+  `IsAdmin` gates start/abort/rollback. **RefreshToken**: long-lived, hashed.
+- **League**: one season, with its own `Pool`, `Teams`, `TierRules`, one `Draft`.
+  `PickTimerSeconds` (default 300) is the per-pick clock.
+- **TierRule**: per-tier format, unique per `(LeagueId, Tier)`. `SlotsPerTeam` (how
+  many of this tier a team drafts) and `OptionsOffered` (how many random options a
+  coach is shown). Seeded format below.
+- **PokemonEntry**: one draftable mon. `Tier` (S/A/B/C), `DexNumber`, `Sprite` (the
+  Showdown slug, e.g. `charizard-megay`, distinguishing forms that share a dex).
+  `DraftedByTeamId` is `null` while available and set once drafted, **this is how a
+  mon leaves the pool.** Pool imported into
+  [server/Data/pokemon-pool.json](server/Data/pokemon-pool.json) and loaded by
   [DevSeed](server/Data/DevSeed.cs).
+- **Draft**: `State` (`NotStarted → Running → Complete`, plus `Paused`), `Order` (the
+  flat snake sequence of `DraftSlot`s), `CurrentIndex` (whose turn), `PickDeadline`,
+  `Offered` (current turn only), `Picks` (history).
+- **DraftSlot**: one position, `Position` + `TeamId`. Built at Start; the engine just
+  walks it (round *r* forward on even rounds, reversed on odd).
+- **OfferedOption**: a mon on offer to the on-clock coach. Persisted so a refresh
+  can't reroll; cleared on every advance/rollback/abort.
+- **Pick**: authoritative record, `PickNumber`, `TeamId`, `PokemonEntryId`, `Tier`,
+  `WasAutoPick`, `MadeAt`.
 
-### Draft
+Seeded format:
 
-- **Draft** — one per league. `State` (`NotStarted → Running → Complete`, plus
-  `Paused`), `Order` (the flat snake sequence of `DraftSlot`s), `CurrentIndex`
-  (whose turn — an index into `Order`), `PickDeadline` (clock), `Offered` (the
-  options for the current turn only), `Picks` (full history).
-- **DraftSlot** — one position in the order: `Position` + `TeamId`. The engine
-  does not compute the order; it just walks this list. The snake order is built
-  **at Start** from the signed-in players (round *r* iterates teams forward on
-  even rounds, reversed on odd), not seeded ahead of time.
-- **OfferedOption** — a mon currently on offer to the coach on the clock.
-  Persisted so a refresh can't reroll the sample; cleared on every advance,
-  rollback, and abort.
-- **Pick** — the authoritative record: `PickNumber`, `TeamId`, `PokemonEntryId`,
-  `Tier`, `WasAutoPick`, `MadeAt`.
+| Tier | SlotsPerTeam | OptionsOffered |
+| --- | --- | --- |
+| S | 1 | 3 |
+| A | 2 | 4 |
+| B | 3 | 5 |
+| C | 4 | 7 |
 
-### Enums
-
-- **Tier**: `S, A, B, C` (most valuable first; auto-pick walks them in reverse).
-- **DraftState**: `NotStarted, Running, Paused, Complete`.
+So each team drafts **S A A B B B C C C C**, 10 mons over 10 snake rounds.
 
 ## The draft process
 
@@ -105,101 +74,70 @@ So each team drafts **S A A B B B C C C C** — 10 mons over 10 snake rounds.
 stateDiagram-v2
     [*] --> NotStarted
     NotStarted --> Running : admin Start
-    Running --> Running : offer tier / pick / auto-pick / rollback
+    Running --> Running : offer / pick / auto-pick / rollback
     Running --> Complete : last slot filled
     Running --> NotStarted : admin Abort
     Complete --> NotStarted : admin Abort
 ```
 
-One turn, end to end:
-
-```mermaid
-sequenceDiagram
-    participant C as Coach on clock
-    participant API
-    participant E as DraftEngine
-    participant DB
-    participant Hub as SignalR
-    C->>API: POST /drafts/{id}/offer {teamId, tier}
-    API->>E: OfferOptionsAsync
-    E->>DB: sample N undrafted of tier → OfferedOption rows
-    E->>Hub: optionsOffered
-    Hub-->>C: refresh → options shown
-    C->>API: POST /drafts/{id}/pick {teamId, pokemonEntryId}
-    API->>E: MakePickAsync
-    E->>DB: Pick row; PokemonEntry.DraftedByTeamId = team; clear Offered; CurrentIndex++
-    E->>Hub: pickMade + turnChanged
-    Hub-->>C: refresh → board + feed update, next coach on clock
-```
-
-Step by step:
-
-1. **Seed** (dev only, [DevSeed](server/Data/DevSeed.cs)): create the league,
-   tier rules, and pool (from the sheet), plus an **empty** draft. No teams and
-   no order are seeded — the draft lines up whoever has signed in.
-2. **Authenticate**: Discord OAuth (PKCE) → tokens; or, in Development, claim a
-   debug slot (`/dev/slots/{i}/claim`) or sign in as the bare admin
-   (`/dev/admin`). Each real sign-in becomes a draft participant.
-3. **Start** (admin): `POST /api/admin/drafts/{id}/start` → `StartAsync` gathers
-   every signed-in user (the reserved admin excluded), gives each a **Team** if
-   they lack one, builds the snake `Order` over that roster, sets `Running`, arms
-   the clock, and announces the first turn. Re-starting after an abort rebuilds
-   the roster, so anyone who joined in between is included.
-4. **Open a tier** (coach on the clock): `POST /api/drafts/{id}/offer` →
-   `OfferOptionsAsync` samples `OptionsOffered` undrafted mons of that tier into
-   `Offered`. Re-opening the same tier returns the same set (no reroll). Tiers
-   with no remaining slot for that team are rejected.
-5. **Pick**: `POST /api/drafts/{id}/pick` → `MakePickAsync` writes the `Pick`,
-   stamps `DraftedByTeamId` (mon leaves the pool), clears `Offered`, advances
-   `CurrentIndex`, resets the clock, and pushes `pickMade`/`turnChanged`.
-6. **Advance**: when `CurrentIndex` reaches `Order.Count`, the draft is
+1. **Seed** (dev only): create the league, tier rules, and pool, plus an **empty**
+   draft. No teams or order are seeded.
+2. **Authenticate**: Discord OAuth (PKCE), or in Development mint a token with
+   `POST /dev/token/{discordId}?admin=true`. Each real sign-in becomes a participant.
+3. **Start** (admin, `POST /api/admin/drafts/{id}/start`): gathers every signed-in
+   user (the reserved `admin` excluded), gives each a Team if they lack one, builds the
+   snake `Order`, sets `Running`, arms the clock. Re-starting after an abort rebuilds
+   the roster.
+4. **Offer** (on-clock coach, `POST /api/drafts/{id}/offer`): samples `OptionsOffered`
+   undrafted mons of that tier into `Offered`. Re-opening the same tier returns the
+   same set. A tier with no open slot for that team is rejected.
+5. **Pick** (`POST /api/drafts/{id}/pick`): writes the `Pick`, stamps
+   `DraftedByTeamId`, clears `Offered`, advances `CurrentIndex`, resets the clock,
+   pushes `pickMade`/`turnChanged`. At `CurrentIndex == Order.Count` the draft is
    `Complete`.
-7. **Auto-pick**: if `PickDeadline` passes, [DraftClock](server/Services/DraftClock.cs)
-   calls `AutoPickAsync`, which fills the least valuable open slot (walks
-   C→B→A→S) and marks the pick `WasAutoPick`.
-8. **Undo** (`POST /api/drafts/{id}/rollback`): returns the last mon to the pool
-   and steps `CurrentIndex` back. Allowed for an **admin or the coach who made
-   that pick**.
-9. **Abort** (admin, `POST /api/admin/drafts/{id}/abort`): `AbortAsync` undoes
-   every pick, restores the whole pool, clears the clock, and returns the draft
-   to `NotStarted` to run again.
+6. **Auto-pick**: on a missed `PickDeadline`, [DraftClock](server/Services/DraftClock.cs)
+   fills the least valuable open slot (walks C→B→A→S) and marks `WasAutoPick`.
+7. **Rollback** (`POST /api/drafts/{id}/rollback`): returns the last mon to the pool
+   and steps `CurrentIndex` back. Allowed for an admin **or** the coach who made it.
+8. **Abort** (admin, `POST /api/admin/drafts/{id}/abort`): undoes every pick, restores
+   the pool, clears the clock, returns to `NotStarted`.
 
-All engine mutations serialize on a single process-wide lock, so a coach's pick
-and the clock's auto-pick can never both burn the same turn.
+All mutations serialize on one process-wide lock, so a coach's pick and the clock's
+auto-pick can never both burn the same turn.
 
-## Key API surface
+## Draft API + live updates
 
-| Method | Route | Who | Purpose |
-| --- | --- | --- | --- |
-| GET | `/api/drafts` | any signed-in | List drafts (to find one to open) |
-| GET | `/api/drafts/{id}` | any signed-in | Full draft state: teams, order, offered, picks |
-| POST | `/api/drafts/{id}/offer` | on-clock coach | Open a tier, get options |
-| POST | `/api/drafts/{id}/pick` | on-clock coach | Pick an offered mon |
-| POST | `/api/drafts/{id}/rollback` | admin **or** last picker | Undo the last pick |
-| POST | `/api/admin/drafts/{id}/start` | admin | Start the draft |
-| POST | `/api/admin/drafts/{id}/abort` | admin | Reset the draft |
+| Method | Route | Who |
+| --- | --- | --- |
+| GET | `/api/drafts` , `/api/drafts/{id}` | any signed-in |
+| POST | `/api/drafts/{id}/offer` , `/pick` | on-clock coach |
+| POST | `/api/drafts/{id}/rollback` | admin or last picker |
+| POST | `/api/admin/drafts/{id}/start` , `/abort` | admin |
 
-Live updates arrive on the `/hubs/draft` SignalR hub
-(`turnChanged`, `pickMade`, `optionsOffered`, `pickSkipped`, `pickRolledBack`,
-`draftStateChanged`); the client re-reads `GET /api/drafts/{id}` on each and
-falls back to 5s polling if the socket drops.
+Live updates arrive on the `/hubs/draft` SignalR hub (`turnChanged`, `pickMade`,
+`optionsOffered`, `pickSkipped`, `pickRolledBack`, `draftStateChanged`); the client
+re-reads `GET /api/drafts/{id}` on each and falls back to 5s polling if the socket
+drops.
+
+## Beyond the draft
+
+Once a draft completes, the season adds more entities and endpoints (see
+[server/Api/ScheduleApi.cs](server/Api/ScheduleApi.cs)): a **Match** per round-robin
+fixture, per-mon **PokemonStat** aggregates, and stored replay logs. Battles are
+auto-reported from the Showdown server to `/api/showdown/report`, scored, and scraped
+into stats by [ReplayStatsScraper](server/Services/ReplayStatsScraper.cs). See the
+README for that pipeline.
 
 ## Frontend layout conventions
 
-- **No page-level horizontal scrollbar, at any width.** A scrollbar belongs on
-  the specific container that needs it — never on the page as a whole. The root
-  clips horizontal overflow (`html { overflow-x: hidden }` in
-  [web/style.css](web/style.css)); anything genuinely wider than the viewport
-  (e.g. the stats table) scrolls inside its own `overflow-x: auto` box.
-- **Full-bleed views** (`.layout`, `.stats-view`, `#view-teambuilder`) break out
-  of `main`'s centered 760px column with `width: 100vw` and a
-  `margin-left: calc(50% - 50vw)` pull. `100vw` counts the vertical scrollbar's
-  gutter, so without the root clip above it overflows a few px and yields a
-  permanent bottom scrollbar.
-- **Tier list fits the width by design.** `.tl-grid` is
-  `repeat(auto-fill, minmax(116px, 1fr))`: it packs as many cards per row as fit
-  and stretches them to fill, so the row count adapts to the viewport and never
-  overflows. Reflow the row density by changing the `116px` minimum, not by
-  adding scroll.
-- Prefer bounded, scoped scroll (`.sched-scroll` caps its own height) over
-  letting content push the page wider or taller than it needs to be.
+- **No page-level horizontal scrollbar at any width.** The root clips horizontal
+  overflow (`html { overflow-x: hidden }`); anything genuinely wider (the stats table)
+  scrolls inside its own `overflow-x: auto` box.
+- **Full-bleed views** (`.layout`, `.stats-view`, `#view-teambuilder`) break out of
+  `main`'s centered column with `width: 100vw` + `margin-left: calc(50% - 50vw)`.
+  `100vw` counts the scrollbar gutter, so without the root clip they'd overflow a few
+  px and add a permanent bottom scrollbar.
+- **The tier list fits by design**: `.tl-grid` is `repeat(auto-fill, minmax(116px, 1fr))`.
+  Change the `116px` minimum to reflow density, never add scroll.
+- Prefer bounded, scoped scroll (`.sched-scroll` caps its own height) over pushing the
+  page wider or taller.

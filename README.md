@@ -1,89 +1,103 @@
 # Pokemon Draft League
 
-A hosting service for Pokemon draft leagues.
+A self-hosted platform for running a Pokemon draft league end to end: a snake
+draft, a round-robin season, live battles on a private Pokemon Showdown server,
+and per-mon stats scraped from every battle replay.
+
+## The three components
 
 ```text
-web/      Static frontend — deployed to Netlify (zst-league.netlify.app)
-server/   ASP.NET Core 9 — draft engine, REST API, SignalR hub
+server/         ASP.NET Core 9 (net9.0). REST API + SignalR hub + the draft
+                engine, and it also serves the web/ folder as static files, so
+                the site and the API are same-origin in production. EF Core over
+                SQLite (draftleague.db).
+web/            Static frontend (plain HTML/CSS/JS, no build step): the draft,
+                schedule, scoreboard, stats, and teambuilder tabs. Loaded by the
+                .NET server above.
+battle-server/  Node service wrapping the real pokemon-showdown package: a
+                custom-format battle server (:8787) and a static server (:8791)
+                that hosts the Showdown client / Teambuilder. Auto-reports every
+                finished league game back to the .NET server.
 ```
 
-> A Flutter mobile/desktop notification client used to live in `app/`. It was
-> removed; the last commit that contains it is recoverable from git history
-> (`git log -- app/`). The server's notification pipeline stays — it can feed a
-> web client later.
+Supporting docs: [DEPLOY.md](DEPLOY.md), [AUTH_SETUP.md](AUTH_SETUP.md),
+[DATA_MODEL.md](DATA_MODEL.md), and [CLAUDE.md](CLAUDE.md) (the day-to-day
+operational notes: dev-server lifecycle, rebuild handshake, cache-busting).
 
-## Deployment: two hosts, not one
+## How it runs in production
 
-**Netlify serves `web/` only.** It cannot host `server/` — there is no .NET
-runtime there, the draft clock needs an always-on process, the SignalR hub needs
-a persistent connection, and SQLite needs a writable disk. Netlify offers none
-of those.
+Everything is self-hosted on a single Windows box. One .NET process listens on
+`localhost:5211` and serves both the web app and the API; the Node battle server
+listens on `:8787` and the Showdown client server on `:8791`. A named Cloudflare
+tunnel maps them to public subdomains:
 
-So the server deploys somewhere that runs .NET — Azure App Service, Fly.io,
-Render, a VPS — and the frontend calls it cross-origin. See `DEPLOY.md`; the
-Fly config is written but blocked on Fly wanting a card, and the account-free
-Cloudflare tunnel route was tried and does not work from this machine.
+| Public URL | Local | Serves |
+| --- | --- | --- |
+| `dev.loomhozer.ca` / `zst.loomhozer.ca` | `:5211` | web app + REST API (same-origin, no CORS) |
+| `showdown.loomhozer.ca` | `:8787` | the Showdown battle server |
+| `play.loomhozer.ca` | `:8791` | the self-hosted Showdown client + Teambuilder |
 
-Two consequences:
+A watchdog, [server/keep-server-up.ps1](server/keep-server-up.ps1), relaunches
+any of these (plus `cloudflared`) within a few seconds if it goes down, so the
+draft clock and the battle server stay up unattended. The live .NET server runs
+a promoted copy at `server/run/DraftLeagueLive.exe`, not the raw build output; a
+new build goes live via [server/deploy-run.ps1](server/deploy-run.ps1). See
+CLAUDE.md for the full rebuild handshake.
 
-1. **`web/config.js` must point at the deployed API.** It ships with a
-   `REPLACE-ME` placeholder; until it's set, the live site loads but shows
-   "Can't reach the API".
-2. **The frontend's origin must be in the server's `Cors:Origins`.** Otherwise
-   the browser blocks every request. `Program.cs` defaults to
-   `http://localhost:8000` and `https://zst-league.netlify.app`; override via
-   config for any other domain.
-
-## Status
-
-The **backend draft engine and auth work and are verified end to end** against a
-running server.
-
-Sign-in is Discord OAuth (Authorization Code + PKCE) for the website. Every
-`/api` route is authenticated and the caller's identity comes from the token,
-never the request body. Setup — including the client secret, which must never be
-committed to this public repo — is in `AUTH_SETUP.md`.
+`netlify.toml` and the Netlify path in `web/config.js` are legacy: the site used
+to be a static Netlify deploy calling the API cross-origin. It is now served by
+the .NET server itself.
 
 ## Running it locally
 
-Two processes. The API:
+The .NET server serves the web app too, so one process is enough for the core
+app:
 
 ```powershell
 cd server
-dotnet run --urls http://localhost:5203
+dotnet run --urls http://localhost:5211
 ```
 
-Creates `draftleague.db` (SQLite) and, in Development, seeds a two-team test
-league with a snake draft. Then the frontend, from another shell:
+On first run it creates `draftleague.db` (SQLite, via `EnsureCreated`) and, in
+Development, seeds a "Test Season 1" league: the tier rules and the full Pokedex
+pool, plus an empty draft. Teams and the snake order are built from whoever is
+signed in when an admin presses Start (there is no fixed coach roster). Open
+`http://localhost:5211`; `web/config.js` points the frontend at `localhost:5211`
+and `localhost:8787` automatically when served from localhost.
+
+For live battles and the Teambuilder, also start the battle server:
 
 ```powershell
-cd web
-python -m http.server 8000
+cd battle-server
+npm run showdown        # battle server on :8787
+node scripts/serve-client.js   # Showdown client / Teambuilder on :8791
 ```
 
-Open `http://localhost:8000`. `config.js` points at `localhost:5203`
-automatically when served from localhost.
+### Dev-only endpoints
 
-Dev-only endpoints. **These are auth bypasses and only exist in Development:**
+These are auth bypasses and exist **only in Development**:
 
 | Endpoint | Does |
 | --- | --- |
-| `POST /dev/token/{discordId}?admin=true` | Mints a token for a seeded coach, so the draft can be driven without standing up Discord |
-| `POST /dev/drafts/1/expire` | Forces the clock to expire, triggering auto-pick |
+| `POST /dev/token/{discordId}?admin=true` | Mints a bearer token for any id, so the draft can be driven without Discord. Use the `accessToken` as `Authorization: Bearer` |
+| `GET /dev/accounts` | Lists seeded/known accounts |
+| `POST /dev/drafts/{id}/expire` | Forces the pick clock to expire, triggering auto-pick |
+| `POST /dev/simulate-season` / `POST /dev/simulate-random-season` | Seeds and plays a full test season (real Showdown battles), then scrapes stats from the replays |
+| `POST /dev/sync-pokedex` | Re-syncs the pool from the source Pokedex sheet |
+| `POST /dev/snapshot-now` | Takes a season snapshot immediately |
 
-Starting and rolling back are real admin routes now: `POST /api/admin/drafts/1/start`
-and `/rollback`, both requiring the `admin` role.
+Starting, rolling back, and other admin actions are real authenticated routes
+under `/api/admin/...` requiring the `admin` role.
 
-The seeded league has coaches `coach-1` (Team Alpha) and `coach-2` (Team Beta):
+> Verify without disrupting the running dev server by driving a throwaway
+> instance on a spare port with its own DB, never the live `:5211`. See CLAUDE.md.
 
-```powershell
-# a token for coach-1, as an admin
-curl -X POST "http://localhost:5211/dev/token/coach-1?admin=true"
-```
+## The draft
 
-## The draft rules
-
-Carried over from the previous Python implementation:
+A coach picks a **tier**, not a specific Pokemon. The server offers a random
+sample from that tier's remaining pool and the coach chooses one of those. Tiers
+are per-league rows (`TierRule`), not constants, so a league can run its own
+format without a code change. The seeded format:
 
 | Tier | Options offered | Slots per team |
 | --- | --- | --- |
@@ -92,70 +106,68 @@ Carried over from the previous Python implementation:
 | B | 5 | 3 |
 | C | 7 | 4 |
 
-A coach picks a **tier**, not a pokemon. The server offers a random sample from
-that tier's remaining pool and they choose one of those.
+Load-bearing rules, all covered by the test suite:
 
-Three rules are load-bearing and are covered by the verification below:
-
-- **Options are cached per turn.** Re-requesting returns the same set, so a
-  coach cannot refresh until the sample contains something they like.
+- **Options are cached per turn.** Re-requesting returns the same set, so a coach
+  cannot refresh until the sample contains something they like.
 - **One tier per turn.** Opening C then trying S is rejected.
-- **Auto-pick walks C → B → A → S.** An idle coach loses their least valuable
-  slot, never their S pick.
+- **Auto-pick walks C then B then A then S.** An idle coach loses their least
+  valuable slot, never their S pick.
+- **Pick order is shuffled at Start** and the whole draft serializes on a lock,
+  so a coach's pick can't interleave with the timer's auto-pick.
+- **A single background clock** ([DraftClock](server/Services/DraftClock.cs))
+  compares each draft's persisted deadline to the wall clock, so it survives a
+  restart and doesn't scale threads with leagues.
+- **Rollback returns the Pokemon to the pool** and restores the pick number and
+  clock.
 
-Tiers are per-league rows (`TierRule`), not constants, so a league can run its
-own format without a code change.
+## The season, battles, and stats
 
-## What changed from the Python version
+Once a draft finishes the server lays down a round-robin schedule
+([ScheduleApi](server/Api/ScheduleApi.cs)): a full single round-robin, byes for
+odd rosters, one game per pair. Coaches build their teams in the Teambuilder tab
+(the official Showdown client pointed at our custom `gen9zstseason4` format, EVs
+and IVs and all) and battle on the private server.
 
-- **Database is the source of truth.** State used to live in an in-memory dict,
-  so a restart mid-draft lost every tier count and offered option.
-- **Picks serialize on a lock.** A coach's pick could previously interleave with
-  the timer's auto-pick and burn two slots for one turn.
-- **One clock for all drafts.** Was a thread per draft sleeping in 1s steps,
-  with the remaining time held in memory. Now a single background service
-  compares each draft's persisted deadline to the wall clock, so it survives
-  restarts and doesn't scale threads with leagues.
-- **Rollback returns the pokemon to the pool.** That step used to depend on a
-  Google Sheets write; if the write failed the pokemon stayed locked forever.
-- **Google Sheets is gone.** Sheets was the record; it's now SQLite via EF Core.
+When a battle ends, the Showdown server POSTs its log to
+`/api/showdown/report` (shared-secret guarded). The server matches it to the
+pending fixture, scores it, updates standings, and folds per-mon battle stats
+(KOs, faints, damage dealt/taken, healing, presence, crits) into the Stats tab.
+[ReplayStatsScraper](server/Services/ReplayStatsScraper.cs) parses the log and
+attributes every effect to a source: direct hits, entry hazards, status chip,
+weather, Perish Song, bind moves, Destiny Bond, recoil and other self-damage,
+and absorb-ability healing.
 
-## Verified
+**Custom megas.** The league runs "Champions"-style custom mega evolutions that
+vanilla Showdown doesn't ship. They are merged additively into the engine's dex
+as plain gen-9 mega data (see `battle-server/showdown-config/custom-megas.js` and
+`installCustomMegas` in `battle-server/scripts/showdown.js`), so the stock engine
+evolves them with no ruleset fork. Icons for megas without a Showdown sprite fall
+back through Serebii's Z-A artwork and PokeAPI (see [web/sprite.js](web/sprite.js)).
 
-Driven against a live server, not just unit tests:
+**Season simulation.** The dev "Simulate season" flow builds fully random-but-legal
+teams (random natures, EVs, IVs, abilities, moves, items; see
+[battle-server/lib/random-team.js](battle-server/lib/random-team.js)), plays a
+whole season of real Showdown battles headlessly, and scrapes the results, so the
+schedule/scoreboard/stats tabs can be exercised without waiting on live games.
 
-- Offer before start → rejected; wrong team → "Not your turn"
-- C tier offers exactly 7 options, matching the tier rule
-- Re-offering returns an identical set (no reroll-by-refresh)
-- Second tier in one turn → rejected; picking a non-offered mon → rejected
-- A pick advances the snake, clears options, records history
-- Rollback restores the pick number, the clock and the pool
-- Clock expiry auto-picks a C-tier mon, flags `WasAutoPick`, advances the snake
-- A coach doesn't get notified of their own pick
-- Muting a kind via `/api/preferences` suppresses it
+## Auth
 
-Two bugs were found this way and fixed — neither was visible at compile time:
+Sign-in is Discord OAuth (Authorization Code + PKCE). Every `/api` route is
+authenticated and the caller's identity comes from the token, never the request
+body. Setup, including the client secret (which must never be committed to this
+public repo), is in [AUTH_SETUP.md](AUTH_SETUP.md).
 
-1. **SQLite cannot `ORDER BY` a `DateTimeOffset`.** Threw on the notification
-   list and the push queue drain. Fixed with a value converter storing UTC ticks.
-2. **`OrderBy(_ => Guid.NewGuid())` is untranslatable for SQLite.** It's a SQL
-   Server `NEWID()` idiom. Auto-pick threw on every clock tick, so a draft would
-   stall forever once a coach went idle — the exact failure the timer prevents.
+## Tests
 
-## Not built yet
+Three suites, all runnable offline:
 
-- **Linking a Discord account to a team.** Auth works, but there's no admin UI
-  to put someone's Discord id in `Team.CoachId`. Until a row exists, a user
-  signs in and sees "no team". Today that means editing the database by hand.
-- **The frontend has never been opened in a browser.** `web/` was verified only
-  at the wiring level: assets serve, the API answers cross-origin, the sprite
-  URLs resolve, and the auth endpoints accept the right calls. The rendering,
-  the login round trip and the SignalR reconnect path are unexercised.
-- **The API isn't deployed.** `web/config.js` still says `REPLACE-ME`.
-- **`server/Pages`** is still the stock Razor template, now unused — the real UI
-  is `web/`. It's harmless but worth deleting.
-- **Push delivery is a stub.** `LoggingPushSender` logs instead of sending; the
-  notification pipeline is kept so a future client can consume it, but no real
-  transport is wired.
-- **`EnsureCreated()` instead of migrations.** Fine for dev; schema changes will
-  need a real migration before any league data exists.
+```powershell
+cd server.Tests   ; dotnet test        # xUnit: draft engine, scoring, replay scraper, endpoints
+cd web            ; npm test           # node:test: pool/MVP logic, sprite fallback, teambuilder, auth
+cd battle-server  ; npm test           # node:test: team packing, formats, custom megas, sim battles
+```
+
+The replay-scraper attribution rules and the icon-fallback chain in particular
+are locked down by dedicated regression tests, so a future change can't silently
+mis-credit a KO or leave a mon with a missing icon.
