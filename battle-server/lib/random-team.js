@@ -3,8 +3,9 @@
 // Builds fully-random-but-legal battle teams from a drafted roster, for the
 // headless test-season simulator. Every choice that can be made is made
 // randomly, within the constraints the league wants for these synthetic games:
-//   • EVs are spread evenly across all six stats (84 each), neutral nature —
-//     so the numbers come from the mon, not from tuning.
+//   • a random nature (any of the 25),
+//   • a random legal EV spread (4-point blocks, each stat ≤ 252, total ≤ 510),
+//   • a random legal IV spread (each stat 0–31),
 //   • a random ability from the species' legal set,
 //   • a random 4 moves from the species' full movepool (base + prevo forms),
 //   • a random held item, EXCEPT megas (which carry their form, not an item).
@@ -23,9 +24,39 @@ function sampleN(arr, n) {
   return a.slice(0, n);
 }
 
+// The six stat ids, in canonical order.
+const STATS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+
+// Every nature the game has (25), by name; one is picked at random per set.
+const NATURES = Dex.natures.all().map((n) => n.name);
+
+// A random legal EV spread. EVs are handed out in 4-point blocks (the granularity
+// that actually moves a stat) across the stats in a random order, each capped at
+// 252 and the whole spread at 510. Most sets spend near the full 510, but which
+// stats get the investment, and how much, varies every game.
+function randomEvs() {
+  const evs = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
+  let remaining = 510;
+  for (const s of sampleN(STATS, STATS.length)) {
+    if (remaining < 4) break;
+    const maxBlocks = Math.floor(Math.min(252, remaining) / 4);
+    const blocks = Math.floor(Math.random() * (maxBlocks + 1));
+    evs[s] = blocks * 4;
+    remaining -= blocks * 4;
+  }
+  return evs;
+}
+
+// A random legal IV spread: each stat independently 0–31.
+function randomIvs() {
+  const ivs = {};
+  for (const s of STATS) ivs[s] = Math.floor(Math.random() * 32);
+  return ivs;
+}
+
 // The league's competitive format. The sim actually BATTLES under custom-game
 // (which bans nothing), so we apply this format's option-level restrictions here,
-// at team-build time — the same restrictions the Showdown team builder enforces.
+// at team-build time, the same restrictions the Showdown team builder enforces.
 const RESTRICTION_FORMAT = 'gen9zstseason4';
 
 // Move / item / ability ids this format forbids, read straight from Showdown's own
@@ -87,7 +118,7 @@ function randomSet(mon) {
   if (!species.exists) throw new Error(`Unknown species: ${key}`);
 
   // A mega is fielded as its BASE form holding the mega stone (it mega-evolves in
-  // battle), NOT the mega forme with no item — that's how Showdown represents one.
+  // battle), NOT the mega forme with no item, that's how Showdown represents one.
   // Set the item + swap `species` back to the base BEFORE reading abilities/moves,
   // so the set is legal for the base (the ability/moves it has until it megas).
   let item;
@@ -97,7 +128,11 @@ function randomSet(mon) {
     species = Dex.species.get(species.baseSpecies);    // e.g. Charizard
   } else if (isMega) {
     item = '';                                         // stone-less mega (e.g. Mega Rayquaza)
-  } else {
+  } else if (species.requiredItem) {
+    item = species.requiredItem;                       // origin/crowned/etc: the forme is
+  } else if (species.requiredItems && species.requiredItems.length) {
+    item = species.requiredItems[0];                   // this exact item, so keep the forme
+  } else {                                             // and hand it the item it needs
     item = pick(USABLE_ITEMS);
   }
 
@@ -114,11 +149,11 @@ function randomSet(mon) {
     ability: abilities.length ? pick(abilities) : (species.abilities['0'] || 'No Ability'),
     item,
     moves,
-    nature: 'Hardy',   // neutral: no stat is boosted or cut
+    nature: pick(NATURES),   // a random one of the 25
     gender: '',
     level: 100,
-    evs: { hp: 84, atk: 84, def: 84, spa: 84, spd: 84, spe: 84 }, // evenly spread
-    ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 },
+    evs: randomEvs(),        // random legal spread (≤252/stat, ≤510 total)
+    ivs: randomIvs(),        // random legal spread (0–31/stat)
   };
   if (teraType) set.teraType = teraType; // C-tier: teras to its drafted type
   return set;
@@ -126,7 +161,7 @@ function randomSet(mon) {
 
 // A random `count` of the roster's mons, each a random set. count defaults to 6 (a
 // singles "bring"), so a 10-mon roster fields a different six most games. Species
-// Showdown doesn't know (e.g. the league's custom Champions megas) are skipped —
+// Showdown doesn't know (e.g. the league's custom Champions megas) are skipped,
 // they simply can't take the field. `mons` items are either a slug string or
 // { s: slug, t: teraType|null }.
 //

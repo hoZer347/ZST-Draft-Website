@@ -39,6 +39,32 @@ test('a non-mega keeps its own species and gets a held item', () => {
   assert.ok(set.item && set.item.length > 0, 'a non-mega carries a random item');
 });
 
+test('sets carry a random-but-legal nature, EV spread, and IV spread', () => {
+  const stats = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+  const natureNames = new Set(Dex.natures.all().map((n) => n.name));
+  const seenNatures = new Set();
+  // Sample many sets so the legality checks and the "not all Hardy/84/31" variety
+  // claims are exercised across the random space, not one lucky draw.
+  for (let i = 0; i < 300; i++) {
+    const set = randomSet('garchomp');
+    assert.ok(natureNames.has(set.nature), `nature ${set.nature} is a real nature`);
+    seenNatures.add(set.nature);
+
+    let total = 0;
+    for (const s of stats) {
+      const ev = set.evs[s];
+      assert.ok(Number.isInteger(ev) && ev >= 0 && ev <= 252, `EV ${s}=${ev} in 0..252`);
+      assert.equal(ev % 4, 0, `EV ${s}=${ev} is a multiple of 4`);
+      total += ev;
+      const iv = set.ivs[s];
+      assert.ok(Number.isInteger(iv) && iv >= 0 && iv <= 31, `IV ${s}=${iv} in 0..31`);
+    }
+    assert.ok(total <= 510, `EV total ${total} <= 510`);
+  }
+  // Randomness actually varies the nature (not pinned to one value).
+  assert.ok(seenNatures.size > 5, `saw ${seenNatures.size} distinct natures over 300 sets`);
+});
+
 // ── Tera type: only C-tier mons carry one (from the draft), and the runner teras
 // exactly those, ASAP. The set + team-build side of that is guarded here; the AI
 // side is guarded by the battle integration test.
@@ -77,7 +103,7 @@ test('in a real battle, the C-tier mon teras to its type and non-C mons never do
 }, { timeout: 60000 });
 
 test('a stone-less mega (Mega Rayquaza) stays the forme with no item', () => {
-  // Rayquaza megas via a move (Dragon Ascent), not a stone — there is no stone to
+  // Rayquaza megas via a move (Dragon Ascent), not a stone, there is no stone to
   // hold, so it can only be fielded as the forme itself, itemless.
   const set = randomSet('rayquaza-mega');
   assert.equal(set.species, 'Rayquaza-Mega');
@@ -92,7 +118,7 @@ test('the packed mega team round-trips to base species holding the stone', () =>
 });
 
 // ── format restrictions applied at team-build time (the sim battles under
-// custom-game, which bans nothing, so we strip these here — the same options the
+// custom-game, which bans nothing, so we strip these here, the same options the
 // Showdown team builder would refuse to submit) ─────────────────────────────────
 
 test('the restriction set covers evasion, OHKO, evasion items and abilities', () => {
@@ -104,7 +130,7 @@ test('the restriction set covers evasion, OHKO, evasion items and abilities', ()
 
 test('movePool strips a restricted move a species would otherwise learn', () => {
   // Find a real species whose raw learnset includes Double Team (an old TM move),
-  // and confirm movePool drops it — proving the filter isn't vacuous.
+  // and confirm movePool drops it, proving the filter isn't vacuous.
   let found = null;
   for (const sp of Dex.species.all()) {
     const ls = Dex.data.Learnsets[sp.id];
@@ -157,7 +183,7 @@ test('buildRandomTeam samples `count` from a larger roster and skips unknowns', 
 // ── the league's custom "megas" (ChampionsRegMA content) ─────────────────────
 // They aren't in a vanilla pokemon-showdown; scripts/showdown.js merges them into
 // the bundled engine as PLAIN gen-9 mega data (species + string-format stones +
-// a formats-data row — see showdown-config/custom-megas.js) so the stock engine's
+// a formats-data row, see showdown-config/custom-megas.js) so the stock engine's
 // own canMegaEvo evolves them with no sim/ruleset/format changes. The data file is
 // checked unconditionally; the behaviour tests need the merge (which the running
 // battle server does) and SKIP on a fresh checkout rather than failing.
@@ -185,7 +211,7 @@ test('custom-megas.js is well-formed: string-format stones mapping base <-> a li
 
 const MEGA_ENGINE = Dex.species.get('malamarmega').exists
   ? false
-  : 'custom megas not merged into node_modules — start the battle server (scripts/showdown.js) once';
+  : 'custom megas not merged into node_modules, start the battle server (scripts/showdown.js) once';
 
 test('a merged custom mega is a real mega species its string stone evolves', { skip: MEGA_ENGINE }, () => {
   const sp = Dex.species.get('malamarmega');
