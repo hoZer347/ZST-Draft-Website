@@ -9,14 +9,56 @@
 //   stdin : { "matches": [ { "homeTeam": [slug,...], "awayTeam": [slug,...] }, ... ] }
 //   stdout: [ { "winner": "p1"|"p2"|null, "turns": N, "log": "<full battle log>" }, ... ]
 //
-// Both sides are driven by the sim's RandomPlayerAI at its defaults, which picks
-// a random legal MOVE each turn and never voluntarily switches (move:1) and never
-// megas/dynamaxes/terastallizes (mega:0) — exactly the "random move options, no
-// switching" the league asked for. Forced switches after a faint still happen.
+// Both sides are driven by a RandomPlayerAI that picks a random legal MOVE each
+// turn and never voluntarily switches. The one gimmick it takes is Terastallization:
+// a C-tier drafted mon teras to its drafted type the first turn it can (see
+// TeraPlayerAI + buildTeamWithTera), matching how the league plays C-tier tera.
+// Forced switches after a faint still happen.
 
 const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
 const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
-const { buildRandomTeam } = require('../lib/random-team');
+const { buildTeamWithTera } = require('../lib/random-team');
+
+// A RandomPlayerAI that terastallizes a C-tier mon the first turn it's able to.
+// It leaves the base AI's random move choice untouched and just appends
+// `terastallize` to that move for a marked mon. Tera is once per SIDE per battle
+// (not once per mon), so it teras the first eligible C-tier mon and then stops.
+class TeraPlayerAI extends RandomPlayerAI {
+  constructor(playerStream, teraNames) {
+    super(playerStream);
+    this.teraNames = teraNames instanceof Set ? teraNames : new Set(teraNames || []);
+    this.teraUsed = false;
+  }
+
+  receiveRequest(request) {
+    this._request = request; // captured so choose() can see which slots may tera
+    super.receiveRequest(request);
+  }
+
+  choose(choice) {
+    const req = this._request;
+    if (req && req.active && this.teraNames.size && !this.teraUsed) {
+      const pokemon = req.side && req.side.pokemon || [];
+      const parts = choice.split(', ');
+      for (let i = 0; i < parts.length && !this.teraUsed; i++) {
+        const act = req.active[i];
+        const part = parts[i];
+        if (!act || !act.canTerastallize) continue;      // not this mon, or already tera'd
+        if (!/^move /.test(part)) continue;              // only when it's actually attacking
+        if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue; // has a gimmick
+        const mon = pokemon[i] || {};
+        const nick = (mon.ident || '').split(': ')[1] || '';
+        const species = (mon.details || '').split(',')[0].trim();
+        if (this.teraNames.has(nick) || this.teraNames.has(species)) {
+          parts[i] = `${part} terastallize`;
+          this.teraUsed = true; // once per side per battle
+        }
+      }
+      choice = parts.join(', ');
+    }
+    return super.choose(choice);
+  }
+}
 
 // The ZST Season 4 format is National Dex DOUBLES. The headless sim uses a
 // doubles custom game (gen9's dex → megas usable; no tier banlist, so the draft
@@ -32,11 +74,13 @@ async function runBattle(match) {
   const spec = { formatid: FORMAT };
   // Name the players after the coaches (their Discord / dummy names) so the log
   // and replay show who actually played, not "Home"/"Away".
-  const p1 = { name: match.homeName || 'Home', team: buildRandomTeam(match.homeTeam || [], BRING) };
-  const p2 = { name: match.awayName || 'Away', team: buildRandomTeam(match.awayTeam || [], BRING) };
+  const home = buildTeamWithTera(match.homeTeam || [], BRING);
+  const away = buildTeamWithTera(match.awayTeam || [], BRING);
+  const p1 = { name: match.homeName || 'Home', team: home.team };
+  const p2 = { name: match.awayName || 'Away', team: away.team };
 
-  new RandomPlayerAI(streams.p1).start();
-  new RandomPlayerAI(streams.p2).start();
+  new TeraPlayerAI(streams.p1, home.teraNames).start();
+  new TeraPlayerAI(streams.p2, away.teraNames).start();
 
   let winnerName = null;
   let turns = 0;

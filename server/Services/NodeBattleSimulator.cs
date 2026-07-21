@@ -16,8 +16,12 @@ namespace DraftLeague.Web.Services;
 /// </summary>
 public class NodeBattleSimulator(IHostEnvironment env, ILogger<NodeBattleSimulator> log)
 {
-    public record MatchSpec(string HomeName, string AwayName, IReadOnlyList<string> HomeTeam, IReadOnlyList<string> AwayTeam);
-    public record BattleResult(string? Winner, int Turns, string Log);
+    /// <summary>One rostered mon: its pool slug and, for C-tier mons, the Tera type
+    /// the draft assigned it (null otherwise). A non-null Tera type tells the runner
+    /// this mon should terastallize to that type as soon as it can.</summary>
+    public record TeamMon(string Slug, string? TeraType);
+    public record MatchSpec(string HomeName, string AwayName, IReadOnlyList<TeamMon> HomeTeam, IReadOnlyList<TeamMon> AwayTeam);
+    public record BattleResult(string? Winner, int Turns, string Log, string? P1Export = null, string? P2Export = null);
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
@@ -39,7 +43,9 @@ public class NodeBattleSimulator(IHostEnvironment env, ILogger<NodeBattleSimulat
             matches = matches.Select(m => new
             {
                 homeName = m.HomeName, awayName = m.AwayName,
-                homeTeam = m.HomeTeam, awayTeam = m.AwayTeam,
+                // { s: slug, t: teraType|null } per mon — see TeamMon.
+                homeTeam = m.HomeTeam.Select(x => new { s = x.Slug, t = x.TeraType }),
+                awayTeam = m.AwayTeam.Select(x => new { s = x.Slug, t = x.TeraType }),
             }),
         });
 

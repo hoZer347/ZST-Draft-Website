@@ -25,6 +25,18 @@ public static class ReplayStatsScraper
     public sealed class GameStat
     {
         public int Kills, Deaths, Crits, ActiveTurns;
+        // Led the battle: was one of the initial active mons (switched in before
+        // turn 1). Set on the resolved Pick, so a mon that mega-evolves later in
+        // the game keeps its starter flag; the mega occupies the same slot and
+        // resolves to the same Pick, so it is never re-counted as a fresh switch-in.
+        public bool Started;
+        // Terastallized at some point this game. Lets the UI grey a mon's Tera type
+        // when it was never actually used.
+        public bool Terastallized;
+        // Finished the battle: was still on the field and NOT fainted when the game
+        // ended (|win| / |tie|). The winning side's standing mons; a mon KO'd or
+        // benched at the end doesn't count.
+        public bool Finished;
         // Damage is split by source (direct = a mon's own move landing; indirect =
         // everything else it caused/suffered — hazards, status chip, weather, Rocky
         // Helmet, Leech Seed, recoil, Life Orb) and, for damage dealt / healing
@@ -97,7 +109,14 @@ public static class ReplayStatsScraper
                     var slot = Slot(sid);
                     slot.Pick = resolve(sid[..2], parts[3].Split(',')[0].Trim());
                     slot.Hp = parts.Length > 4 ? ParseHp(parts[4]) : 1;
-                    if (slot.Pick is not null) Stat(slot.Pick); // switching in counts as "brought" (GP)
+                    if (slot.Pick is not null)
+                    {
+                        Stat(slot.Pick); // switching in counts as "brought" (GP)
+                        // The leads switch in before turn 1; mark them as starters.
+                        // (A forced switch (drag) or an Illusion reveal (replace)
+                        // only happens mid-game, so turns is already > 0 there.)
+                        if (cmd == "switch" && turns == 0) Stat(slot.Pick).Started = true;
+                    }
                     lastKiller.Remove(sid);
                     statusSource.Remove(sid);
                     statusSelf.Remove(sid);
@@ -148,6 +167,12 @@ public static class ReplayStatsScraper
                 case "-crit":
                     if (attacker is not null && slots.TryGetValue(attacker, out var a) && a.Pick is not null)
                         Stat(a.Pick).Crits++;
+                    break;
+
+                case "-terastallize":
+                    // |-terastallize|p1a: Name|Type: the mon in that slot used its Tera.
+                    if (parts.Length > 2 && PickAt(SlotId(parts[2])) is { } tera)
+                        Stat(tera).Terastallized = true;
                     break;
 
                 case "-status":
@@ -291,7 +316,7 @@ public static class ReplayStatsScraper
                     slot.Hp = ParseHp(parts[3]);
                     if (heal <= 0) break;
 
-                    var (_, name, ofSlot) = Tags(parts);
+                    var (kind, name, ofSlot) = Tags(parts);
                     var silent = false;
                     for (var i = 4; i < parts.Length; i++)
                         if (parts[i].Trim() == "[silent]") { silent = true; break; }
@@ -309,6 +334,12 @@ public static class ReplayStatsScraper
                     // Aqua Ring, Wish…) except drain, whose [of] is the victim not a
                     // healer. [silent] heals (Leech Seed, Rest) fire at end of turn
                     // with a stale attacker, so are never credited to it.
+                    // An ABSORB ability (Water/Volt Absorb, Earth Eater, Dry Skin)
+                    // heals its own holder when struck by the matching move type: its
+                    // [of] is the ATTACKER whose move triggered it, NOT a healer, so
+                    // like drain the HP is self-recovery. (Only these; an ally-healing
+                    // ability such as Hospitality instead puts the healer in [of], so
+                    // it must fall through to the [of] branch, not self.)
                     // Resolve the healer and their side. Healing someone other than
                     // the healer is credited as ally-healing (same side) or enemy-
                     // healing (Heal Pulse on a foe, your Grassy Terrain topping them
@@ -318,9 +349,9 @@ public static class ReplayStatsScraper
                     {
                         healerPick = grassyTerrain.Value.pick; healerSide = grassyTerrain.Value.side;
                     }
-                    else if (silent || name == "drain")
+                    else if (silent || name == "drain" || (kind == "ability" && IsAbsorbHealAbility(name)))
                     {
-                        healerPick = slot.Pick; healerSide = null; // drain / Leech Seed / Rest → self
+                        healerPick = slot.Pick; healerSide = null; // drain / absorb-ability heal / Leech Seed / Rest → self
                     }
                     else if (ofSlot is not null)
                     {
@@ -363,10 +394,29 @@ public static class ReplayStatsScraper
                         Stat(killer).Kills++;
                     break;
                 }
+
+                case "win":
+                case "tie":
+                    // The game is over: everyone still on the field and not fainted
+                    // (Hp > 0 — a faint sets it to 0) "finished" the battle.
+                    foreach (var sid in ActiveSlots)
+                        if (slots.TryGetValue(sid, out var occ) && occ.Pick is not null && occ.Hp > 0)
+                            Stat(occ.Pick).Finished = true;
+                    break;
             }
         }
         return new Result(stats, turns);
     }
+
+    /// <summary>
+    /// The HP-restoring "absorb" abilities: they heal their HOLDER when hit by a move
+    /// of a matching type (Water Absorb / Dry Skin — Water; Volt Absorb — Electric;
+    /// Earth Eater — Ground). Their -heal carries [of] the attacker whose move
+    /// triggered it, NOT a healer, so the HP is self-recovery. Ability heals that
+    /// really do heal another mon (e.g. Hospitality) are deliberately NOT here.
+    /// </summary>
+    private static bool IsAbsorbHealAbility(string? name) => name is not null && ToId(name) is
+        "waterabsorb" or "voltabsorb" or "eartheater" or "dryskin";
 
     /// <summary>Showdown-style id: lowercase, alphanumerics only.</summary>
     public static string ToId(string s)

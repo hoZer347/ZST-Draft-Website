@@ -52,6 +52,21 @@ $env:ASPNETCORE_URLS        = 'http://localhost:5211'
 "$PID" | Out-File -FilePath $pidf -Encoding ascii -NoNewline
 Log "watchdog start (pid $PID); root=$root exe-exists=$(Test-Path $exe)"
 
+# Enforce an always-awake power profile (AC / plugged-in) so the server keeps
+# serving when we walk away. The system never sleeps or hibernates and disks
+# stay spun up; only the monitor is allowed to power off (where most of the
+# visible savings are anyway, and it doesn't touch the server). Done once at
+# startup — the settings persist, so no need to reassert each loop.
+try {
+    & powercfg /change standby-timeout-ac 0    # never sleep
+    & powercfg /change hibernate-timeout-ac 0  # never hibernate
+    & powercfg /change disk-timeout-ac 0       # keep disk alive for DB/IO
+    & powercfg /change monitor-timeout-ac 10   # screen off after 10 min
+    Log "applied always-awake power profile (AC)"
+} catch {
+    Log "WARN: powercfg failed: $($_.Exception.Message)"
+}
+
 while ($true) {
     try {
         "$(Get-Date -Format 'HH:mm:ss')" | Out-File -FilePath $alive -Encoding ascii -NoNewline

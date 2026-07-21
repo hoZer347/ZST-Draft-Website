@@ -150,6 +150,11 @@ builder.Services.AddScoped<IPushSender, LoggingPushSender>();
 builder.Services.AddHostedService<DraftClock>();
 builder.Services.AddHostedService<PushDispatcher>();
 
+// Daily 3am-ET season snapshot to a desktop folder. Singleton + hosted-service alias
+// so a dev endpoint can also trigger a save on demand.
+builder.Services.AddSingleton<SnapshotScheduler>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SnapshotScheduler>());
+
 // Fly (and any reverse proxy) terminates TLS and forwards plain HTTP. Without
 // this, UseHttpsRedirection sees scheme=http and redirects every request into
 // an infinite loop. KnownNetworks/Proxies are cleared because the proxy's
@@ -205,7 +210,22 @@ if (Directory.Exists(webRoot))
 {
     var webFiles = new PhysicalFileProvider(webRoot);
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = webFiles });   // "/" -> index.html
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = webFiles });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = webFiles,
+        OnPrepareResponse = ctx =>
+        {
+            // index.html carries the ?v= cache-busters for every other asset, so it
+            // MUST always be revalidated — otherwise a browser serves a stale copy
+            // pointing at old asset versions and CSS/JS changes never appear. The
+            // versioned assets themselves can be cached hard.
+            var path = ctx.File.Name;
+            ctx.Context.Response.Headers.CacheControl =
+                path.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                    ? "no-cache, must-revalidate"
+                    : "public, max-age=3600";
+        },
+    });
 }
 
 app.UseHttpsRedirection();
@@ -225,6 +245,7 @@ app.MapAuthApi(CorsPolicy);
 app.MapMobileApi(CorsPolicy);
 app.MapPlayersApi(CorsPolicy);
 app.MapScheduleApi(CorsPolicy);
+app.MapDraftStatsApi(CorsPolicy);
 
 if (app.Environment.IsDevelopment())
 {
@@ -260,6 +281,14 @@ if (app.Environment.IsDevelopment())
         // Real headless Showdown battles by default (?real=false fabricates stats instead).
         var result = await sim.SimulateAsync(draft.Id, teams ?? 8, seed, real ?? true, ct);
         return Results.Ok(result);
+    }).RequireAuthorization().RequireCors(CorsPolicy);
+
+    // Trigger the daily desktop snapshot now (it otherwise runs at 3am ET).
+    app.MapPost("/dev/snapshot-now", async (SnapshotScheduler snapshots, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
+    {
+        if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+        var files = await snapshots.SaveAllAsync(ct);
+        return Results.Ok(new { folder = SnapshotScheduler.Folder, files });
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
     // Force a pool re-sync from the source Google Sheet without starting a draft

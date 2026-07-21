@@ -9027,10 +9027,10 @@
 "hidden": "Rocky Payload"
 },
 {
-"name": "Palafin-H",
+"name": "Palafin",
 "dex": 964,
 "tier": "A",
-"sprite": "palafin-hero",
+"sprite": "palafin",
 "hp": 100,
 "atk": 160,
 "def": 97,

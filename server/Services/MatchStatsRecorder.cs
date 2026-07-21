@@ -82,6 +82,8 @@ public class MatchStatsRecorder(AppDbContext db, ILogger<MatchStatsRecorder> log
             }
 
             st.GamesPlayed += sign;
+            st.Starts += (gs.Started ? 1 : 0) * sign;    // led (thrown out first) this game
+            st.Finishes += (gs.Finished ? 1 : 0) * sign; // still standing at the end this game
             st.Kills += gs.Kills * sign;
             st.Deaths += gs.Deaths * sign;
             st.Crits += gs.Crits * sign;

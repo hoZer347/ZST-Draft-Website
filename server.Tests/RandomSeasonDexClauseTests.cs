@@ -103,7 +103,7 @@ public class RandomSeasonDexClauseTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task The_passed_run_never_lists_two_forms_of_one_species()
+    public async Task The_passed_run_is_the_rest_of_the_real_offer_for_the_picks_tier()
     {
         var (draftId, leagueId) = await DraftAsync();
 
@@ -118,9 +118,17 @@ public class RandomSeasonDexClauseTests : DraftScenarioBase
             foreach (var p in picks.Where(p => p.OtherOptions is not null))
             {
                 var others = JsonSerializer.Deserialize<List<JsonElement>>(p.OtherOptions!)!;
-                var dex = others.Select(o => o.GetProperty("dexNumber").GetInt32()).Where(d => d > 0).ToList();
-                Assert.Equal(dex.Count, dex.Distinct().Count()); // no two forms among the options
-                if (dex.Count > 0) sawOptions = true;
+                // The passed run is simply the rest of that turn's real offer: every
+                // option shares the pick's tier and none is the picked mon itself. Two
+                // forms of one species CAN appear — the live engine offers unheld forms
+                // without de-duping — so, unlike the drafted rosters, this run isn't
+                // dex-unique, and we don't assert that it is.
+                foreach (var o in others)
+                {
+                    Assert.Equal(p.Tier.ToString(), o.GetProperty("tier").GetString());
+                    Assert.NotEqual(p.PokemonEntry.Name, o.GetProperty("name").GetString());
+                }
+                if (others.Count > 0) sawOptions = true;
             }
         }
         Assert.True(sawOptions, "expected some picks to carry a passed run");

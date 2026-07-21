@@ -231,8 +231,13 @@ public static class MobileApi
 
         // Accrued battle stats for every drafted mon that has played, scraped
         // from the season's replays. One row per pick (a mon on a team).
-        api.MapGet("/stats", async (AppDbContext db, CancellationToken ct) =>
+        api.MapGet("/stats", async (ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
         {
+            // Which teams this caller coaches, resolved server-side, so a mon on the
+            // signed-in coach's own team can be flagged (`mine`) without the client
+            // depending on the draft-state global being loaded first.
+            var myDiscordId = me.DiscordId();
+            var myTeamIds = await db.Teams.Where(t => t.CoachId == myDiscordId).Select(t => t.Id).ToListAsync(ct);
             var rows = await db.PokemonStats
                 .Where(s => s.GamesPlayed > 0)
                 .Select(s => new
@@ -243,12 +248,14 @@ public static class MobileApi
                     tier = s.Pick.Tier.ToString(),
                     tera = s.Pick.TeraType,
                     teamId = s.Pick.TeamId,
+                    mine = myTeamIds.Contains(s.Pick.TeamId),
                     trainer = s.Pick.Team.CoachName,
                     team = s.Pick.Team.Name,
                     activeTurns = s.ActiveTurns,
                     playedTurns = s.PlayedTurns, // denominator for in-game (usage) presence
                     teamTurns = s.Pick.Team.BattleTurns,
                     gp = s.GamesPlayed,
+                    starts = s.Starts, finishes = s.Finishes,
                     k = s.Kills, d = s.Deaths, w = s.Wins, l = s.Losses,
                     dealt = s.DamageDealtDirect + s.DamageDealtIndirect,
                     dealtDirect = s.DamageDealtDirect, dealtIndirect = s.DamageDealtIndirect,
@@ -321,6 +328,30 @@ public static class MobileApi
             var totalPicks = participants * slotsPerRoster;
             var picksMade = draft.Picks.Count;
 
+            // How many picks until the caller is next on the clock. Walk the laid-down
+            // snake order forward from the current position, simulating each team
+            // filling its roster: a team with no slots left is silently passed over
+            // (mirrors the engine's finished-team skip), every other slot is one pick.
+            // Count the picks before we reach the caller's next slot. 0 means "you're
+            // on the clock now"; null when the caller has no team, the draft isn't
+            // running, or the caller's roster is already full (no turn is coming).
+            int? picksUntilMyTurn = null;
+            if (myTeamId is not null && draft.State == DraftState.Running)
+            {
+                var remaining = draft.League.Teams.ToDictionary(
+                    t => t.Id, t => slotsPerRoster - draft.Picks.Count(p => p.TeamId == t.Id));
+                var orderList = draft.Order.OrderBy(s => s.Position).ToList();
+                var count = 0;
+                for (var i = draft.CurrentIndex; i < orderList.Count; i++)
+                {
+                    var tid = orderList[i].TeamId;
+                    if (!remaining.TryGetValue(tid, out var left) || left <= 0) continue; // full: skipped
+                    if (tid == myTeamId.Value) { picksUntilMyTurn = count; break; }
+                    count++;
+                    remaining[tid] = left - 1;
+                }
+            }
+
             return Results.Ok(new
             {
                 draft.Id,
@@ -331,6 +362,7 @@ public static class MobileApi
                 totalPicks,
                 onClockTeamId = onClock,
                 myTeamId,
+                picksUntilMyTurn,
                 isAdmin,
                 ready = readyIds,
                 myReady,
@@ -527,6 +559,50 @@ public static class MobileApi
             if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
             var r = await e.AbortAsync(id, ct);
             return r.Ok ? Results.Ok() : Results.BadRequest(new { error = r.Error });
+        });
+
+        // Admin: rebuild a league's stored PokemonStat aggregates from scratch by
+        // re-scraping every reported match's stored replay log with the CURRENT
+        // scraper. Non-destructive — matches, replays and standings are untouched;
+        // only the derived per-mon stat rows (and the per-team presence denominators
+        // they share) are recomputed. Run this after a scraper fix so the stats page
+        // reflects corrected attribution without re-simulating the season.
+        admin.MapPost("/leagues/{leagueId:int}/recompute-stats", async (
+            int leagueId, ClaimsPrincipal me, AppDbContext db, MatchStatsRecorder recorder, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            var teamIds = await db.Teams.Where(t => t.LeagueId == leagueId).Select(t => t.Id).ToListAsync(ct);
+            if (teamIds.Count == 0) return Results.NotFound(new { error = "No teams in that league." });
+
+            // Zero the derived data: drop every PokemonStat for a pick on these teams,
+            // and reset each team's season-presence denominator (BattleTurns). Save so
+            // the re-apply below starts from a clean slate.
+            var pickIds = await db.Picks.Where(p => teamIds.Contains(p.TeamId)).Select(p => p.Id).ToListAsync(ct);
+            var stale = await db.PokemonStats.Where(s => pickIds.Contains(s.PickId)).ToListAsync(ct);
+            db.PokemonStats.RemoveRange(stale);
+            var teams = await db.Teams.Where(t => t.LeagueId == leagueId).ToListAsync(ct);
+            foreach (var t in teams) t.BattleTurns = 0;
+            await db.SaveChangesAsync(ct);
+
+            // Re-apply every reported match's stored log (+1) with the fixed scraper.
+            var matches = await db.Matches
+                .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
+                .Where(m => m.LeagueId == leagueId && m.ReplayLog != null
+                            && m.ReplayHomeSide != null && m.Result != MatchResult.Pending)
+                .ToListAsync(ct);
+            var applied = 0;
+            foreach (var m in matches)
+            {
+                await recorder.ApplyAsync(m, m.ReplayHomeSide!, m.ReplayLog!, m.Result, +1, ct);
+                // Save after EACH match: ApplyAsync reads the existing PokemonStat rows
+                // back from the DB to accumulate onto, so a later match only sees an
+                // earlier one's contribution once it's persisted. Batching to a single
+                // save at the end collapses every mon to just its last game.
+                await db.SaveChangesAsync(ct);
+                applied++;
+            }
+            return Results.Ok(new { leagueId, matchesApplied = applied, statRowsCleared = stale.Count });
         });
 
         // Admin: ready ANY account into the not-yet-started draft (dummy or real

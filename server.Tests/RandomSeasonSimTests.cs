@@ -8,11 +8,11 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The dev-only <see cref="RandomSeasonSimulator"/>: a synthetic season — random
-/// teams and a random valid draft. With realBattles:false it builds the draft +
-/// schedule but plays no games, so results/stats come only from real battles (or
-/// later-added replays) — the matches stay Pending, with no scores and no stats.
-/// These assert that structure and that a fixed seed reproduces the same draft.
+/// The dev-only <see cref="RandomSeasonSimulator"/>: a synthetic season driven
+/// through the real <see cref="DraftEngine"/> (offer a tier, then pick/skip). With
+/// realBattles:false it builds the draft + schedule but plays no games, so
+/// results/stats come only from real battles (or later-added replays) — the matches
+/// stay Pending, with no scores and no stats. These assert that structure.
 /// </summary>
 public class RandomSeasonSimTests : DraftScenarioBase
 {
@@ -47,7 +47,7 @@ public class RandomSeasonSimTests : DraftScenarioBase
 
         Assert.Equal(DraftState.Complete, (await db.Drafts.FirstAsync(d => d.Id == draftId)).State);
 
-        var picks = await db.Picks.Where(p => p.DraftId == draftId).ToListAsync();
+        var picks = await db.Picks.Include(p => p.PokemonEntry).Where(p => p.DraftId == draftId).ToListAsync();
         Assert.Equal(60, picks.Count);
         // The pool depletes — no mon drafted twice.
         Assert.Equal(picks.Count, picks.Select(p => p.PokemonEntryId).Distinct().Count());
@@ -59,9 +59,11 @@ public class RandomSeasonSimTests : DraftScenarioBase
             Assert.Equal(3, team.Count(p => p.Tier == Tier.B));
             Assert.Equal(4, team.Count(p => p.Tier == Tier.C));
         }
-        // Tera is a C-tier-only mechanic.
+        // Tera fires for a C-tier pick unless the mon is barred (megas / Shedinja).
         foreach (var p in picks)
-            Assert.Equal(p.Tier == Tier.C, !string.IsNullOrEmpty(p.TeraType));
+            Assert.Equal(
+                p.Tier == Tier.C && !DraftEngine.TeraBarred(p.PokemonEntry.Name, p.PokemonEntry.Sprite),
+                !string.IsNullOrEmpty(p.TeraType));
 
         // No battles → every match is Pending with no score, and nothing recorded.
         var leagueId = (await db.Drafts.FirstAsync(d => d.Id == draftId)).LeagueId;
@@ -83,27 +85,26 @@ public class RandomSeasonSimTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task A_fixed_seed_reproduces_the_same_draft()
+    public async Task Re_running_the_sim_rebuilds_a_fresh_complete_draft()
     {
         var draftId = await DraftIdAsync();
 
-        async Task<List<(int Pick, int Mon)>> RunAsync(int seed)
+        async Task<int> RunAsync()
         {
             using (var scope = Factory.Services.CreateScope())
                 await scope.ServiceProvider.GetRequiredService<RandomSeasonSimulator>()
-                    .SimulateAsync(draftId, teamCount: 4, seed: seed, realBattles: false);
+                    .SimulateAsync(draftId, teamCount: 4, seed: null, realBattles: false);
 
             using var read = Factory.Services.CreateScope();
             var db = read.ServiceProvider.GetRequiredService<AppDbContext>();
-            return await db.Picks.Where(p => p.DraftId == draftId)
-                .OrderBy(p => p.PickNumber)
-                .Select(p => new ValueTuple<int, int>(p.PickNumber, p.PokemonEntryId))
-                .ToListAsync();
+            Assert.Equal(DraftState.Complete, (await db.Drafts.FirstAsync(d => d.Id == draftId)).State);
+            return await db.Picks.CountAsync(p => p.DraftId == draftId);
         }
 
-        var first = await RunAsync(123);
-        var second = await RunAsync(123); // same seed → same picks (pool entry ids are stable)
-        Assert.Equal(first, second);
+        // Each run resets and drives a fresh full draft through the engine: 4 teams ×
+        // (1+2+3+4) = 40 picks, and re-running wipes the prior one rather than piling on.
+        Assert.Equal(40, await RunAsync());
+        Assert.Equal(40, await RunAsync());
     }
 
     [Fact]

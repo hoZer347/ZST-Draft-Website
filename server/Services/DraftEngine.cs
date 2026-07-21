@@ -458,11 +458,17 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             // maximum. Finished teams' surplus turns are auto-skipped in Advance.
             db.DraftSlots.RemoveRange(draft.Order);
             draft.Order.Clear();
+            // Randomise who drafts first: shuffle the roster (Fisher-Yates via
+            // Random.Shared) so the snake order doesn't just follow the order coaches
+            // readied up in. `roster` itself is left untouched — it's reused below only
+            // as an id set, which doesn't care about order.
+            var order = roster.ToArray();
+            Random.Shared.Shuffle(order);
             var rounds = draft.League.TierRules.Sum(r => r.SlotsPerTeam) + MaxSkipsPerTeam;
             var pos = 0;
             for (var round = 0; round < rounds; round++)
             {
-                var seq = round % 2 == 0 ? roster : Enumerable.Reverse(roster);
+                var seq = round % 2 == 0 ? order : Enumerable.Reverse(order);
                 foreach (var t in seq)
                     draft.Order.Add(new DraftSlot { DraftId = draft.Id, Position = pos++, TeamId = t.Id });
             }

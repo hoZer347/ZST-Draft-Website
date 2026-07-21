@@ -11,8 +11,11 @@ const el = {
   navToggle: $('nav-toggle'), navBackdrop: $('nav-backdrop'),
   // draft
   onClock: $('on-clock'), onClockBox: $('on-clock-box'), pickNo: $('pick-no'), timer: $('timer'),
+  turnCountdown: $('turn-countdown'),
   play: $('play'), rollback: $('rollback'), abort: $('abort'), simSeason: $('sim-season'),
-  simRandomSeason: $('sim-random-season'), simBattles: $('sim-battles'), simBattlesLabel: $('sim-battles-label'),
+  snapshotSeason: $('snapshot-season'), restoreSeason: $('restore-season'), restoreFile: $('restore-file'),
+  simRandomSeason: $('sim-random-season'), simRandom16: $('sim-random-16'),
+  simBattles: $('sim-battles'), simBattlesLabel: $('sim-battles-label'),
   demoTeams: $('demo-teams'), demoTeamsLabel: $('demo-teams-label'),
   banner: $('state-banner'),
   turn: $('turn'), turnLabel: $('turn-label'), tiers: $('tiers'), options: $('options'),
@@ -30,7 +33,7 @@ const el = {
   tlAvailable: $('tl-available'), tlClear: $('tl-clear'), tlCount: $('tl-count'), tlBody: $('tl-body'),
   tlFilters: $('tl-filters'), tlFilterOpen: $('tl-filter-open'), tlDone: $('tl-done'),
   // schedule
-  schedScroll: $('sched-scroll'),
+  schedScroll: $('sched-scroll'), schedFilterbar: $('sched-filterbar'), schedMine: $('sched-mine'),
 };
 
 // ── session ────────────────────────────────────────────────────────────
@@ -52,6 +55,7 @@ function signedOut() {
   teardownDraft();
   statsData = null; // drop cached stats so a re-login reloads them
   scoreboardData = null; // and the scoreboard cache
+  draftStatsData = null; // and the draft-analytics cache
   loadDevSignin(); // (localhost) repopulate the dev "Sign in as" picker
 }
 
@@ -63,7 +67,6 @@ async function signedIn() {
   el.account.hidden = false;
   el.navToggle.hidden = false; // reveal the hamburger (mobile CSS decides if it shows)
   el.username.textContent = user.username;
-  showView('draft'); // safe default; may switch to the scoreboard once the season is over
   // Not every Discord account has an avatar, and this element survives a
   // sign-out, so the empty case has to clear it rather than leave the last one.
   if (user.avatarUrl) { el.avatar.src = user.avatarUrl; el.avatar.hidden = false; }
@@ -71,25 +74,28 @@ async function signedIn() {
 
   renderImpersonation(user);
   loadPlayers();
-  await initDraft();
 
-  // Landing tab: the draft tab while a season is in progress, but the scoreboard
-  // once every scheduled game has been played. Only switch if the user hasn't
-  // already navigated away during the async init.
-  if (!$('view-draft')?.hidden && await seasonComplete()) showView('scoreboard');
+  // Land on the tab you were last on (persisted by showView). landOnSavedTab awaits
+  // resolveLeague FIRST — it sets leagueId, which the schedule / scoreboard /
+  // draft-stats tabs need — so a refresh on those tabs loads instead of failing.
+  // resolveLeague is only a single quick fetch, so we land directly on the cached tab
+  // with no draft-tab flash. No redirects: the draft tab is just the default until
+  // you've navigated somewhere the first time.
+  await landOnSavedTab({
+    init: resolveLeague,
+    show: showView,
+    saved: readActiveTab,
+    viewExists: (name) => !!document.getElementById(`view-${name}`),
+  });
+
+  // Now that we've landed, hydrate the draft tab (state + roster + realtime) in the
+  // background. It only fills the draft view, so it never delays the tab we're on.
+  hydrateDraft();
 }
 
-// True once the schedule exists and no match is still pending — i.e. the season's
-// games are all played. Warms the schedule cache as a side effect.
-async function seasonComplete() {
-  if (leagueId == null) return false;
-  try {
-    const res = await Auth.authFetch(`/api/leagues/${leagueId}/schedule`);
-    if (!res.ok) return false;
-    scheduleData = await res.json();
-    const matches = scheduleData.matches || [];
-    return matches.length > 0 && scheduleData.currentWeek == null;
-  } catch { return false; }
+// The tab name persisted by showView (or null in private mode / first visit).
+function readActiveTab() {
+  try { return localStorage.getItem('activeTab'); } catch { return null; }
 }
 
 // Admin-only "view as a dummy coach" control. Shows the picker for a real admin;
@@ -120,7 +126,10 @@ async function renderImpersonation(user) {
 async function loadPlayers() {
   const list = el.playerList;
   if (!list) return;
-  list.innerHTML = '<li class="muted">Loading…</li>';
+  // Only show the placeholder on a cold load. On a refresh (a broadcast, a
+  // deletion) keep the existing rows visible until the new data swaps in, so
+  // repeated refreshes don't flash "Loading…".
+  if (!list.querySelector('.player')) list.innerHTML = '<li class="muted">Loading…</li>';
 
   let players;
   try {
@@ -195,7 +204,7 @@ async function loadPlayers() {
       rm.title = `Remove ${p.username}`;
       rm.setAttribute('aria-label', `Remove ${p.username}`);
       // Don't let the remove click bubble up and open the team page.
-      rm.onclick = (e) => { e.stopPropagation(); removePlayer(p); };
+      rm.onclick = (e) => { e.stopPropagation(); removePlayer(p, li); };
       li.append(rm);
     }
     return li;
@@ -218,17 +227,27 @@ async function toggleReady(discordId, currentlyReady) {
   }
 }
 
-async function removePlayer(p) {
-  if (!confirm(`Remove ${p.username}? This deletes their account and ends every session.`)) return;
+// A dummy is a synthetic test profile: its id isn't an all-digit Discord snowflake.
+const isDummyPlayer = (p) => !/^\d+$/.test(p.discordId || '');
+
+async function removePlayer(p, li) {
+  // Real accounts are a destructive delete (ends their sessions), so confirm those.
+  // Dummies are throwaway test profiles, so remove them with no prompt.
+  if (!isDummyPlayer(p) &&
+      !confirm(`Remove ${p.username}? This deletes their account and ends every session.`)) return;
+
+  // Drop the row now instead of refetching the whole roster. The server's
+  // playersChanged broadcast reconciles every client (including this one) once.
+  if (li) li.remove();
   try {
     const res = await Auth.authFetch(`/api/players/${encodeURIComponent(p.discordId)}`, { method: 'DELETE' });
     if (!res.ok) {
       const msg = res.status === 403 ? 'Only admins can remove players' : `Failed (${res.status})`;
       throw new Error(msg);
     }
-    await loadPlayers();
   } catch (e) {
-    alert(`Couldn't remove ${p.username} — ${e.message}`);
+    showDraftError(`Couldn't remove ${p.username}: ${e.message}`);
+    loadPlayers(); // restore the row we optimistically removed
   }
 }
 
@@ -348,8 +367,9 @@ function monCard(m) {
     mvp.title = `Team MVP — ${m.stats.k}/${m.stats.d} KO/faint (${m.stats.k - m.stats.d >= 0 ? '+' : ''}${m.stats.k - m.stats.d})`;
     name.append(' ', mvp);
   }
-  // C-tier mons were drafted with a Tera type — show it on the team page.
-  if (m.teraType) name.append(' ', teraTag(m.teraType));
+  // C-tier mons were drafted with a Tera type — show it on the team page as the
+  // same round type-symbol icon the pick feed uses.
+  if (m.teraType) name.append(' ', teraIcon(m.teraType));
 
   const types = document.createElement('div');
   types.className = 'tm-types';
@@ -543,8 +563,8 @@ function teraTag(teraType) {
 }
 
 // A Tera type shown as its round type-symbol icon (baked into web/type-icons/).
-// Used ONLY in the pick feed (the pick's own Tera and the passed column); the
-// pill teraTag stays everywhere else (team page, live option cards).
+// Used in the pick feed (the pick's own Tera and the passed column) and the team
+// preview; the pill teraTag stays on the live option cards.
 function teraIcon(teraType) {
   const img = document.createElement('img');
   // Colour is baked into the recoloured PNG (a coloured glyph on transparency),
@@ -561,8 +581,15 @@ function teraIcon(teraType) {
 
 const showDraftError = (msg) => { el.draftError.textContent = msg || ''; el.draftError.hidden = !msg; };
 
-async function initDraft() {
+// Resolve which draft/league we're in (a single quick fetch), setting draftId +
+// leagueId. Kept SEPARATE from the heavier hydrate below so it can finish before we
+// land on a tab: the schedule / scoreboard / draft-stats tabs read leagueId, so it
+// must be set before they render — but we don't want to wait on the draft state or
+// the realtime connection just to show a tab.
+async function resolveLeague() {
   teardownDraft();
+  draftId = null;
+  leagueId = null;
   try {
     const res = await Auth.authFetch('/api/drafts');
     if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -573,7 +600,17 @@ async function initDraft() {
     // a team to open it — the server tells us our team id once it exists.
     draftId = drafts[0].id;
     leagueId = drafts[0].leagueId ?? null;
+  } catch (e) {
+    showDraftError(`Can't load the draft — ${e.message}`);
+  }
+}
 
+// Fill the draft tab (state + roster) and open the realtime connection. Runs AFTER
+// we've landed on the remembered tab, so it never delays that; a no-op when there's
+// no draft configured.
+async function hydrateDraft() {
+  if (draftId == null) return;
+  try {
     // Warm the schedule so the Teambuilder tab can seed a blank team per matchup on
     // the very first open (best-effort, non-blocking).
     if (leagueId != null) warmMatchups().catch(() => {});
@@ -632,6 +669,7 @@ function render(s) {
 
   el.onClock.textContent = s.onClockTeamId == null ? '—' : teamName(s.onClockTeamId);
   el.onClock.classList.toggle('mine', mine);
+  renderTurnCountdown(s);
   // Once the draft is done there's no one on the clock — hide that box for
   // non-admins (admins keep it for oversight).
   el.onClockBox.hidden = s.state === 'Complete' && !s.isAdmin;
@@ -694,6 +732,10 @@ function render(s) {
   // and it's admin-gated server-side.
   el.simSeason.hidden = !(isAdmin && s.state === 'NotStarted');
   el.simRandomSeason.hidden = !(isAdmin && s.state === 'NotStarted');
+  el.simRandom16.hidden = !(isAdmin && s.state === 'NotStarted');
+  // Snapshot is useful once there's a season to capture (drafting or done).
+  el.snapshotSeason.hidden = !(isAdmin && s.state !== 'NotStarted');
+  el.restoreSeason.hidden = !isAdmin; // restore into any state (it wipes first)
   el.simBattlesLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // the random-sim battles toggle
   el.demoTeamsLabel.hidden = !(isAdmin && s.state === 'NotStarted'); // build demo teams for every player
   // Admin-only. Shown in any state so it's always reachable; the server only
@@ -718,6 +760,23 @@ function renderTimer() {
   // Show hours only when the timeout is long (a 24h default reads as "23:59:12").
   el.timer.textContent = h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
   el.timer.classList.toggle('low', left <= 30);
+}
+
+// "N picks until you're up" for the logged-in coach: a quick read of how close
+// their turn is without counting the board by hand. picksUntilMyTurn is computed
+// server-side (see the draft-state endpoint); null when the caller has no team,
+// the draft isn't running, or their roster is already full.
+function renderTurnCountdown(s) {
+  const box = el.turnCountdown;
+  if (!box) return;
+  const n = s.picksUntilMyTurn;
+  if (n == null) { box.hidden = true; box.textContent = ''; return; }
+  box.hidden = false;
+  box.classList.toggle('is-mine', n === 0); // you're on the clock right now
+  box.classList.toggle('is-soon', n > 0 && n <= 2); // next up-ish
+  box.textContent = n === 0
+    ? "You're on the clock!"
+    : `${n} pick${n === 1 ? '' : 's'} until you're up`;
 }
 
 // The tier buttons + offered options. Shown to the coach on the clock (who can
@@ -817,7 +876,10 @@ function passedRun(json) {
 // incrementally — see renderPicks.
 function pickRow(p) {
   const li = document.createElement('li');
-  li.className = `pick pick--${p.tier}`;
+  // The shared tier-fill standard: tier lip + wash, and a --mine highlight for
+  // a pick made by the signed-in user's own team.
+  const mine = myTeamId != null && p.teamId === myTeamId;
+  li.className = `pick tier-fill tier--${p.tier}${mine ? ' tier-fill--mine' : ''}`;
 
   // Column 1 — the draft pick itself: number, sprite, name, and (C-tier) its Tera
   // chip right after the name so it reads as part of the pick, not the passed run.
@@ -866,7 +928,9 @@ function pickRow(p) {
 // an empty middle) so it lines up down the feed.
 function skipRow(sk) {
   const li = document.createElement('li');
-  li.className = 'pick pick--skip';
+  // The signed-in coach's own skips get the same "mine" accent as their picks.
+  const mine = myTeamId != null && sk.teamId === myTeamId;
+  li.className = `pick pick--skip${mine ? ' tier-fill--mine' : ''}`;
 
   const main = document.createElement('div');
   main.className = 'pick-main';
@@ -967,6 +1031,7 @@ function sizePicks() {
   el.picks.style.maxHeight = `${Math.max(0, avail)}px`;
 }
 
+
 // ── draft actions ──────────────────────────────────────────────────────
 
 async function postDraft(path, body) {
@@ -1017,6 +1082,11 @@ async function connect() {
 
   ['turnChanged', 'pickMade', 'optionsOffered', 'pickSkipped', 'pickRolledBack', 'draftStateChanged']
     .forEach((evt) => conn.on(evt, () => refreshDraft()));
+
+  // Picks / skips change the draft analytics — drop the cache and, if that tab is
+  // open, refresh it live.
+  ['pickMade', 'pickSkipped', 'pickRolledBack', 'draftStateChanged'].forEach((evt) =>
+    conn.on(evt, () => { draftStatsData = null; if (!$('view-draftstats')?.hidden) ensureDraftStats(); }));
 
   // Roster changes (someone signed in / was removed) fan out to all clients.
   conn.on('playersChanged', () => { loadPlayers(); renderImpersonation(Auth.user()); });
@@ -1280,15 +1350,25 @@ async function ensureSchedule() {
 
 const muted = (text) => Object.assign(document.createElement('p'), { className: 'muted', textContent: text });
 
+// Toggle: show every battle, or only the signed-in coach's. Re-renders in place.
+let schedMineOnly = false;
+if (el.schedMine) el.schedMine.onchange = () => { schedMineOnly = el.schedMine.checked; renderSchedule(); };
+
 function renderSchedule() {
   const data = scheduleData;
   if (!data) return;
 
-  const matches = data.matches ?? [];
+  // The "only my battles" toggle only makes sense once the coach has a team.
+  const canFilter = data.myTeamId != null;
+  if (el.schedFilterbar) el.schedFilterbar.hidden = !canFilter;
+
+  let matches = data.matches ?? [];
+  if (schedMineOnly && canFilter) matches = matches.filter((m) => m.mine);
   if (!matches.length) {
-    // The round-robin is laid down automatically when the draft starts, so an
-    // empty schedule just means the draft hasn't begun yet.
-    el.schedScroll.replaceChildren(muted('No schedule yet — it appears once the draft starts.'));
+    // Empty either because the draft hasn't begun, or the "my battles" filter
+    // matched nothing yet.
+    el.schedScroll.replaceChildren(muted(
+      schedMineOnly && canFilter ? 'None of your battles to show yet.' : 'No schedule yet — it appears once the draft starts.'));
     return;
   }
 
@@ -1333,9 +1413,23 @@ function renderSchedule() {
 
   el.schedScroll.replaceChildren(frag);
 
-  // Land on the present, so already-played weeks require a scroll up.
+  // Land on the present, so already-played weeks sit above and require a scroll up.
+  // The whole page scrolls now, so move the window to the present section, leaving
+  // room for the sticky header + filter bar above it. Only when the schedule is the
+  // visible tab, so a background (SignalR) refresh can't scroll another view.
+  const view = document.getElementById('view-schedule');
   const anchor = document.getElementById('sched-present');
-  if (anchor) el.schedScroll.scrollTop = anchor.offsetTop;
+  if (anchor && view && !view.hidden) {
+    // Reserve room for whatever stays stuck at the top when we land there: always
+    // the filter bar, plus the header only where it's sticky (mobile); on desktop
+    // the header scrolls away, so counting it would leave an extra gap.
+    const header = document.querySelector('header');
+    const headerStuck = header && getComputedStyle(header).position === 'sticky';
+    const offset = (headerStuck ? header.offsetHeight : 0)
+      + (el.schedFilterbar?.offsetHeight || 0) + 12;
+    const top = anchor.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: Math.max(0, top) });
+  }
 }
 
 function schedHeading(text) {
@@ -1345,9 +1439,9 @@ function schedHeading(text) {
   return h;
 }
 
-// The match deadline is stored as Monday 23:59 UTC of its week. Render it in UTC
-// so every viewer sees the same "Mon, Jul 20, 11:59 PM" regardless of their
-// timezone (a local conversion could shift it off Monday and off 11:59).
+// The match deadline is stored as Sunday 23:59 UTC of its week. Render it in UTC
+// so every viewer sees the same "Sun, Jul 20, 11:59 PM" regardless of their
+// timezone (a local conversion could shift it off Sunday and off 11:59).
 const DUE_FMT = {
   weekday: 'short', month: 'short', day: 'numeric',
   hour: 'numeric', minute: '2-digit', timeZone: 'UTC',
@@ -1379,16 +1473,116 @@ function matchCard(m, size) {
   const row = document.createElement('div');
   row.className = 'match-row';
   row.append(
-    teamSide(m.homeName, m.homeTeamId === m.myTeamId, homeWon, 'home'),
+    teamSide(m.homeName, m.homeAvatar, m.homeTeamId === m.myTeamId, homeWon, 'home'),
     matchMiddle(m, card, canEdit),
-    teamSide(m.awayName, m.awayTeamId === m.myTeamId, awayWon, 'away'),
+    teamSide(m.awayName, m.awayAvatar, m.awayTeamId === m.myTeamId, awayWon, 'away'),
   );
   card.append(head, row);
+
+  // Played game: a compact per-mon stat strip under the score.
+  if (m.played && m.battleStats?.length) card.append(battleStatsBlock(m));
 
   // Your own unplayed game: nothing to submit. Playing it on our Showdown server
   // reports the finished battle automatically (see /api/showdown/report).
   if (!m.played && m.mine) card.append(autoRecordNote());
   return card;
+}
+
+// Under a played match's score: a per-mon stat table for each team (home left, away
+// right), scraped from the battle: whether the mon started (led), KOs, damage,
+// crits, that-game presence, and non-self (ally) healing. A mon that was brought
+// but never hit the field is greyed with all dashes; a plain 0 shows as a dash too.
+const DASH = '–';
+const dashNum = (v) => (v ? String(v) : DASH);
+const dashPct = (v) => (v ? `${v}%` : DASH);
+
+// [label, tooltip]. Full words, so the columns are self-explanatory.
+const MSTAT_COLS = [
+  ['Started', 'Led the battle (one of the openers, before turn 1)'],
+  ['KOs', 'Opposing mons knocked out'],
+  ['Faints', 'Times this mon was knocked out'],
+  ['Damage', 'Damage dealt to opponents (% of an HP bar)'],
+  ['Presence', 'Share of this game spent on the field'],
+  ['Healing', 'HP restored to allies (self-healing not counted)'],
+];
+
+function battleStatsBlock(m) {
+  const wrap = document.createElement('div');
+  wrap.className = 'match-stats';
+  wrap.append(
+    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.homeTeamId)),
+    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.awayTeamId)),
+  );
+  return wrap;
+}
+
+// No team-name caption here: the match-row above already names home (left) and away
+// (right) in the same left/right positions these two stats tables sit, so a caption
+// would just repeat the coach name.
+function battleStatsSide(mons) {
+  const side = document.createElement('div');
+  side.className = 'mstats-side';
+
+  const head = document.createElement('div');
+  head.className = 'mstat mstat-head';
+  head.append(Object.assign(document.createElement('span'), { className: 'mstat-mon' }));
+  for (const [label, title] of MSTAT_COLS) {
+    const h = document.createElement('span');
+    h.className = 'mstat-h';
+    h.textContent = label;
+    h.title = title;
+    head.append(h);
+  }
+  side.append(head, ...mons.map(monStatRow));
+  return side;
+}
+
+function monStatRow(s) {
+  const row = document.createElement('div');
+  // The shared tier-fill standard (tier lip + wash). No --mine highlight here: the
+  // schedule already flags your own matches (match--is-mine), so highlighting your
+  // mons on top of that is noise. Benched mons are greyed via --out.
+  row.className = `mstat tier-fill tier--${s.tier}${s.played ? '' : ' mstat--out'}`;
+
+  const mon = document.createElement('div');
+  mon.className = 'mstat-mon';
+  const img = document.createElement('img');
+  img.className = 'mstat-img';
+  // No name column any more, so the sprite's tooltip is the mon's identity.
+  img.alt = s.name; img.title = s.name; img.loading = 'lazy';
+  applySprite(img, s);
+  mon.append(img);
+  // C-tier mons carry a rolled Tera type: show its symbol, greyed if the Tera
+  // was never actually used in this battle.
+  if (s.tera) {
+    const t = teraIcon(s.tera);
+    if (!s.teraUsed) { t.classList.add('tera-unused'); t.title = `Tera ${s.tera} (not used)`; }
+    mon.append(t);
+  }
+  row.append(mon);
+
+  // Started: a filled dot for the openers, a dash otherwise.
+  const started = document.createElement('span');
+  started.className = 'mstat-v';
+  if (s.played && s.started) {
+    started.textContent = '●';
+    started.classList.add('mstat-started');
+    started.title = 'Started';
+  } else {
+    started.textContent = DASH;
+  }
+  row.append(started);
+
+  const cells = s.played
+    ? [dashNum(s.kos), dashNum(s.faints), dashNum(s.dmg), dashPct(s.presence), dashNum(s.heal)]
+    : [DASH, DASH, DASH, DASH, DASH];
+  for (const c of cells) {
+    const v = document.createElement('span');
+    v.className = 'mstat-v';
+    v.textContent = c;
+    row.append(v);
+  }
+  return row;
 }
 
 // The note under a coach's own unplayed match. There's no link to paste: a game
@@ -1401,20 +1595,46 @@ function autoRecordNote() {
   return p;
 }
 
-function teamSide(name, isMe, won, which) {
+function teamSide(name, avatarUrl, isMe, won, which) {
   const side = document.createElement('div');
   side.className = `match-team match-team--${which}` + (won ? ' won' : '') + (isMe ? ' me' : '');
+
   const n = document.createElement('span');
   n.className = 'match-team-name';
   n.textContent = name;
-  side.append(n);
+
+  const inner = [n];
   if (isMe) {
     const you = document.createElement('span');
     you.className = 'match-you';
     you.textContent = 'you';
-    side.append(you);
+    inner.push(you);
   }
+
+  // The coach's Discord avatar on the OUTER edge of their side (far left for home,
+  // far right for away), so the username is pushed inward toward the centre score.
+  // Coaches with no linked account (dummies) or a dead avatar URL fall back to a
+  // silhouette icon, so every side has the same bubble.
+  const av = avatarBubble(avatarUrl, 'match-team-avatar');
+  if (which === 'home') side.append(av, ...inner);
+  else side.append(...inner, av);
   return side;
+}
+
+// A round Discord avatar bubble. Falls back to a "<class>--blank" silhouette for a
+// missing url (a dummy account) or an image that fails to load (an errored one).
+function avatarBubble(url, className) {
+  const span = document.createElement('span');
+  span.className = className;
+  if (url) {
+    const img = document.createElement('img');
+    img.src = url; img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => { img.remove(); span.classList.add(`${className}--blank`); };
+    span.appendChild(img);
+  } else {
+    span.classList.add(`${className}--blank`);
+  }
+  return span;
 }
 
 // The centre of the score/players row: the score, plus — for a played match and
@@ -1435,6 +1655,18 @@ function matchMiddle(m, card, canEdit) {
     mid.textContent = 'vs';
   }
   wrap.append(mid);
+
+  // Team builds as a pokepaste, shown to everyone for a played game that has them.
+  if (m.played && m.hasPaste) {
+    const paste = document.createElement('a');
+    paste.className = 'match-paste-link';
+    paste.href = `/api/matches/${m.id}/paste`;
+    paste.target = '_blank';
+    paste.rel = 'noopener';
+    paste.textContent = 'Teams (paste)';
+    paste.title = 'Both teams as a Pokémon Showdown / pokepaste export';
+    wrap.append(paste);
+  }
 
   if (m.played && canEdit) {
     const actions = document.createElement('div');
@@ -1545,10 +1777,14 @@ function showView(name) {
   syncHeaderHeight(); // keep the sticky Filters button's offset correct
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
   for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.view === name);
+  // The schedule tab pins the header to the top (desktop too, see style.css).
+  document.body.classList.toggle('sched-view', name === 'schedule');
+  try { localStorage.setItem('activeTab', name); } catch { /* private mode */ } // remember for next login
   if (name === 'tierlist') ensureTierList();
   if (name === 'schedule') ensureSchedule();
   if (name === 'stats') ensureStats();
   if (name === 'scoreboard') ensureScoreboard();
+  if (name === 'draftstats') ensureDraftStats();
   if (name === 'draft') sizePicks();
 }
 
@@ -1558,13 +1794,12 @@ function showView(name) {
 
 let statsData = null;
 let statsSort = { key: 'plusminus', dir: -1 };
-let statsFilter = { tier: 'all', trainer: 'all', includeAllyDamage: false, includeEnemyHeal: false };
+let statsFilter = { tier: 'all', trainer: 'all' };
 let statsFiltersWired = false;
 
 const STAT_COLS = [
-  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon.' },
+  { key: 'pokemon', label: 'Pokémon', tip: 'The drafted Pokémon (row tinted by draft tier).' },
   { key: 'trainer', label: 'Trainer', tip: 'The coach who drafted it.' },
-  { key: 'tier', label: 'Tier', badge: true, tip: 'Draft tier.' },
   { key: 'gp', label: 'GP', num: true, tip: 'Games this mon was brought to.' },
   { key: 'presence', label: 'Season Pres.', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
     tip: "Field turns ÷ team's total turns across the season. Games it skipped count as absence, rewarding usage. Teammates sum to 100% (singles) or 200% (doubles)." },
@@ -1579,11 +1814,13 @@ const STAT_COLS = [
   { key: 'ratio', label: 'Dmg ratio', num: true, fmt: (v) => (v === Infinity ? '∞' : v.toFixed(2)),
     tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
   { key: 'dealt', label: 'Dealt%', num: true, fmt: (v) => Math.round(v),
-    tip: 'Damage dealt to opponents (direct + indirect), cumulative % of an HP bar. "Damage to allies" toggle adds friendly fire.' },
+    tip: 'Damage dealt to opponents (direct + indirect), cumulative % of an HP bar.' },
   { key: 'dealtDirect', label: 'Dealt·dir%', num: true, fmt: (v) => Math.round(v),
     tip: 'Direct damage to opponents (your moves landing), cumulative %.' },
   { key: 'dealtIndirect', label: 'Dealt·ind%', num: true, fmt: (v) => Math.round(v),
     tip: 'Indirect damage to opponents (hazards, poison/burn, Rocky Helmet, Leech Seed), cumulative %.' },
+  { key: 'allyDmg', label: 'Ally dmg%', num: true, fmt: (v) => Math.round(v),
+    tip: 'Friendly-fire damage dealt to your own allies (spread moves catching an ally), cumulative % of an HP bar.' },
   { key: 'taken', label: 'Taken%', num: true, fmt: (v) => Math.round(v),
     tip: 'Damage taken from others (direct + indirect), excluding self, cumulative %.' },
   { key: 'takenDirect', label: 'Taken·dir%', num: true, fmt: (v) => Math.round(v),
@@ -1597,8 +1834,12 @@ const STAT_COLS = [
   { key: 'recovered', label: 'Self-heal%', num: true, fmt: (v) => Math.round(v),
     tip: 'HP restored to itself (Recover, Roost, Leftovers, drain), cumulative %.' },
   { key: 'healed', label: 'Ally-heal%', num: true, fmt: (v) => Math.round(v),
-    tip: 'HP restored to allies (Life Dew, Pollen Puff, Grassy Terrain), cumulative %. "Healing to enemies" toggle adds heals to foes.' },
+    tip: 'HP restored to allies (Life Dew, Pollen Puff, Grassy Terrain), cumulative %.' },
+  { key: 'enemyHeal', label: 'Foe heal%', num: true, fmt: (v) => Math.round(v),
+    tip: 'HP restored to opposing Pokémon (Heal Pulse on a foe, your Grassy Terrain topping them up), cumulative % of an HP bar.' },
   { key: 'crits', label: 'Crits', num: true, tip: 'Critical hits landed.' },
+  { key: 'starts', label: 'Starts', num: true, tip: 'Games this mon led (thrown out first).' },
+  { key: 'finishes', label: 'Finished', num: true, tip: 'Games this mon was still standing (not fainted) at the end.' },
 ];
 
 async function ensureStats() {
@@ -1611,13 +1852,13 @@ async function ensureStats() {
     statsData = (await res.json()).map((r) => ({
       ...r,
       dexNumber: r.dex,
-      // Damage-to-opponents and ally-healing are the defaults; friendly-fire
-      // damage and enemy-healing are kept in their own fields so the toggles can
-      // fold them into the shown Dealt / Ally-heal columns without a reload. The
-      // displayed dealt*/healed/dealt/ratio are (re)derived by applyDamageToggles.
-      dealtDirectEnemy: r.dealtDirect, dealtIndirectEnemy: r.dealtIndirect,
-      dealtAllyDirect: r.dealtAllyDirect || 0, dealtAllyIndirect: r.dealtAllyIndirect || 0,
-      healedAlly: r.healed, healedEnemy: r.healedEnemy || 0,
+      // Damage to opponents (dealt*) and ally-healing (healed) come straight from
+      // the API. Friendly-fire damage and enemy-healing are their own columns now,
+      // never folded into the opponent columns.
+      allyDmg: (r.dealtAllyDirect || 0) + (r.dealtAllyIndirect || 0),
+      enemyHeal: r.healedEnemy || 0,
+      heal: r.recovered + r.healed, // total HP restored: to itself + to allies
+      ratio: r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0),
       // Derived: +/− is KOs minus faints; win rate over games with a result.
       plusminus: r.k - r.d,
       winrate: (r.w + r.l) ? r.w / (r.w + r.l) : 0,
@@ -1626,7 +1867,6 @@ async function ensureStats() {
       presence: r.teamTurns > 0 ? r.activeTurns / r.teamTurns : 0,
       gamePresence: r.playedTurns > 0 ? r.activeTurns / r.playedTurns : 0,
     }));
-    applyDamageToggles();
     wireStatsFilters();
     renderStats();
   } catch (e) {
@@ -1637,24 +1877,6 @@ async function ensureStats() {
 }
 
 const TIER_RANK = { S: 0, A: 1, B: 2, C: 3 };
-
-// Recomputes the shown damage/heal columns from the raw buckets per the two
-// toggles: friendly-fire damage folds into Dealt only when "Damage to allies" is
-// on; enemy healing folds into Ally-heal only when "Healing to enemies" is on.
-// Also rebuilds the total dealt and the damage ratio. Cheap; run on every toggle.
-function applyDamageToggles() {
-  if (!statsData) return;
-  const ally = statsFilter.includeAllyDamage;
-  const foe = statsFilter.includeEnemyHeal;
-  for (const r of statsData) {
-    r.dealtDirect = r.dealtDirectEnemy + (ally ? r.dealtAllyDirect : 0);
-    r.dealtIndirect = r.dealtIndirectEnemy + (ally ? r.dealtAllyIndirect : 0);
-    r.healed = r.healedAlly + (foe ? r.healedEnemy : 0);
-    r.dealt = r.dealtDirect + r.dealtIndirect;
-    r.heal = r.recovered + r.healed; // total HP restored: to itself + to allies
-    r.ratio = r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0);
-  }
-}
 
 function statVal(r, key) {
   if (key === 'record') return r.w + r.l; // sort the W–L column by games decided
@@ -1673,15 +1895,10 @@ function wireStatsFilters() {
   trainerSel.value = statsFilter.trainer;
   $('stats-filter-tier').value = statsFilter.tier;
 
-  $('stats-ally-dmg').checked = statsFilter.includeAllyDamage;
-  $('stats-enemy-heal').checked = statsFilter.includeEnemyHeal;
-
   if (statsFiltersWired) return;
   statsFiltersWired = true;
   $('stats-filter-tier').addEventListener('change', (e) => { statsFilter.tier = e.target.value; renderStats(); });
   trainerSel.addEventListener('change', (e) => { statsFilter.trainer = e.target.value; renderStats(); });
-  $('stats-ally-dmg').addEventListener('change', (e) => { statsFilter.includeAllyDamage = e.target.checked; applyDamageToggles(); renderStats(); });
-  $('stats-enemy-heal').addEventListener('change', (e) => { statsFilter.includeEnemyHeal = e.target.checked; applyDamageToggles(); renderStats(); });
 }
 
 function renderStats() {
@@ -1728,6 +1945,10 @@ function renderStats() {
   const tbody = document.createElement('tbody');
   for (const r of rows) {
     const tr = document.createElement('tr');
+    // Rows use the default zebra; the draft tier colours only the frozen Pokémon +
+    // Trainer columns (via --tc from tier--X). A mon on the signed-in coach's own
+    // team bolds its Pokémon + Trainer text instead of getting a background wash.
+    tr.className = `stats-row tier--${r.tier}` + (r.mine ? ' stats-row--mine' : '');
 
     const mon = document.createElement('td');
     // Flex lives on an inner wrapper, not the <td> — display:flex on a table cell
@@ -1748,14 +1969,8 @@ function renderStats() {
 
     for (const c of STAT_COLS.slice(2)) {
       const td = document.createElement('td');
-      if (c.badge) {
-        const tb = document.createElement('span');
-        tb.className = `tier-badge tier-badge--${r.tier}`; tb.textContent = r.tier;
-        td.append(tb);
-      } else {
-        td.className = 'num';
-        td.textContent = c.text ? c.text(r) : c.fmt ? c.fmt(r[c.key]) : r[c.key];
-      }
+      td.className = 'num';
+      td.textContent = c.text ? c.text(r) : c.fmt ? c.fmt(r[c.key]) : r[c.key];
       tr.append(td);
     }
     tbody.append(tr);
@@ -1834,7 +2049,16 @@ function openTeambuilder() {
 // ── mobile nav drawer ────────────────────────────────────────────────────
 // Open/close the slide-in tab drawer. The `.open`/`.nav-open` classes only do
 // anything inside the mobile media query, so this is inert on desktop.
+let navAnimTimer;
 function setNav(open) {
+  // The slide transition is enabled ONLY around a deliberate open/close (via the
+  // temporary `nav-animate` class). So resizing the window across the mobile
+  // breakpoint — which flips the drawer's transform from none to off-screen — can
+  // never animate it, which is what made the menu flash open then retract.
+  el.tabs.classList.add('nav-animate');
+  clearTimeout(navAnimTimer);
+  navAnimTimer = setTimeout(() => el.tabs.classList.remove('nav-animate'), 300);
+
   el.tabs.classList.toggle('open', open);
   el.navBackdrop.classList.toggle('open', open);
   document.body.classList.toggle('nav-open', open);
@@ -1864,9 +2088,20 @@ document.querySelectorAll('.tab').forEach((t) => {
 
 let scoreboardData = null;
 
-// Orange, Purple, Green, Blue — the class for the row at a given rank (0-based),
-// cycling. style.css defines .opgb-0..3 background tints + accent border.
-const opgbClass = (rank) => `opgb-${rank % 4}`;
+// A single four-colour gradient (Orange, Purple, Green, Blue) spread across the
+// WHOLE standings list: the row at position i of n gets the colour interpolated
+// at i/(n-1) along the four stops. Returned as an rgb() string for --opgb, which
+// style.css turns into the row's left lip + wash.
+const OPGB_STOPS = [[230, 126, 34], [139, 92, 246], [34, 197, 94], [59, 130, 246]];
+function standingsColor(i, n) {
+  const t = n <= 1 ? 0 : i / (n - 1);
+  const seg = t * (OPGB_STOPS.length - 1);
+  const idx = Math.min(OPGB_STOPS.length - 2, Math.floor(seg));
+  const f = seg - idx;
+  const a = OPGB_STOPS[idx], b = OPGB_STOPS[idx + 1];
+  const c = a.map((v, k) => Math.round(v + (b[k] - v) * f));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
 
 async function ensureScoreboard() {
   const body = $('scoreboard-body');
@@ -1889,10 +2124,14 @@ async function ensureScoreboard() {
 
 // The four leaderboards and how each mon's value is shown.
 const LEADER_CATS = [
-  { key: 'presence', label: 'Season presence', fmt: (v) => `${Math.round(v * 100)}%` },
-  { key: 'plusMinus', label: '+/−', fmt: (v) => (v > 0 ? `+${v}` : `${v}`) },
-  { key: 'healing', label: 'Healing', fmt: (v) => `${Math.round(v)}%` },
-  { key: 'damageRatio', label: 'Damage ratio', fmt: (v) => (v == null ? '∞' : v.toFixed(2)) },
+  { key: 'presence', label: 'Season presence', fmt: (v) => `${Math.round(v * 100)}%`,
+    tip: "Field turns ÷ the team's total battle turns across the season — how much this mon was actually on the field." },
+  { key: 'plusMinus', label: '+/−', fmt: (v) => (v > 0 ? `+${v}` : `${v}`),
+    tip: 'KOs scored minus times fainted.' },
+  { key: 'healing', label: 'Team Healing', fmt: (v) => `${Math.round(v)}%`,
+    tip: 'HP restored to allies (Pollen Puff, Life Dew, ally Grassy Terrain). Excludes self-recovery like Rest/Recover.' },
+  { key: 'damageRatio', label: 'Damage ratio', fmt: (v) => (v == null ? '∞' : v.toFixed(2)),
+    tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
 ];
 
 function renderScoreboard() {
@@ -1900,20 +2139,25 @@ function renderScoreboard() {
   const data = scoreboardData;
   if (!body || !data) return;
 
+  // The signed-in (or viewed-as) user's own team, so we can highlight their row +
+  // their mons. The server resolves it from the caller's identity (null for an
+  // admin with no team, or during impersonation the viewed-as coach's team).
+  const myTeamId = data.myTeamId ?? null;
+
   const frag = document.createDocumentFragment();
-  frag.appendChild(standingsCard(data.standings || []));
+  frag.appendChild(standingsCard(data.standings || [], myTeamId));
 
   const leadersWrap = document.createElement('div');
   leadersWrap.className = 'leaders-grid';
   for (const cat of LEADER_CATS) {
-    leadersWrap.appendChild(leaderCard(cat, (data.leaders?.[cat.key]) || []));
+    leadersWrap.appendChild(leaderCard(cat, (data.leaders?.[cat.key]) || [], myTeamId));
   }
   frag.appendChild(leadersWrap);
 
   body.replaceChildren(frag);
 }
 
-function standingsCard(rows) {
+function standingsCard(rows, myTeamId = null) {
   const card = document.createElement('section');
   card.className = 'card scoreboard-standings';
   card.appendChild(Object.assign(document.createElement('div'), { className: 'label', textContent: 'Standings' }));
@@ -1927,32 +2171,83 @@ function standingsCard(rows) {
   list.className = 'standings-list';
   rows.forEach((r, i) => {
     const li = document.createElement('li');
-    li.className = `standings-row ${opgbClass(i)}`;
+    li.className = 'standings-row';
+    li.style.setProperty('--opgb', standingsColor(i, rows.length));
+    if (myTeamId != null && r.teamId === myTeamId) li.classList.add('standings-row--mine');
 
     const rank = document.createElement('span');
     rank.className = 'standings-rank';
     rank.textContent = `${i + 1}`;
 
+    // The trainer's Discord avatar, just after their position. Synthetic coaches
+    // (dummies / sim) and anyone without an avatar get a blank slot so rows align.
+    const avatar = document.createElement('span');
+    avatar.className = 'standings-avatar';
+    if (r.avatarUrl) {
+      const img = document.createElement('img');
+      img.src = r.avatarUrl;
+      img.alt = '';
+      img.loading = 'lazy';
+      avatar.appendChild(img);
+    } else {
+      avatar.classList.add('standings-avatar--blank');
+    }
+
     const name = document.createElement('span');
     name.className = 'standings-name';
     name.textContent = r.trainer;
 
-    // The record and the three tiebreakers, in the order they decide ties.
-    const record = statChip('Record', recordText(r));
-    const diff = statChip('Diff', signed(r.recordDiff));
-    const koDiff = statChip('KO±', signed(r.koDiff));
-    const kos = statChip('KOs', `${r.totalKos}`);
-    const faints = statChip('Faints', `${r.totalFaints}`);
+    // The W–L record (which already conveys the win/loss differential the sort
+    // leads on) plus the KO tiebreakers.
+    const record = statChip('Record', recordText(r), 'Match record: wins-losses' + (r.draws ? '-draws' : ''));
+    const koDiff = statChip('KO±', signed(r.koDiff), 'KO differential — total KOs scored minus total faints');
+    const kos = statChip('KOs', `${r.totalKos}`, "Total KOs scored across the team's roster");
+    const faints = statChip('Faints', `${r.totalFaints}`, "Total times the team's mons fainted");
 
     const stats = document.createElement('span');
     stats.className = 'standings-stats';
-    stats.append(record, diff, koDiff, kos, faints);
+    stats.append(record, koDiff, kos, faints);
 
-    li.append(rank, name, stats);
+    li.append(rank, avatar, name, standingsMvp(r.mvp), stats);
     list.appendChild(li);
   });
   card.appendChild(list);
   return card;
+}
+
+// The team's MVP mon (best KO differential) as a compact labelled cell in the
+// standings row. A dash for a team that hasn't played yet. Hidden on narrow
+// windows (CSS) so it can't crowd the record chips.
+function standingsMvp(mvp) {
+  const cell = document.createElement('span');
+  cell.className = 'standings-mvp';
+  cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-label', textContent: 'MVP' }));
+  if (mvp) {
+    // badge + sprite + tera share one line; wrapped so the stacked (mobile) layout
+    // can put the label above and the name below them.
+    const mon = document.createElement('span');
+    mon.className = 'standings-mvp-mon';
+    // Tier badge (S/A/B/C) before the sprite, so the name can stay plain white.
+    mon.append(Object.assign(document.createElement('span'),
+      { className: `tier-badge tier-badge--${mvp.tier}`, textContent: mvp.tier }));
+    const img = document.createElement('img');
+    img.className = 'standings-mvp-img';
+    img.alt = ''; img.title = mvp.pokemon; img.loading = 'lazy';
+    applySprite(img, mvp);
+    mon.append(img);
+    // Tera slot: always present (fixed width) so names line up whether or not the
+    // MVP has a Tera type; the icon only fills it when there is one.
+    const tera = document.createElement('span');
+    tera.className = 'standings-mvp-tera';
+    if (mvp.tera) tera.append(teraIcon(mvp.tera));
+    mon.append(tera);
+    cell.append(mon);
+    cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-name', textContent: mvp.pokemon }));
+    cell.title = `Team MVP: ${mvp.pokemon} (${signed(mvp.kos - mvp.faints)} KO diff)`;
+  } else {
+    cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-name muted', textContent: '—' }));
+  }
+  return cell;
 }
 
 function recordText(r) {
@@ -1960,56 +2255,241 @@ function recordText(r) {
 }
 const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
 
-function statChip(label, value) {
+function statChip(label, value, tip) {
   const chip = document.createElement('span');
   chip.className = 'stat-chip';
+  if (tip) chip.title = tip; // hover explains what the column means
   const l = document.createElement('span'); l.className = 'stat-chip-label'; l.textContent = label;
   const v = document.createElement('span'); v.className = 'stat-chip-value'; v.textContent = value;
   chip.append(l, v);
   return chip;
 }
 
-function leaderCard(cat, entries) {
+// Every leaderboard shows this many ranks; ranks past the mons that actually
+// contributed (the server only returns those) are filled with greyed-out slots.
+const LEADER_SLOTS = 5;
+
+function leaderCard(cat, entries, myTeamId = null) {
   const card = document.createElement('section');
   card.className = 'card leader-card';
-  card.appendChild(Object.assign(document.createElement('div'), { className: 'label', textContent: cat.label }));
-
-  if (!entries.length) {
-    card.appendChild(muted('No stats yet.'));
-    return card;
-  }
+  const title = Object.assign(document.createElement('div'), { className: 'label leader-title', textContent: cat.label });
+  if (cat.tip) { title.title = cat.tip; title.tabIndex = 0; } // hover/focus explains the stat
+  card.appendChild(title);
 
   const list = document.createElement('ol');
   list.className = 'leader-list';
-  entries.forEach((e) => {
-    const li = document.createElement('li');
-    // Leader rows are tinted by the mon's draft tier (S/A/B/C), not by rank.
-    li.className = `leader-row${e.tier ? ` tier--${e.tier}` : ''}`;
-
-    const img = document.createElement('img');
-    img.className = 'leader-sprite'; img.alt = ''; img.loading = 'lazy';
-    applySprite(img, e);
-
-    const who = document.createElement('span');
-    who.className = 'leader-who';
-    const monLine = document.createElement('span');
-    monLine.className = 'leader-mon-line';
-    const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = e.pokemon;
-    monLine.append(mon);
-    // C-tier mons drafted with a Tera type — show its type symbol beside the name.
-    if (e.tera) monLine.append(teraIcon(e.tera));
-    const trainer = document.createElement('span'); trainer.className = 'leader-trainer'; trainer.textContent = e.trainer;
-    who.append(monLine, trainer);
-
-    const val = document.createElement('span');
-    val.className = 'leader-value';
-    val.textContent = cat.fmt(e.value);
-
-    li.append(img, who, val);
-    list.appendChild(li);
-  });
+  for (let i = 0; i < LEADER_SLOTS; i++) {
+    const e = entries[i];
+    // A mon that didn't contribute to this stat (value exactly 0) is shown as a
+    // greyed empty slot, not a real row of "0". A null value is NOT zero (it's the
+    // damage-ratio infinity: dealt damage, took none), which stays a real top entry.
+    const contributed = e && e.value !== 0;
+    list.appendChild(contributed ? leaderRow(cat, e, myTeamId) : emptyLeaderSlot());
+  }
   card.appendChild(list);
   return card;
+}
+
+function leaderRow(cat, e, myTeamId = null) {
+  const li = document.createElement('li');
+  // The shared tier-entry standard: tier colour + a --mine boolean highlight for
+  // a mon on the signed-in user's own team.
+  const mine = myTeamId != null && e.teamId === myTeamId;
+  li.className = `leader-row tier-entry${e.tier ? ` tier--${e.tier}` : ''}${mine ? ' tier-entry--mine' : ''}`;
+
+  const img = document.createElement('img');
+  img.className = 'leader-sprite'; img.alt = ''; img.loading = 'lazy';
+  applySprite(img, e);
+
+  const who = document.createElement('span');
+  who.className = 'leader-who';
+  const monLine = document.createElement('span');
+  monLine.className = 'leader-mon-line';
+  const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = e.pokemon;
+  monLine.append(mon);
+  // C-tier mons drafted with a Tera type — show its type symbol beside the name.
+  if (e.tera) monLine.append(teraIcon(e.tera));
+  const trainer = document.createElement('span'); trainer.className = 'leader-trainer'; trainer.textContent = e.trainer;
+  who.append(monLine, trainer);
+
+  const val = document.createElement('span');
+  val.className = 'leader-value';
+  val.textContent = cat.fmt(e.value);
+
+  li.append(img, who, val);
+  return li;
+}
+
+// A placeholder rank for a category no (further) mon contributed to: a greyed,
+// empty slot in place of showing a mon whose stat is zero.
+function emptyLeaderSlot() {
+  const li = document.createElement('li');
+  li.className = 'leader-row leader-row--empty';
+  const box = document.createElement('span'); box.className = 'leader-sprite leader-sprite--empty';
+  const who = document.createElement('span'); who.className = 'leader-who';
+  const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = '—';
+  who.append(mon);
+  const val = document.createElement('span'); val.className = 'leader-value'; val.textContent = '—';
+  li.append(box, who, val);
+  return li;
+}
+
+// ── draft stats page ─────────────────────────────────────────────────────
+// Analytics over the draft itself: which mons went instantly, which were passed
+// over most, and how Tera types fared among picks vs rejections. Read-only view
+// of /api/leagues/{id}/draft-stats.
+
+let draftStatsData = null;
+
+async function ensureDraftStats() {
+  const body = $('draftstats-body');
+  if (!body) return;
+  if (draftStatsData) { renderDraftStats(); return; }
+  if (leagueId == null) {
+    body.replaceChildren(muted('No draft yet — analytics appear once a draft has started.'));
+    return;
+  }
+  if (!body.querySelector('.dstat-card')) body.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const res = await Auth.authFetch(`/api/leagues/${leagueId}/draft-stats`);
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    draftStatsData = await res.json();
+    renderDraftStats();
+  } catch (e) {
+    body.replaceChildren(muted(`Couldn't load draft stats: ${e.message}`));
+  }
+}
+
+function renderDraftStats() {
+  const body = $('draftstats-body');
+  const d = draftStatsData;
+  if (!body || !d) return;
+  if (!d.totalPicks) {
+    body.replaceChildren(muted('No picks yet — analytics appear once the draft is under way.'));
+    return;
+  }
+
+  // All six tables sit in one horizontal row; the row scrolls sideways when the
+  // cards run past the viewport (see .dstat-grid). Tera titles are prefixed so the
+  // two "Most rejected" cards don't read the same when they're side by side.
+  const undraftables = d.pokemon.undraftables || [];
+  const undraftablesCard = monListCard('Undraftables', undraftables,
+    `These ${undraftables.length} Pokémon decided they weren't gonna.`,
+    { count: false, drafter: false });
+
+  const grid = document.createElement('div');
+  grid.className = 'dstat-grid';
+  grid.append(
+    monListCard('Instant picks', d.pokemon.instantPicks,
+      'Drafted the moment they were offered — never once passed over.', { count: false }),
+    monListCard('Most rejected', d.pokemon.mostRejected,
+      'How many times each mon was offered but passed over.'),
+    monListCard('Put Me In Coach!!!', d.pokemon.putMeInCoach,
+      'The most-rejected mons that still made it onto a team.'),
+    undraftablesCard,
+    teraCountCard('Tera Most Picked', d.tera.mostPicked, 'Most common Tera type among chosen picks.'),
+    teraCountCard('Tera Most Rejected', d.tera.mostRejected, 'Most common Tera type among passed-over options.'),
+    teraRateCard('Tera Pick Rate', d.tera.pickRate),
+  );
+
+  body.replaceChildren(grid);
+}
+
+function dstatCard(title, hint) {
+  const card = document.createElement('section');
+  card.className = 'card dstat-card';
+  card.append(Object.assign(document.createElement('div'), { className: 'label', textContent: title }));
+  if (hint) card.append(Object.assign(document.createElement('p'), { className: 'dstat-hint muted', textContent: hint }));
+  return card;
+}
+
+function monListCard(title, rows, hint, opts = {}) {
+  const card = dstatCard(title, hint);
+  if (!rows || !rows.length) { card.append(muted('None yet.')); return card; }
+  const ol = document.createElement('ol');
+  ol.className = 'dstat-list';
+  for (const r of rows) {
+    const li = document.createElement('li');
+    // Highlight mons on the logged-in coach's own team.
+    li.className = `dstat-row tier-entry${r.tier ? ` tier--${r.tier}` : ''}${r.mine ? ' tier-entry--mine' : ''}`;
+    li.append(monImg(r));
+
+    // Name up top, with a small line under it naming who drafted it (or Undrafted).
+    // The drafter line is suppressed where every row is undrafted (e.g. Undraftables).
+    const who = document.createElement('span');
+    who.className = 'dstat-who';
+    const name = document.createElement('span');
+    name.className = 'dstat-name';
+    name.textContent = r.name;
+    who.append(name);
+    if (opts.drafter !== false) {
+      const by = document.createElement('span');
+      by.className = 'dstat-drafter' + (r.trainer ? '' : ' dstat-drafter--none');
+      by.textContent = r.trainer || 'Undrafted';
+      who.append(by);
+    }
+    li.append(who);
+
+    if (opts.count !== false && r.rejections != null) {
+      const val = document.createElement('span');
+      val.className = 'dstat-value';
+      val.textContent = `×${r.rejections}`;
+      val.title = `Passed over ${r.rejections} time${r.rejections === 1 ? '' : 's'}`;
+      li.append(val);
+    }
+    ol.append(li);
+  }
+  card.append(ol);
+  return card;
+}
+
+function teraCountCard(title, rows, hint) {
+  const card = dstatCard(title, hint);
+  if (!rows || !rows.length) { card.append(muted('No Tera data yet.')); return card; }
+  const max = Math.max(...rows.map((r) => r.count), 1);
+  const ol = document.createElement('ol');
+  ol.className = 'dstat-list';
+  for (const r of rows) ol.append(teraBarRow(r.type, `${r.count}`, r.count / max));
+  card.append(ol);
+  return card;
+}
+
+function teraRateCard(title, rows) {
+  const card = dstatCard(title, 'Of every time a Tera type was offered, the share that was picked.');
+  card.classList.add('dstat-rate-card'); // keeps the original gradient direction
+  if (!rows || !rows.length) { card.append(muted('No Tera data yet.')); return card; }
+  // Bars are relative to the top rate in the list, not out of a flat 100%.
+  const max = Math.max(...rows.map((r) => r.rate), 0.0001);
+  const ol = document.createElement('ol');
+  ol.className = 'dstat-list';
+  for (const r of rows) {
+    const row = teraBarRow(r.type, `${(r.rate * 100).toFixed(1)}%`, r.rate / max);
+    row.title = `${r.picked} picked of ${r.picked + r.rejected} offered`;
+    ol.append(row);
+  }
+  card.append(ol);
+  return card;
+}
+
+function teraBarRow(type, valueText, frac) {
+  const li = document.createElement('li');
+  li.className = `dstat-row dstat-tera-row type--${type.toLowerCase()}`;
+  // The Tera type symbol labels the row.
+  li.append(teraIcon(type));
+  const name = document.createElement('span');
+  name.className = 'dstat-name dstat-tera-name';
+  name.textContent = type;
+  const bar = document.createElement('span');
+  bar.className = 'dstat-bar';
+  const fill = document.createElement('span');
+  fill.className = 'dstat-bar-fill';
+  fill.style.width = `${Math.max(4, Math.round((frac || 0) * 100))}%`;
+  bar.append(fill);
+  const val = document.createElement('span');
+  val.className = 'dstat-value';
+  val.textContent = valueText;
+  li.append(name, bar, val);
+  return li;
 }
 
 // ── boot ───────────────────────────────────────────────────────────────
@@ -2063,6 +2543,7 @@ on('sim-season', async () => {
     if (!res.ok) throw new Error(`Failed (${res.status})`);
     const r = await res.json();
     statsData = null; // fresh season → drop cached stats
+    draftStatsData = null; // and the draft-analytics cache
     await refreshDraft();
     loadPlayers();
     showDraftError(`Simulated season: ${r.teams} teams, ${r.picks} picks, ${r.matches} matches.`);
@@ -2076,20 +2557,28 @@ on('sim-season', async () => {
 
 // Purely-random season: synthetic teams, a random valid draft, random stats. No
 // replays, so it returns instantly. Same wipe warning as the real one.
-on('sim-random-season', async () => {
+// Replace the league with a random test season. teams=null uses the endpoint's
+// default; pass a number (e.g. 16) to force that many synthetic players — the
+// server clamps it to what the pool can fill. btn is the button that triggered it,
+// so its own label reflects progress.
+async function runRandomSim(teams, btn) {
   const battles = el.simBattles.checked;
   const how = battles
     ? 'real headless Showdown battles (results + stats recorded from the logs)'
     : 'no battles (the schedule stays pending)';
-  if (!confirm(`Replace this league with a RANDOM test season — synthetic teams, random draft, and ${how}? This wipes the current draft.`)) return;
-  el.simRandomSeason.disabled = true;
-  const label = el.simRandomSeason.textContent;
-  el.simRandomSeason.textContent = battles ? 'Simulating battles…' : 'Simulating…';
+  const who = teams ? `${teams} synthetic players` : 'synthetic teams';
+  if (!confirm(`Replace this league with a RANDOM test season — ${who}, random draft, and ${how}? This wipes the current draft.`)) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = battles ? 'Simulating battles…' : 'Simulating…';
   try {
-    const res = await Auth.authFetch(`/dev/simulate-random-season?real=${battles}`, { method: 'POST' });
+    const q = new URLSearchParams({ real: battles });
+    if (teams) q.set('teams', teams);
+    const res = await Auth.authFetch(`/dev/simulate-random-season?${q}`, { method: 'POST' });
     if (!res.ok) throw new Error(`Failed (${res.status})`);
     const r = await res.json();
     statsData = null; // fresh season → drop cached stats
+    draftStatsData = null; // and the draft-analytics cache
     await refreshDraft();
     loadPlayers();
     let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.skips ? `${r.skips} skips, ` : ''}${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles — schedule left pending'}).`;
@@ -2097,7 +2586,7 @@ on('sim-random-season', async () => {
     // Build demo teams: an example team for every player, cached to seed onto THIS
     // (the admin's) device as a folder per player the next time the Teambuilder opens.
     if (el.demoTeams.checked) {
-      el.simRandomSeason.textContent = 'Building demo teams…';
+      btn.textContent = 'Building demo teams…';
       const n = await prepareDemoTeams();
       if (n != null) msg += ` Demo teams for ${n} players ready — open Teambuilder to see them.`;
     }
@@ -2105,9 +2594,91 @@ on('sim-random-season', async () => {
   } catch (e) {
     showDraftError(`Sim failed — ${e.message}`);
   } finally {
-    el.simRandomSeason.disabled = false;
-    el.simRandomSeason.textContent = label;
+    btn.disabled = false;
+    btn.textContent = label;
   }
+}
+
+on('sim-random-season', () => runRandomSim(null, el.simRandomSeason));
+on('sim-random-16', () => runRandomSim(16, el.simRandom16));
+
+// Download a JSON snapshot of the season so far: every draft pick, every stored
+// replay, and the captured team builds. Admin-only (the endpoint enforces it).
+on('snapshot-season', async () => {
+  if (leagueId == null) return;
+  el.snapshotSeason.disabled = true;
+  try {
+    const res = await Auth.authFetch(`/api/leagues/${leagueId}/snapshot`);
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `draft-snapshot-league${leagueId}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    const withPaste = data.matches.filter((mt) => mt.homeTeamExport || mt.awayTeamExport).length;
+    showDraftError(`Snapshot saved: ${data.picks.length} picks, ${data.matches.length} matches (${withPaste} with team builds).`);
+  } catch (e) {
+    showDraftError(`Snapshot failed: ${e.message}`);
+  } finally {
+    el.snapshotSeason.disabled = false;
+  }
+});
+
+// Restore a whole season from a snapshot JSON file: pick a file, POST it, and the
+// server wipes + rebuilds the league (teams, picks, schedule, results). Admin-only.
+async function restoreFromFile(file) {
+  if (!file || leagueId == null) return;
+  if (!confirm(`Restore this league from "${file.name}"? This WIPES the current draft, schedule and results, then rebuilds them from the snapshot.`)) return;
+  el.restoreSeason.disabled = true;
+  const label = el.restoreSeason.textContent;
+  el.restoreSeason.textContent = 'Restoring…';
+  try {
+    const body = await file.text();
+    const res = await Auth.authFetch(`/api/leagues/${leagueId}/snapshot`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    });
+    if (!res.ok) throw new Error(`Failed (${res.status})`);
+    const r = await res.json();
+    statsData = null; draftStatsData = null; scoreboardData = null; scheduleData = null;
+    await refreshDraft();
+    loadPlayers();
+    showDraftError(`Restored: ${r.teams} teams, ${r.picks} picks${r.missedPicks ? ` (${r.missedPicks} unmatched)` : ''}, ${r.matches} matches (${r.recorded} results recorded).`);
+  } catch (e) {
+    showDraftError(`Restore failed: ${e.message}`);
+  } finally {
+    el.restoreSeason.disabled = false;
+    el.restoreSeason.textContent = label;
+  }
+}
+
+on('restore-season', async () => {
+  // Prefer the File System Access picker: it can start at the Desktop (where the
+  // daily-snapshot folder lives) and remembers the last folder used per id, so it
+  // reopens straight into the snapshots folder next time. Falls back to a classic
+  // file input where the API isn't available.
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        id: 'draft-snapshots',
+        startIn: 'desktop',
+        multiple: false,
+        types: [{ description: 'Season snapshot', accept: { 'application/json': ['.json'] } }],
+      });
+      await restoreFromFile(await handle.getFile());
+    } catch (e) {
+      if (e?.name !== 'AbortError') showDraftError(`Restore failed: ${e.message}`);
+    }
+    return;
+  }
+  el.restoreFile.click();
+});
+el.restoreFile?.addEventListener('change', async () => {
+  const file = el.restoreFile.files?.[0];
+  el.restoreFile.value = ''; // let the same file be picked again later
+  await restoreFromFile(file);
 });
 
 // Fetch one demo team per readied-up participant (roster if drafted, else a random

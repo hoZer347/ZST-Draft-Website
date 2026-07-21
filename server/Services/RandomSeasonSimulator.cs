@@ -9,25 +9,35 @@ using Microsoft.EntityFrameworkCore;
 namespace DraftLeague.Web.Services;
 
 /// <summary>
-/// Development-only END-TO-END season generator. It sets up the scaffolding a real
-/// league would have — synthetic teams and a random-but-valid snake draft off the
-/// REAL pool — and then, for the results, drives the SAME components a live season
-/// uses and NOTHING ELSE: every match is a real headless Showdown battle, and each
-/// battle's log is fed through <see cref="ReplayScorer"/> and
-/// <see cref="MatchReporting"/> exactly as our Showdown server's auto-report does.
-/// So no result, score, standing or stat is invented here — all of them are derived
-/// from the real logs by the real recording code. Without battles (or if the runner
-/// is unavailable) the schedule simply stays Pending: still nothing made up.
+/// Development-only END-TO-END season generator that drives the SAME code a live
+/// league does and inserts nothing by hand. It readies synthetic coaches up as real
+/// <see cref="DraftParticipant"/>s, starts the draft with <see cref="DraftEngine"/>,
+/// then plays it out through the engine turn by turn: each turn it "presses" a random
+/// tier the team owes (<see cref="DraftEngine.OfferOptionsAsync"/>) and randomly either
+/// picks one of the offered options (<see cref="DraftEngine.MakePickAsync"/>) or skips
+/// (<see cref="DraftEngine.SkipPickAsync"/>). So every pick, skip and passed-option
+/// snapshot is produced by the engine, not fabricated. The only random data it
+/// invents is the choices themselves (which tier, pick vs skip, which option) and the
+/// Showdown battle teams; every match is a real headless battle whose log is recorded
+/// through the built-in report pipeline (<see cref="ReplayScorer"/> +
+/// <see cref="MatchReporting"/>) that maps a game to its scheduled match. Without
+/// battles the schedule just stays Pending.
 ///
 /// The counterpart to <see cref="SeasonSimulator"/> (which imports real Showdown
 /// replays). Use it to exercise the schedule / standings / stats / team pages end to
 /// end.
 /// </summary>
 public class RandomSeasonSimulator(
-    AppDbContext db, NodeBattleSimulator battles, MatchStatsRecorder recorder,
+    AppDbContext db, DraftEngine engine, NodeBattleSimulator battles, MatchStatsRecorder recorder,
     ReplayScorer scorer, IHubContext<DraftHub> hub, ILogger<RandomSeasonSimulator> log)
 {
     public record SimResult(int Teams, int Picks, int Matches, bool RealBattles, int Skips = 0);
+
+    // Per-turn random choices (percent). A coach either "lapses" (their clock runs
+    // out after opening a tier -> the engine auto-skips if they hold a skip, else
+    // auto-picks), voluntarily skips (presses skip), or picks. The rest are picks.
+    private const int AutoLapsePercent = 10;
+    private const int VoluntarySkipPercent = 15;
 
     /// <param name="teamCount">How many synthetic teams to draft (clamped to what the pool can fill).</param>
     /// <param name="seed">Fixed seed for a reproducible season; null for a fresh random one.</param>
@@ -47,165 +57,140 @@ public class RandomSeasonSimulator(
         var leagueId = league.Id;
         var tierRules = league.TierRules.OrderBy(r => r.Tier).ToList();
         if (tierRules.Count == 0) throw new InvalidOperationException("League has no tier rules");
+        var quota = tierRules.ToDictionary(r => r.Tier, r => r.SlotsPerTeam);
 
-        // ── wipe the league back to a blank slate (same order as SeasonSimulator) ──
+        // Clamp the team count to what the scarcest tier can fill a full roster of.
+        var poolByTier = (await db.Pokemon.Where(p => p.LeagueId == leagueId)
+                .Select(p => p.Tier).ToListAsync(ct))
+            .GroupBy(t => t).ToDictionary(g => g.Key, g => g.Count());
+        var maxTeams = tierRules.Where(r => r.SlotsPerTeam > 0)
+            .Select(r => (poolByTier.GetValueOrDefault(r.Tier)) / r.SlotsPerTeam)
+            .DefaultIfEmpty(0).Min();
+        teamCount = Math.Clamp(teamCount, 2, Math.Max(2, maxTeams));
+
+        // ── reset to a clean, NOT-started draft (cleanup only, nothing invented) ──
         await db.Matches.Where(m => m.LeagueId == leagueId).ExecuteDeleteAsync(ct);
         await db.PokemonStats.Where(s => s.Pick.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.Picks.Where(p => p.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.DraftSkips.Where(s => s.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.DraftSlots.Where(s => s.DraftId == draftId).ExecuteDeleteAsync(ct);
+        await db.OfferedOptions.Where(o => o.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.DraftParticipants.Where(p => p.DraftId == draftId).ExecuteDeleteAsync(ct);
         await db.Pokemon.Where(p => p.LeagueId == leagueId && p.DraftedByTeamId != null)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.DraftedByTeamId, (int?)null), ct);
         await db.Teams.Where(t => t.LeagueId == leagueId).ExecuteDeleteAsync(ct);
+        draft.State = DraftState.NotStarted;
+        draft.CurrentIndex = 0;
+        draft.PickDeadline = null;
         await db.SaveChangesAsync(ct);
 
-        // ── pool grouped by tier, shuffled into draw stacks ────────────────
-        var pool = await db.Pokemon.Where(p => p.LeagueId == leagueId).ToListAsync(ct);
-        // Pre-shuffled draw lists per tier: drawing the first dex-eligible mon from a
-        // shuffled list is still a random draw, but lets us skip a species a team
-        // already holds (a Stack.Pop couldn't look past the top).
-        var byTier = pool.GroupBy(p => p.Tier)
-            .ToDictionary(g => g.Key, g => g.OrderBy(_ => rng.Next()).ToList());
-
-        // Clamp the team count to what the scarcest tier can fill a full roster of.
-        var maxTeams = tierRules.Where(r => r.SlotsPerTeam > 0)
-            .Select(r => (byTier.TryGetValue(r.Tier, out var s) ? s.Count : 0) / r.SlotsPerTeam)
-            .DefaultIfEmpty(0).Min();
-        teamCount = Math.Clamp(teamCount, 2, Math.Max(2, maxTeams));
-
-        // ── teams ──────────────────────────────────────────────────────────
-        // Real signed-in Discord accounts (numeric snowflake ids) get the first
-        // teams, so a logged-in member sees a sim team as their own; any remaining
-        // teams are filled with synthetic sim coaches. The reserved admin oversees
-        // and never plays.
+        // ── coaches: real signed-in members first, then synthetic sim coaches, all
+        // readied up through the real participant mechanism (no bespoke insertion —
+        // the same DraftParticipant rows a coach's "ready up" makes). The reserved
+        // admin oversees and never plays.
         var realUsers = (await db.Users.ToListAsync(ct))
             .Where(u => u.DiscordId.Length > 0 && u.DiscordId.All(char.IsDigit)
                         && u.DiscordId != AuthApi.AdminDiscordId)
             .OrderBy(u => u.Username, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
-        var teams = new List<Team>();
+        var coachIds = new List<string>();
         for (var i = 0; i < teamCount; i++)
         {
-            string coachId, coachName;
-            if (i < realUsers.Count)
-            {
-                coachId = realUsers[i].DiscordId;   // a real member owns this team
-                coachName = realUsers[i].Username;
-            }
-            else
-            {
-                var n = i - realUsers.Count + 1;
-                coachId = $"sim-{n}";
-                coachName = $"Sim Coach {n}";
-                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == coachId, ct);
-                if (user is null) db.Users.Add(new User { DiscordId = coachId, Username = coachName });
-                else user.Username = coachName;
-            }
-            // No separate team names — a team is shown by its coach's username / dummy name.
-            var team = new Team { LeagueId = leagueId, Name = coachName, CoachId = coachId, CoachName = coachName };
-            db.Teams.Add(team);
-            teams.Add(team);
+            if (i < realUsers.Count) { coachIds.Add(realUsers[i].DiscordId); continue; }
+            var n = i - realUsers.Count + 1;
+            var id = $"sim-{n}";
+            var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == id, ct);
+            if (user is null) db.Users.Add(new User { DiscordId = id, Username = $"Sim Coach {n}" });
+            else user.Username = $"Sim Coach {n}";
+            coachIds.Add(id);
         }
-        await db.SaveChangesAsync(ct); // assign team + user ids
-
-        // ── a valid snake draft, but with each pick's TIER randomised ──────
-        // Instead of everyone taking S, then A, then B, then C in lockstep, each
-        // team draws a random tier it still owes on its turn — so the pick order
-        // interleaves tiers like a real draft, while every team still ends with
-        // its exact per-tier quota (S1/A2/B3/C4).
-        var offeredByTier = tierRules.ToDictionary(r => r.Tier, r => r.OptionsOffered);
-        var quota = tierRules.ToDictionary(r => r.Tier, r => r.SlotsPerTeam);
-        var owed = teams.ToDictionary(t => t.Id, _ => new Dictionary<Tier, int>(quota));
-        // Species (dex numbers) each team already holds. The sim honours the same
-        // dex-number clause as the live draft: no team drafts two forms of one
-        // species (e.g. two Raichu megas). Dex 0 is "unset" and never blocks.
-        var heldDex = teams.ToDictionary(t => t.Id, _ => new HashSet<int>());
-        // Debug skips: budget per team (capped like the live draft) plus a running total.
-        var skipsUsed = teams.ToDictionary(t => t.Id, _ => 0);
-        var skipCount = 0;
-        var rosterSize = quota.Values.Sum();
-        int pickNo = 1, pos = 0;
-        for (var round = 0; round < rosterSize; round++)
-        {
-            var seq = round % 2 == 0 ? teams : Enumerable.Reverse(teams).ToList();
-            foreach (var team in seq)
-            {
-                var owedTiers = owed[team.Id].Where(kv => kv.Value > 0).Select(kv => kv.Key).ToList();
-                var tier = owedTiers[rng.Next(owedTiers.Count)]; // a random tier this team still owes
-                owed[team.Id][tier]--;
-
-                // Draw the first mon whose species this team doesn't already hold
-                // (the list is pre-shuffled, so "first eligible" is a random draw).
-                // Enforces the dex-number clause; dex 0 never blocks.
-                var list = byTier[tier];
-                var idx = list.FindIndex(p => p.DexNumber == 0 || !heldDex[team.Id].Contains(p.DexNumber));
-                if (idx < 0) idx = 0; // pool too thin to honour it: take any rather than stall
-                var mon = list[idx];
-                list.RemoveAt(idx);
-                if (mon.DexNumber > 0) heldDex[team.Id].Add(mon.DexNumber);
-
-                mon.DraftedByTeam = team;
-
-                // Before committing the pick, sometimes record a skip (defer) for
-                // this turn — a mix of voluntary and auto skips, each carrying the
-                // passed-options snapshot — so the feed's skip rows are exercised.
-                // Capped per team like the live draft; the roster still fills, since
-                // the pick below is still made.
-                if (skipsUsed[team.Id] < DraftEngine.MaxSkipsPerTeam && rng.Next(100) < 20)
-                {
-                    skipsUsed[team.Id]++;
-                    skipCount++;
-                    db.DraftSkips.Add(new DraftSkip
-                    {
-                        DraftId = draftId, TeamId = team.Id,
-                        AfterPickNumber = pickNo - 1, // slots in right after the last committed pick
-                        WasAuto = rng.Next(2) == 0,
-                        OtherOptions = PassedOptions(list, tier, offeredByTier[tier], rng, heldDex[team.Id]),
-                    });
-                }
-
-                // Same rule as the live draft: only C-tier draws a Tera type, and
-                // megas / Shedinja are barred from one (see DraftEngine.TeraBarred).
-                var teraType = tier == Tier.C && !DraftEngine.TeraBarred(mon.Name, mon.Sprite)
-                    ? RandomTera(rng) : null;
-                db.Picks.Add(new Pick
-                {
-                    DraftId = draftId, PickNumber = pickNo++, TeamId = team.Id,
-                    PokemonEntry = mon, Tier = tier, TeraType = teraType,
-                    // The "passed" run: a random sample of the same tier's still-
-                    // available mons, snapshot in the exact shape the draft engine
-                    // stores (so the pick feed renders it identically). Excludes the
-                    // team's held species so it never shows a form they couldn't take.
-                    OtherOptions = PassedOptions(list, tier, offeredByTier[tier], rng, heldDex[team.Id]),
-                });
-                db.DraftSlots.Add(new DraftSlot { DraftId = draftId, Position = pos++, TeamId = team.Id });
-            }
-        }
-        draft.CurrentIndex = pos;
-        draft.State = DraftState.Complete;
-        draft.PickDeadline = null;
+        await db.SaveChangesAsync(ct);
+        foreach (var id in coachIds)
+            db.DraftParticipants.Add(new DraftParticipant { DraftId = draftId, DiscordId = id });
         await db.SaveChangesAsync(ct);
 
-        // ── schedule: reuse the tested round-robin (Pending matches) ───────
+        // ── start the draft + lay down the schedule with the REAL functions, exactly
+        // as the admin's Start does (teams are created here, from the participants). ──
+        var start = await engine.StartAsync(draftId, ct);
+        if (!start.Ok) throw new InvalidOperationException($"Sim could not start the draft: {start.Error}");
         await ScheduleApi.GenerateAsync(db, leagueId, league.SeasonWeeks, ct);
 
+        // ── drive the draft through the REAL engine: on each turn "press" a random
+        // tier the team still owes, then randomly lapse / skip / pick. The engine
+        // records the picks, the skips and every passed option — nothing is written
+        // by hand here. ──
+        var maxSteps = teamCount * (quota.Values.Sum() + DraftEngine.MaxSkipsPerTeam) + teamCount + 10;
+        for (var step = 0; step < maxSteps; step++)
+        {
+            var st = await db.Drafts.AsNoTracking()
+                .Where(d => d.Id == draftId)
+                .Select(d => new { d.State, d.CurrentIndex }).FirstAsync(ct);
+            if (st.State != DraftState.Running) break;
+
+            var onClock = await db.DraftSlots.AsNoTracking()
+                .Where(s => s.DraftId == draftId && s.Position == st.CurrentIndex)
+                .Select(s => (int?)s.TeamId).FirstOrDefaultAsync(ct);
+            if (onClock is null) break;
+
+            // Tiers this team still owes: quota minus what it's already drafted.
+            var used = (await db.Picks.AsNoTracking()
+                    .Where(p => p.DraftId == draftId && p.TeamId == onClock)
+                    .Select(p => p.Tier).ToListAsync(ct))
+                .GroupBy(t => t).ToDictionary(g => g.Key, g => g.Count());
+            var owed = quota.Where(kv => kv.Value - used.GetValueOrDefault(kv.Key) > 0)
+                .Select(kv => kv.Key).ToList();
+            if (owed.Count == 0) { await engine.AutoPickAsync(draftId, ct, preferSkip: false); continue; }
+
+            // "Press" a random owed tier.
+            var tier = owed[rng.Next(owed.Count)];
+            var offer = await engine.OfferOptionsAsync(draftId, onClock.Value, tier, ct);
+            if (!offer.Ok) { await engine.AutoPickAsync(draftId, ct, preferSkip: false); continue; }
+
+            var skipsLeft = await db.Teams.AsNoTracking()
+                .Where(t => t.Id == onClock).Select(t => t.SkipsRemaining).FirstAsync(ct);
+            var roll = rng.Next(100);
+
+            // A modelled clock-lapse after opening the tier: AutoPickAsync (the same
+            // call the live clock makes) auto-skips if the team still holds a skip,
+            // else auto-picks. Either way the skip/pick carries the offered set.
+            if (roll < AutoLapsePercent)
+            {
+                await engine.AutoPickAsync(draftId, ct, preferSkip: true);
+                continue;
+            }
+            // Voluntary skip: "press" the skip button after the tier's open, so the
+            // engine's skip carries the full offered set.
+            if (skipsLeft > 0 && roll < AutoLapsePercent + VoluntarySkipPercent)
+            {
+                await engine.SkipPickAsync(draftId, onClock.Value, ct);
+                continue;
+            }
+            // Otherwise pick a random offered option.
+            var offered = await db.OfferedOptions.AsNoTracking()
+                .Where(o => o.DraftId == draftId).Select(o => o.PokemonEntryId).ToListAsync(ct);
+            if (offered.Count == 0) { await engine.AutoPickAsync(draftId, ct, preferSkip: false); continue; }
+            if (!(await engine.MakePickAsync(draftId, onClock.Value, offered[rng.Next(offered.Count)], ct)).Ok)
+                await engine.AutoPickAsync(draftId, ct, preferSkip: false);
+        }
+
+        // ── battles: real headless Showdown games off random teams (the one allowed
+        // fabrication), recorded through the built-in "detect the game, put it in the
+        // schedule" pipeline. Without battles the schedule simply stays Pending. ──
         var rosterByTeam = (await db.Picks.Include(p => p.PokemonEntry).Where(p => p.DraftId == draftId).ToListAsync(ct))
             .GroupBy(p => p.TeamId).ToDictionary(g => g.Key, g => g.ToList());
         var matches = await db.Matches
             .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
             .Where(m => m.LeagueId == leagueId).ToListAsync(ct);
+        var teamsCount = await db.Teams.CountAsync(t => t.LeagueId == leagueId, ct);
+        // Count from the DB, so auto-picks/auto-skips the engine made are included too.
+        var pickCount = await db.Picks.CountAsync(p => p.DraftId == draftId, ct);
+        var skipCount = await db.DraftSkips.CountAsync(s => s.DraftId == draftId, ct);
 
-        // ── results + stats come ONLY from real battles ────────────────────
-        // Every number (score included) is drawn from a real battle log. Without
-        // battles — the checkbox unchecked, or the runner unavailable — the matches
-        // stay Pending: no score, no stats, ready for replays to be added later.
         var real = realBattles && await RunRealBattlesAsync(matches, rosterByTeam, ct);
 
         log.LogInformation("Random season for league {League}: {Teams} teams, {Picks} picks, {Skips} skips, {Matches} matches (real battles: {Real})",
-            leagueId, teams.Count, pickNo - 1, skipCount, matches.Count, real);
-        return new SimResult(teams.Count, pickNo - 1, matches.Count, real, skipCount);
+            leagueId, teamsCount, pickCount, skipCount, matches.Count, real);
+        return new SimResult(teamsCount, pickCount, matches.Count, real, skipCount);
     }
 
     // The pool slug the battle runner keys on — the Showdown sprite slug, falling
@@ -227,10 +212,13 @@ public class RandomSeasonSimulator(
     /// </summary>
     private async Task<bool> RunRealBattlesAsync(List<Match> matches, Dictionary<int, List<Pick>> rosterByTeam, CancellationToken ct)
     {
+        // C-tier picks carry the Tera type the draft rolled them; the runner teras
+        // them ASAP. Non-C picks have no Tera type and never tera.
+        static NodeBattleSimulator.TeamMon MonOf(Pick p) => new(SlugOf(p), p.Tier == Tier.C ? p.TeraType : null);
         var specs = matches.Select(m => new NodeBattleSimulator.MatchSpec(
             m.HomeTeam.CoachName, m.AwayTeam.CoachName,   // the players' Discord / dummy names
-            rosterByTeam[m.HomeTeamId].Select(SlugOf).ToList(),
-            rosterByTeam[m.AwayTeamId].Select(SlugOf).ToList())).ToList();
+            rosterByTeam[m.HomeTeamId].Select(MonOf).ToList(),
+            rosterByTeam[m.AwayTeamId].Select(MonOf).ToList())).ToList();
 
         var results = await battles.RunAsync(specs, ct);
         if (results is null) return false;
@@ -254,7 +242,8 @@ public class RandomSeasonSimulator(
             var match = await db.Matches
                 .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
                 .FirstAsync(m => m.Id == report.MatchId, ct);
-            await MatchReporting.RecordReportAsync(db, recorder, hub, match, report, replayUrl: null, reporterId: null, ct);
+            await MatchReporting.RecordReportAsync(db, recorder, hub, match, report, replayUrl: null, reporterId: null, ct,
+                p1Export: br.P1Export, p2Export: br.P2Export);
             recorded++;
         }
 
@@ -262,31 +251,4 @@ public class RandomSeasonSimulator(
         return recorded > 0;
     }
 
-    // The options offered-but-not-taken this turn, in the draft engine's exact
-    // JSON shape ([{name,sprite,dexNumber,tier}]), sampled from the same tier's
-    // still-available mons. Null when nothing is left to offer.
-    private static string? PassedOptions(IEnumerable<PokemonEntry> remaining, Tier tier, int offered, Random rng, HashSet<int> heldDex)
-    {
-        // Honour the dex-number clause in the cosmetic "passed" run too: never show a
-        // species the team already holds, and never list two forms of the same
-        // species against each other. Dex 0 ("unset") is exempt from both.
-        var seen = new HashSet<int>();
-        var passed = remaining.OrderBy(_ => rng.Next())
-            .Where(m => m.DexNumber == 0 || (!heldDex.Contains(m.DexNumber) && seen.Add(m.DexNumber)))
-            .Take(Math.Max(0, offered - 1))
-            .Select(m => new
-            {
-                name = m.Name, sprite = m.Sprite, dexNumber = m.DexNumber, tier = tier.ToString(),
-                // C-tier options carry a Tera type, but megas / Shedinja are barred.
-                teraType = tier == Tier.C && !DraftEngine.TeraBarred(m.Name, m.Sprite) ? RandomTera(rng) : null,
-            })
-            .ToList();
-        return passed.Count > 0 ? JsonSerializer.Serialize(passed) : null;
-    }
-
-    private static readonly string[] TeraTypes =
-        ["Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison", "Ground",
-         "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy", "Stellar"];
-
-    private static string RandomTera(Random rng) => TeraTypes[rng.Next(TeraTypes.Length)];
 }

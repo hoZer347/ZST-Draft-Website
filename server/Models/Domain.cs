@@ -308,6 +308,12 @@ public class PokemonStat
     public Pick Pick { get; set; } = null!;
 
     public int GamesPlayed { get; set; }
+    /// <summary>Games this mon led — was thrown out first (an initial active mon,
+    /// switched in before turn 1), summed across its games.</summary>
+    public int Starts { get; set; }
+    /// <summary>Games this mon finished — was still on the field and not fainted
+    /// when the battle ended, summed across its games.</summary>
+    public int Finishes { get; set; }
     public int Kills { get; set; }
     public int Deaths { get; set; }
     public int Wins { get; set; }
@@ -379,6 +385,15 @@ public class Match
     /// <summary>Which battle side ("p1"/"p2") was the home team in ReplayLog — needed
     /// to attribute the stored log's stats back to the right team on a back-out.</summary>
     public string? ReplayHomeSide { get; set; }
+
+    /// <summary>
+    /// The two teams as they were actually brought (pokepaste / Showdown export
+    /// text), captured straight from the team data (the sim's built teams, or a
+    /// reported game's battle input log), NOT parsed from the public replay. Null
+    /// until a game with team data is recorded.
+    /// </summary>
+    public string? HomeTeamExport { get; set; }
+    public string? AwayTeamExport { get; set; }
 
     /// <summary>
     /// Pokémon left standing on each side, read off the submitted replay — the

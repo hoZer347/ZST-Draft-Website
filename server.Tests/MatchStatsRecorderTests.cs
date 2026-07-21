@@ -99,6 +99,8 @@ public class MatchStatsRecorderTests(DraftLeagueFactory factory) : IClassFixture
 
         var pika = await db.PokemonStats.SingleAsync(s => s.PickId == pikachu.Id);
         Assert.Equal(1, pika.GamesPlayed);
+        Assert.Equal(1, pika.Starts);         // led the battle
+        Assert.Equal(1, pika.Finishes);       // still standing at |win|
         Assert.Equal(1, pika.Kills);          // KO'd Gengar
         Assert.Equal(1, pika.Wins);           // home won
         Assert.Equal(40, pika.HpRecovered, 2); // Recover 60→100
@@ -112,6 +114,8 @@ public class MatchStatsRecorderTests(DraftLeagueFactory factory) : IClassFixture
 
         await db.Entry(pika).ReloadAsync();
         Assert.Equal(0, pika.GamesPlayed);
+        Assert.Equal(0, pika.Starts);
+        Assert.Equal(0, pika.Finishes);
         Assert.Equal(0, pika.Kills);
         Assert.Equal(0, pika.Wins);
         Assert.Equal(0, pika.HpRecovered, 2);

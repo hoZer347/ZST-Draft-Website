@@ -22,13 +22,23 @@ public static class MatchReporting
     /// URL; otherwise (we captured the log ourselves) it points "Watch replay" at our
     /// local renderer so an auto-reported battle still gets a link.
     /// </summary>
+    /// <param name="p1Export">/<param name="p2Export">: the two teams' pokepaste export
+    /// text (from the sim's built teams or a reported game's battle input log), keyed by
+    /// battle side; stored on the match mapped to home/away via <c>report.HomeSide</c>.</param>
     public static async Task RecordReportAsync(
         AppDbContext db, MatchStatsRecorder recorder, IHubContext<DraftHub> hub,
-        Match match, ReplayScorer.AutoReport report, string? replayUrl, string? reporterId, CancellationToken ct)
+        Match match, ReplayScorer.AutoReport report, string? replayUrl, string? reporterId, CancellationToken ct,
+        string? p1Export = null, string? p2Export = null)
     {
         match.Result = report.Outcome;
         match.HomeScore = report.HomeScore;
         match.AwayScore = report.AwayScore;
+        // Team exports, mapped from battle side (p1/p2) to home/away.
+        if (report.HomeSide is not null && (p1Export is not null || p2Export is not null))
+        {
+            match.HomeTeamExport = report.HomeSide == "p1" ? p1Export : p2Export;
+            match.AwayTeamExport = report.HomeSide == "p1" ? p2Export : p1Export;
+        }
         // An explicit URL wins (a coach pasted a real Showdown replay). Otherwise,
         // when we captured the log ourselves (the Showdown server's auto-report or a
         // headless sim battle), point "Watch replay" at our local renderer — so an

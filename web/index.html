@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=225">
-  <link rel="stylesheet" href="style.css?v=225">
+  <link rel="icon" href="favicon.ico?v=308">
+  <link rel="stylesheet" href="style.css?v=308">
 </head>
 <body>
   <header>
@@ -27,6 +27,7 @@
       <button class="tab" data-view="myteam">My team</button>
       <button class="tab" data-view="schedule">Schedule</button>
       <button class="tab" data-view="stats">Stats</button>
+      <button class="tab" data-view="draftstats">Draft Stats</button>
       <button class="tab" data-view="tierlist">Tier list</button>
       <button class="tab" data-view="teambuilder">Teambuilder</button>
     </nav>
@@ -74,7 +75,7 @@
 
     <!-- Signed in -->
     <div id="app" hidden>
-      <div id="view-draft" class="view layout">
+      <div id="view-draft" class="view layout" hidden>
       <aside class="players card">
         <div class="label">Players</div>
         <ul id="player-list" class="players-list">
@@ -109,6 +110,7 @@
                 </div>
                 <div class="sim-row">
                   <button id="sim-random-season" class="linkish" hidden>Simulate random</button>
+                  <button id="sim-random-16" class="linkish" hidden>Simulate 16 players</button>
                   <label id="sim-battles-label" class="setting sim-battles" hidden>
                     <input type="checkbox" id="sim-battles" checked> Simulate battles
                   </label>
@@ -118,9 +120,16 @@
                 </div>
               </div>
               <button id="rollback" class="linkish" hidden>Undo last pick</button>
+              <!-- Admin-only: download a JSON snapshot of the season so far (picks + replays + team builds). -->
+              <button id="snapshot-season" class="linkish" hidden>Snapshot season</button>
+              <!-- Admin-only: restore a whole season from a snapshot JSON file (wipes + rebuilds). -->
+              <button id="restore-season" class="linkish" hidden>Restore snapshot</button>
+              <input id="restore-file" type="file" accept="application/json,.json" hidden>
               <button id="abort" class="abort-btn" hidden>Abort draft</button>
             </div>
           </div>
+          <!-- How many picks until the logged-in coach is on the clock. -->
+          <div id="turn-countdown" class="turn-countdown" hidden></div>
           <div id="state-banner" class="banner" hidden></div>
         </div>
 
@@ -198,6 +207,15 @@
       </div>
 
       <div id="view-schedule" class="view schedule-view" hidden>
+        <!-- Sticky filter bar: follows the user down the schedule. Toggles between
+             every battle and only the signed-in coach's. -->
+        <div class="sched-filterbar" id="sched-filterbar" hidden>
+          <label class="sched-toggle">
+            <input type="checkbox" id="sched-mine">
+            <span class="sched-switch" aria-hidden="true"></span>
+            <span class="sched-toggle-text">Only my battles</span>
+          </label>
+        </div>
         <div id="sched-scroll" class="sched-scroll">
           <p class="muted">Loading…</p>
         </div>
@@ -219,12 +237,6 @@
             <label class="stats-filter">Trainer
               <select id="stats-filter-trainer"><option value="all">All</option></select>
             </label>
-            <label class="stats-filter stats-check" title="Count friendly-fire damage (spread moves hitting your own ally) in the Dealt columns.">
-              <input type="checkbox" id="stats-ally-dmg"> Damage to allies
-            </label>
-            <label class="stats-filter stats-check" title="Count HP restored to opponents (Heal Pulse on a foe, your Grassy Terrain topping them up) in the Ally-heal column.">
-              <input type="checkbox" id="stats-enemy-heal"> Healing to enemies
-            </label>
           </div>
         </div>
         <div id="stats-body"><p class="muted">Loading…</p></div>
@@ -232,6 +244,10 @@
 
       <div id="view-scoreboard" class="view scoreboard-view" hidden>
         <div id="scoreboard-body"><p class="muted">Loading…</p></div>
+      </div>
+
+      <div id="view-draftstats" class="view draftstats-view" hidden>
+        <div id="draftstats-body"><p class="muted">Loading…</p></div>
       </div>
 
       <div id="view-teambuilder" class="view" hidden>
@@ -281,12 +297,13 @@
     </div>
   </main>
 
-  <script src="config.js?v=225"></script>
-  <script src="auth-logic.js?v=225"></script>
-  <script src="auth.js?v=225"></script>
+  <script src="config.js?v=308"></script>
+  <script src="auth-logic.js?v=308"></script>
+  <script src="auth.js?v=308"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=225"></script>
-  <script src="teambuilder.js?v=225"></script>
-  <script src="app.js?v=225"></script>
+  <script src="pool-logic.js?v=308"></script>
+  <script src="teambuilder.js?v=308"></script>
+  <script src="landing.js?v=308"></script>
+  <script src="app.js?v=308"></script>
 </body>
 </html>

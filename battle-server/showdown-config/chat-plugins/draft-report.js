@@ -22,14 +22,34 @@ function readSecret() {
 	catch { return ''; }
 }
 
-function postReport(log) {
+// Pull each side's ACTUAL brought team out of the battle input log and export it
+// to pokepaste text: the real build (moves/items/EVs/Tera), straight from the
+// submitted team data, not guessed from the public replay. Best-effort: any hiccup
+// just yields nulls and the report still goes without the pastes.
+function exportsFromInputLog(battle) {
+	const out = { p1: null, p2: null };
+	try {
+		const input = battle && battle.inputLog;
+		if (!Array.isArray(input)) return out;
+		const Teams = global.Teams || require('pokemon-showdown').Teams;
+		for (const line of input) {
+			const m = /^>player (p[12]) (.*)$/.exec(line);
+			if (!m) continue;
+			const packed = JSON.parse(m[2]).team;
+			if (packed) out[m[1]] = Teams.export(Teams.unpack(packed)) || null;
+		}
+	} catch { /* leave nulls */ }
+	return out;
+}
+
+function postReport(log, p1Export, p2Export) {
 	const url = process.env.DRAFT_REPORT_URL;
 	const secret = readSecret();
 	if (!url || !secret) return; // not configured (or .NET hasn't written the secret yet)
 
 	let target;
 	try { target = new URL(url); } catch { return; }
-	const body = JSON.stringify({ log });
+	const body = JSON.stringify({ log, p1Export, p2Export });
 	const lib = target.protocol === 'https:' ? https : http;
 	const req = lib.request({
 		method: 'POST',
@@ -54,7 +74,7 @@ exports.handlers = {
 	onBattleEnd(battle) {
 		try {
 			const log = battle?.room?.getLog?.(-1);
-			if (log) postReport(log);
+			if (log) { const ex = exportsFromInputLog(battle); postReport(log, ex.p1, ex.p2); }
 		} catch { /* never throw out of a battle-end hook */ }
 	},
 };

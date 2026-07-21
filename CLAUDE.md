@@ -77,3 +77,48 @@ ASPNETCORE_ENVIRONMENT=Development ConnectionStrings__Default="Data Source=verif
 
 Bump the `?v=NN` query on every asset in `web/index.html` after editing web files, or
 browsers serve stale CSS/JS.
+
+## Tier-coloured Pokemon entry standard (`.tier-fill` / `.tier-entry`)
+
+Any element representing a drafted Pokemon (Scoreboard leaderboards, Draft Stats
+lists, the draft **pick feed**, the schedule's per-match **battle-stats rows**) uses
+one shared CSS standard in `web/style.css`. Reuse it rather than re-styling rows; that
+is what keeps every mon list looking the same. It has two composable pieces:
+
+- **`.tier-fill`** is the COLOURING, and is display-agnostic (works on a flex row, a
+  CSS-grid pick, a battle-stats row): a tier-coloured left lip + a 90-degree wash,
+  strongest under the sprite/name and fading toward the value. Compose as
+  `tier-fill tier--X [tier-fill--mine]`.
+- **`.tier-entry`** is `.tier-fill` PLUS a ready-made flex sprite/name/value ROW
+  LAYOUT, for the simple lists. Compose as `tier-entry tier--X [tier-entry--mine]`.
+  It reads `--entry-sprite` (default 34px), the **scalable-height** knob: set it on
+  the caller (e.g. `.leader-row { --entry-sprite: 40px }`, or smaller in a mobile
+  media query) and the row + sprite scale together, no new rules.
+
+Shared bits:
+
+- `tier--S/A/B/C` set `--tc` (the tier colour, from the `--tier-s/a/b/c` root vars).
+  Omit the `tier--X` class for a mon with no tier (neutral row).
+- `tier-fill--mine` / `tier-entry--mine` is the **boolean highlight**: add it only for
+  the signed-in (or viewed-as) coach's own mon to overlay a Poke-red accent ring +
+  faint wash; it stacks with the tier lip (both inset box-shadows). Resolve "mine"
+  from the module-global `myTeamId` (draft/schedule) or `data.myTeamId` (scoreboard).
+
+In JS, build a row like:
+
+```js
+const mine = myTeamId != null && p.teamId === myTeamId;
+// grid pick row (keeps its own .pick layout, borrows the colouring):
+li.className = `pick tier-fill tier--${p.tier}${mine ? ' tier-fill--mine' : ''}`;
+// simple flex row (colouring + layout from the standard):
+li.className = `leader-row tier-entry${e.tier ? ` tier--${e.tier}` : ''}${mine ? ' tier-entry--mine' : ''}`;
+```
+
+Two exceptions:
+
+- The **Stats TABLE** re-implements the same look per-cell (tier tint on the `<tr>`,
+  lip on `td:first-child`, `.stats-row--mine` accent), because box-shadow on a `<tr>`
+  is unreliable and its first two columns are sticky/opaque. Same visual, table-safe.
+- **Standings** rows are coloured by RANK (the OPGB scheme, `.opgb-0..3`), not by tier,
+  so they use `.standings-row--mine` (the same accent-ring idea, layered with the OPGB
+  lip) rather than `.tier-fill`.

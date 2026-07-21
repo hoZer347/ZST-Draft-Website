@@ -33,9 +33,10 @@ public class ScoreboardTests : IAsyncLifetime
         return team;
     }
 
-    // dealt/taken/heal go into the "direct"/"recovered" buckets; the endpoint sums
-    // direct+indirect (dealt/taken) and recovered+healed (heal), so these become
-    // the totals it ranks on.
+    // dealt/taken go into the "direct" buckets and heal into HpHealed (ally heal);
+    // the endpoint sums direct+indirect for dealt/taken and ranks healing on
+    // HpHealed alone (non-self team healing), so these become the values it ranks
+    // on. HpRecovered is set alongside to prove it is NOT counted as healing.
     private void AddMon(AppDbContext db, Draft draft, League league, Team team, string name,
         int k, int d, int activeTurns, double dealt, double taken, double heal, int gp = 1)
     {
@@ -50,7 +51,11 @@ public class ScoreboardTests : IAsyncLifetime
         db.PokemonStats.Add(new PokemonStat
         {
             Pick = pick, GamesPlayed = gp, Kills = k, Deaths = d, ActiveTurns = activeTurns,
-            DamageDealtDirect = dealt, DamageTakenDirect = taken, HpRecovered = heal,
+            DamageDealtDirect = dealt, DamageTakenDirect = taken,
+            HpHealed = heal,
+            // Self-recovery that must be excluded from the healing leaderboard: a big
+            // constant on every mon so, if it ever leaked in, the ranking would change.
+            HpRecovered = 1000,
         });
     }
 
@@ -156,10 +161,15 @@ public class ScoreboardTests : IAsyncLifetime
 
         // Presence = activeTurns / teamTurns; m6 (.40) is cut by the top-5.
         Assert.Equal(new[] { "m1", "m2", "m3", "m4", "m5" }, Names("presence"));
-        // +/- = KOs - deaths; the 0/0 tie (m3 vs m6) breaks on KOs (m3 has more).
+        // +/- = KOs - deaths. Every participant is ranked (0s and negatives show
+        // their value); the 0/0 tie (m3 vs m6) breaks on KOs (m3 has more), and
+        // m5 (-3) is 6th so the top-5 is m1,m2,m4,m3,m6.
         Assert.Equal(new[] { "m1", "m2", "m4", "m3", "m6" }, Names("plusMinus"));
-        // Healing = recovered + ally heal.
+        // Healing = ally heal (HpHealed) only, NOT self-recovery. Each mon also has
+        // HpRecovered = 1000; the top healer's value being exactly 50 (its HpHealed)
+        // proves that self-recovery is excluded.
         Assert.Equal(new[] { "m1", "m2", "m3", "m4", "m5" }, Names("healing"));
+        Assert.Equal(50.0, leaders.GetProperty("healing").EnumerateArray().First().GetProperty("value").GetDouble(), 3);
         // Damage ratio = dealt / taken; m3 took no damage -> infinite, ranked 1st.
         Assert.Equal(new[] { "m3", "m2", "m1", "m4", "m5" }, Names("damageRatio"));
 
@@ -188,5 +198,31 @@ public class ScoreboardTests : IAsyncLifetime
     {
         var res = await _factory.CreateClient().GetAsync("/api/leagues/1/scoreboard");
         Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Scoreboard_reports_the_callers_own_team_for_highlighting()
+    {
+        int leagueId, myTeamId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var (id, _, league) = await NewLeagueAsync(db);
+            leagueId = id;
+            // AddTeam sets CoachId == the name, so signing in as "mine" owns this team.
+            var mine = AddTeam(db, league, "mine", wins: 1, losses: 0);
+            AddTeam(db, league, "other", wins: 0, losses: 1);
+            await db.SaveChangesAsync();
+            myTeamId = mine.Id;
+        }
+
+        // The owning coach sees their team id; a viewer with no team sees null.
+        var owner = await _factory.SignedInAsAsync("mine");
+        var asOwner = await (await owner.GetAsync($"/api/leagues/{leagueId}/scoreboard")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(myTeamId, asOwner.GetProperty("myTeamId").GetInt32());
+
+        var viewer = await _factory.SignedInAsAsync("nobody");
+        var asViewer = await (await viewer.GetAsync($"/api/leagues/{leagueId}/scoreboard")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, asViewer.GetProperty("myTeamId").ValueKind);
     }
 }

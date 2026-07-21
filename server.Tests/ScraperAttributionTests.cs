@@ -377,6 +377,67 @@ public class ScraperAttributionTests
     }
 
     [Fact]
+    public void Absorb_ability_heal_is_self_recovery_not_credited_to_the_of_attacker()
+    {
+        // Tyrantrum (p2b) Earthquakes, hitting its own ally Orthworm (p2a), whose
+        // Earth Eater turns the Ground hit into a heal. Showdown's [of] on that heal
+        // points to the mon whose move triggered it (Tyrantrum), NOT a healer — so
+        // the heal is Orthworm's own self-recovery, never Tyrantrum ally-healing.
+        // (Regression: this once credited Tyrantrum ~74% ally-heal over a game.)
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp|item
+            |poke|p1|Rotom|item
+            |poke|p2|Tyrantrum|item
+            |poke|p2|Orthworm|item
+            |start
+            |switch|p1a: Garchomp|Garchomp|100/100
+            |switch|p1b: Rotom|Rotom|100/100
+            |switch|p2a: Orthworm|Orthworm|50/100
+            |switch|p2b: Tyrantrum|Tyrantrum|100/100
+            |turn|1
+            |move|p2b: Tyrantrum|Earthquake|p2a: Orthworm|[spread] p1a,p1b,p2a
+            |-damage|p1a: Garchomp|60/100
+            |-damage|p1b: Rotom|70/100
+            |-heal|p2a: Orthworm|75/100|[from] ability: Earth Eater|[of] p2b: Tyrantrum
+            |win|B
+            """);
+        Assert.Equal(25, run.Of("Orthworm").Recovered, 2);  // holder's own self-recovery
+        Assert.Equal(0, run.Of("Tyrantrum").Healed, 2);     // the [of] attacker did NOT heal an ally
+        Assert.Equal(0, run.Of("Orthworm").Healed, 2);
+    }
+
+    [Theory]
+    [InlineData("Water Absorb", "Surf")]     // Water Absorb heals on a Water hit
+    [InlineData("Volt Absorb", "Thunderbolt")] // Volt Absorb heals on an Electric hit
+    [InlineData("Dry Skin", "Scald")]        // Dry Skin heals on a Water hit
+    public void Damage_absorbing_ability_heal_is_self_recovery_not_ally_or_enemy(string ability, string move)
+    {
+        // A foe attacks the holder with the matching move type; the absorb ability
+        // turns it into a heal whose [of] points to the ATTACKER. That HP is the
+        // holder's own self-recovery — never credited as (enemy-)healing to the
+        // attacker in [of]. Same class of bug as Earth Eater.
+        var run = ReplayLogRunner.Run($"""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Jolteon|item
+            |poke|p2|Vaporeon|item
+            |start
+            |switch|p1a: Jolteon|Jolteon|100/100
+            |switch|p2a: Vaporeon|Vaporeon|60/100
+            |turn|1
+            |move|p1a: Jolteon|{move}|p2a: Vaporeon
+            |-heal|p2a: Vaporeon|85/100|[from] ability: {ability}|[of] p1a: Jolteon
+            |win|B
+            """);
+        Assert.Equal(25, run.Of("Vaporeon").Recovered, 2);   // holder's self-recovery
+        Assert.Equal(0, run.Of("Vaporeon").Healed, 2);
+        Assert.Equal(0, run.Of("Jolteon").HealedEnemy, 2);   // the [of] attacker did NOT heal anyone
+        Assert.Equal(0, run.Of("Jolteon").Healed, 2);
+    }
+
+    [Fact]
     public void Wish_lands_as_self_recovery_not_credited_to_the_last_mover()
     {
         var run = ReplayLogRunner.Run("""

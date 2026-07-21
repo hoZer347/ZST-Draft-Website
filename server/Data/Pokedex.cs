@@ -45,10 +45,26 @@ public static class Pokedex
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<PokemonRow>();
-        foreach (var row in sources.SelectMany(s => s))
+        foreach (var row in sources.SelectMany(s => s).Select(Normalize))
             if (seen.Add(row.Name)) result.Add(row);
         return result;
     }
+
+    /// <summary>
+    /// The source sheet documents a few mons as an in-battle forme we never draft
+    /// directly (Palafin's Hero forme). We draft the BASE forme, which becomes the
+    /// battle forme via its ability, so remap those rows to the base name + sprite.
+    /// Applied on every load path (seed and live re-sync) so the sheet can keep its
+    /// own labels without ever re-introducing the forme into the pool.
+    /// </summary>
+    private static readonly Dictionary<string, (string Name, string Sprite)> FormOverrides =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Palafin-H"] = ("Palafin", "palafin"),
+        };
+
+    private static PokemonRow Normalize(PokemonRow r) =>
+        FormOverrides.TryGetValue(r.Name, out var o) ? r with { Name = o.Name, Sprite = o.Sprite } : r;
 
     // ── CSV (the live sheet) ────────────────────────────────────────────
 

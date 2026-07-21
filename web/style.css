@@ -288,8 +288,11 @@ main {
     box-shadow: 6px 0 28px rgba(0, 0, 0, .28);
     overflow-y: auto;
     transform: translateX(-100%);
-    transition: transform .22s ease;
+    /* No transition by default, so crossing this breakpoint (which flips the
+       transform) doesn't animate. The slide is enabled only while opening/closing,
+       via .nav-animate (added by setNav in app.js). */
   }
+  .tabs.nav-animate { transition: transform .22s ease; }
   .tabs.open { transform: translateX(0); }
 
   /* Full-width list rows instead of inline pills. */
@@ -378,7 +381,22 @@ main {
 .stats-table th:hover { color: var(--text); }
 .stats-table th.sorted { color: var(--text); }
 .stats-table th.num, .stats-table td.num { text-align: center; font-variant-numeric: tabular-nums; }
+/* Default zebra striping (alternating gray / base). The tier colour lives only on
+   the frozen Pokémon + Trainer columns (below), not the whole row. */
 .stats-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--muted) 7%, transparent); }
+/* Tier-coloured left edge on the frozen first column, matching the leaderboard and
+   draft-stats rows. */
+.stats-table tbody tr.tier--S td:first-child,
+.stats-table tbody tr.tier--A td:first-child,
+.stats-table tbody tr.tier--B td:first-child,
+.stats-table tbody tr.tier--C td:first-child {
+  box-shadow: inset 4px 0 0 var(--tc);
+}
+/* Your own team's mons: no background highlight (rows keep the default zebra) —
+   just bold the Pokémon and Trainer text so your mons stand out at a glance. */
+.stats-table tbody tr.stats-row--mine .stats-name,
+.stats-table tbody tr.stats-row--mine td:nth-child(2) { font-weight: 800; }
+/* Hover feedback wins over the tint (declared last so it layers on top). */
 .stats-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .stats-mon { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
 /* Pokémon (1st) and Trainer (2nd) read left-aligned within their own column;
@@ -399,9 +417,41 @@ main {
 .stats-table th:nth-child(2), .stats-table td:nth-child(2) {
   position: sticky; left: 180px; width: 128px; min-width: 128px; max-width: 128px;
 }
-.stats-table td:nth-child(1), .stats-table td:nth-child(2) { background: var(--bg); z-index: 1; }
-.stats-table tbody tr:nth-child(even) td:nth-child(1),
-.stats-table tbody tr:nth-child(even) td:nth-child(2) { background: color-mix(in srgb, var(--muted) 7%, var(--bg)); }
+/* The tier colour lives here, on the frozen Pokémon + Trainer columns: ONE opaque
+   90° tier gradient spanning BOTH columns (180px + 128px = 308px), strong at the
+   left edge and fading right, while the scrollable body columns stay on the plain
+   zebra. The full 308px-wide gradient is painted in each cell and the Trainer
+   column is shifted left by 180px so its slice continues exactly where the Pokémon
+   column ends, reading as one gradient rather than restarting per cell. Sticky
+   cells must be OPAQUE (else scrolled columns show through), so it's mixed over
+   --bg, not translucent. */
+.stats-table td:nth-child(1), .stats-table td:nth-child(2) {
+  background-image: linear-gradient(90deg,
+    color-mix(in srgb, var(--tc, transparent) 30%, var(--bg)) 0,
+    color-mix(in srgb, var(--tc, transparent) 8%, var(--bg)) 308px);
+  background-repeat: no-repeat;
+  background-size: 308px 100%;
+  z-index: 1;
+}
+.stats-table td:nth-child(1) { background-position: 0 0; }     /* shows 0–180px of the gradient */
+.stats-table td:nth-child(2) { background-position: -180px 0; } /* shows 180–308px, continuing it */
+/* Owned mons: outline the frozen Pokémon + Trainer pair in the mine accent. The
+   Pokémon cell draws the left + top + bottom edges, the Trainer cell the right +
+   top + bottom, so together they frame the two entries as one block (this takes
+   over the first column's tier left-edge bar on your own rows). */
+.stats-table tbody tr.stats-row--mine td:nth-child(1) {
+  box-shadow: inset 1px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+.stats-table tbody tr.stats-row--mine td:nth-child(2) {
+  box-shadow: inset -1px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+@media (prefers-color-scheme: dark) {
+  .stats-table td:nth-child(1), .stats-table td:nth-child(2) {
+    background-image: linear-gradient(90deg,
+      color-mix(in srgb, var(--tc, transparent) 38%, var(--bg)) 0,
+      color-mix(in srgb, var(--tc, transparent) 12%, var(--bg)) 308px);
+  }
+}
 .stats-table tbody tr:hover td:nth-child(1),
 .stats-table tbody tr:hover td:nth-child(2) { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
 .stats-table th { z-index: 2; }                                   /* header row above body cells */
@@ -420,9 +470,6 @@ main {
   color: var(--text); background: var(--card);
   border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; cursor: pointer;
 }
-/* Checkbox toggles read as normal-case labels, not the uppercase filter caption. */
-.stats-check { text-transform: none; letter-spacing: normal; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; gap: 5px; }
-.stats-check input { cursor: pointer; }
 
 /* Teambuilder view: a launcher panel. The builder itself opens in a new tab on
    our own Showdown server (see openTeambuilder in app.js). */
@@ -604,6 +651,28 @@ main {
   font-size: 13px;
 }
 
+/* "N picks until you're up" — the logged-in coach's turn countdown. Quiet by
+   default, warms as their turn nears, and goes full accent when they're up. */
+.turn-countdown {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  border: 1px solid color-mix(in srgb, var(--muted) 28%, transparent);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--text);
+}
+.turn-countdown.is-soon {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.turn-countdown.is-mine {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
 /* on-the-clock controls */
 .turn { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 /* Admin sees the same panel read-only, so dim it to read as "not yours". */
@@ -701,6 +770,8 @@ main {
 .pick--C { --tc: var(--tier-c); }
 /* A passed turn: muted, no tier colour, so it reads as a gap in the run. */
 .pick--skip { --tc: var(--muted); opacity: .75; }
+/* The coach's own skip is highlighted like their picks, so show it at full strength. */
+.pick--skip.tier-fill--mine { opacity: 1; }
 .pick-skip-label { font-weight: 500; font-style: italic; color: var(--muted); }
 .pick-skip-badge {
   font-size: 10px;
@@ -717,11 +788,12 @@ main {
   grid-template-columns: auto auto auto 1fr auto auto auto;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
+  padding: 4px 6px 4px 13px; /* extra left padding so the #NN clears the tier lip */
   border-radius: 6px;
   background: color-mix(in srgb, var(--tc) 10%, transparent);
 }
-.pick:hover { background: color-mix(in srgb, var(--tc) 20%, transparent); }
+/* No hover tint: picked rows carry the tier-fill wash (which overrode this anyway),
+   so skip rows shouldn't brighten on hover either — keep the whole feed consistent. */
 .pick .mon-img { width: 28px; height: 28px; }
 .pick-num { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 2.5em; }
 .pick-name { font-size: 13px; font-weight: 600; }
@@ -747,7 +819,11 @@ main {
 /* Tera type symbol (round icon) in the pick feed: beside the pick's name and
    beside each rejected C-tier option in the passed column. */
 .tera-icon { width: 18px; height: 18px; flex: none; vertical-align: middle; }
-.pick-others .tera-icon { margin: 0 6px 0 1px; }
+/* The passed run's Tera icons dim in step with their (rejected) sprites, and
+   un-dim together on hover, so a passed option reads as passed Tera and all. The
+   pick's own kept Tera lives in .pick-tera, so it stays full colour. */
+.pick-others .tera-icon { margin: 0 6px 0 1px; opacity: .55; filter: grayscale(.4); }
+.pick-others .tera-icon:hover { opacity: 1; filter: none; }
 .auto {
   font-size: 10px;
   font-weight: 700;
@@ -1160,11 +1236,71 @@ main {
    importance: hero > mine > normal, with a smaller "small" pair for history. */
 .schedule-view {
   width: 100%;
-  max-width: 640px;
+  /* Just wide enough to hug a played card's two side-by-side stat tables (six
+     columns each), so there's no wasted space to either side of them. Below ~700px
+     the tables trim to three columns (see the media query), so this never scrolls. */
+  max-width: 700px;
   margin: 0 auto;
   display: grid;
   gap: 12px;
 }
+
+/* "Only my battles" toggle: scrolls up with the schedule, then sticks to the top of
+   the screen and follows from there. On desktop the header scrolls away, so it pins
+   to the very top; on mobile the header is sticky, so it pins just below it (offset
+   by --header-h, kept in sync by JS). */
+/* The header is pinned to the top on the schedule tab (mobile always, desktop via
+   body.sched-view below); the filter bar sticks flush beneath it — the -1px sliver
+   of overlap (hidden under the header, which has the higher z-index) means no strip
+   of scrolling content ever shows between the two pinned bars. */
+.sched-filterbar {
+  position: sticky;
+  top: calc(var(--header-h, 56px) - 1px);
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+  background: var(--bg);
+}
+/* Pin the header on desktop while the schedule tab is active (mobile pins it for
+   every view via the media query further up). */
+@media (min-width: 621px) {
+  body.sched-view header { position: sticky; top: 0; z-index: 30; }
+}
+.sched-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sched-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sched-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background .18s ease;
+  flex: none;
+}
+.sched-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  transition: transform .18s ease;
+}
+.sched-toggle input:checked + .sched-switch { background: var(--accent); }
+.sched-toggle input:checked + .sched-switch::after { transform: translateX(18px); }
+.sched-toggle input:focus-visible + .sched-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .sched-admin { display: grid; gap: 10px; }
 .sched-admin-row { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
@@ -1185,23 +1321,17 @@ main {
   border-radius: 8px;
 }
 
-/* Bounded scroll area so "scroll up for history" has a fixed viewport to sit in
-   and the initial scroll-to-present is stable. */
+/* The list flows at full height; the whole PAGE scrolls (no bounded inner
+   scroller), and the JS scrolls the window to the present section on load so
+   history sits above the fold. */
 .sched-scroll {
-  max-height: calc(100vh - 160px);
-  overflow-y: auto;
   display: grid;
   gap: 8px;
-  padding-right: 4px;
 }
 
 .sched-heading {
   margin: 14px 0 2px;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
   padding: 4px 0;
-  z-index: 1;
 }
 .sched-present > .sched-heading:first-child { margin-top: 0; }
 
@@ -1239,8 +1369,27 @@ main {
 }
 .match-team { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .match-team--away { justify-content: flex-end; text-align: right; }
+/* The coach's Discord avatar on the OUTER edge of each side (home flex-starts it on
+   the left, away flex-ends it on the right), so the name is pushed toward the middle
+   score. flex:none so it never shrinks and the name gets the slack. */
+.match-team-avatar {
+  width: 60px; height: 60px; flex: none;
+  border-radius: 50%; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.match-team-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.match--hero .match-team-avatar { width: 80px; height: 80px; }
+.match--small .match-team-avatar, .match--small-mine .match-team-avatar { width: 40px; height: 40px; }
+/* Backup icon for a dummy account (no Discord) or a dead avatar URL: a person
+   silhouette in the muted colour over the neutral bubble, so every side matches. */
+.match-team-avatar--blank {
+  background-color: var(--line);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239aa3b0'%3E%3Ccircle cx='12' cy='8.5' r='4'/%3E%3Cpath d='M4.5 20a7.5 7.5 0 0 1 15 0z'/%3E%3C/svg%3E");
+  background-size: 82%; background-position: center 60%; background-repeat: no-repeat;
+}
 .match-team-name {
   font-weight: 650;
+  font-size: 17px; /* bigger than the body default, sized up per card tier below */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1289,8 +1438,8 @@ main {
 .match-remove { color: var(--accent); }
 .match-remove:disabled { opacity: .5; cursor: default; }
 .match-replay-btn.open { color: var(--muted); }
-.match-replay-link { font-size: 12px; color: var(--accent); text-decoration: none; }
-.match-replay-link:hover { text-decoration: underline; }
+.match-replay-link { font-size: 12px; color: var(--accent); text-decoration: underline; }
+.match-replay-link:hover { color: var(--text); }
 /* The watch link sits on its own line above the edit input inside the panel. */
 .replay-watch { flex-basis: 100%; }
 
@@ -1322,7 +1471,100 @@ main {
 .replay-btn:disabled { opacity: .6; cursor: default; }
 .replay-msg { flex-basis: 100%; font-size: 12px; color: var(--muted); }
 .replay-msg.error { color: var(--accent); }
-.match-autorecord { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.match-autorecord { margin: 6px auto 0; max-width: 40ch; font-size: 12px; line-height: 1.4; color: var(--muted); text-align: center; }
+/* Link to a played game's team builds (pokepaste). */
+.match-paste-link { font-size: 11px; color: var(--muted); text-decoration: underline; white-space: nowrap; }
+.match-paste-link:hover { color: var(--text); }
+
+/* Per-mon battle-stat tables under a played score: the two teams (home then away),
+   each sized to its own content (fixed columns) and centred together as a pair, so
+   there's no leftover empty column beside a table nor a gap stretched between them. */
+.match-stats {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  /* A query container so the per-mon stat grid can shed columns one at a time as
+     the card narrows (see the @container ladder below), instead of jumping
+     straight from the full table to just Started + KOs. */
+  container-type: inline-size;
+  container-name: mstats;
+}
+.mstats-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; } /* a tiny bit of room between mon rows */
+/* Shared grid: sprite/name column flexes, the six stat columns are fixed and equal
+   so labels sit exactly over their values. Every row (header and mons) uses it, so
+   the columns line up. */
+.mstat {
+  display: grid;
+  /* All columns are fixed px (NOT em — the header row's font-size is smaller, so
+     em columns would resolve narrower there and break alignment; px is identical
+     on every row, so headers line up exactly over their values). First column is
+     the sprite (+ Tera icon), no name. The truncation breakpoint below drops to 3
+     columns before these could ever overflow, so no scrollbar. */
+  grid-template-columns: 44px repeat(6, 42px);
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  font-size: 11px;
+  /* Tier tint (transparent on the header, which has no tier class). */
+  background: color-mix(in srgb, var(--tc, transparent) 13%, transparent);
+}
+.mstat--S { --tc: var(--tier-s); }
+.mstat--A { --tc: var(--tier-a); }
+.mstat--B { --tc: var(--tier-b); }
+.mstat--C { --tc: var(--tier-c); }
+.mstat-mon { display: flex; align-items: center; gap: 3px; min-width: 0; padding-left: 4px; } /* shift the sprite off the tier lip without widening the row (keeps the column ladder intact) */
+.mstat-img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; flex: none; }
+.mstat-mon .tera-icon { width: 16px; height: 16px; }
+.mstat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mstat-mon .tera-icon { flex: none; }
+/* A Tera type the mon never actually terastallized into this game: dimmed. */
+.mstat-mon .tera-icon.tera-unused { opacity: .32; filter: grayscale(1); }
+.mstat-v { text-align: center; font-variant-numeric: tabular-nums; }
+.mstat-started { color: var(--ok); }
+/* Header row: small muted labels, centred over each column. No tier tint. */
+.mstat-head { color: var(--muted); font-size: 9px; font-weight: 600; border-radius: 0; padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+.mstat-head .mstat-h { text-align: center; white-space: nowrap; }
+/* Brought but never sent out: greyed, all dashes (rendered by the JS). */
+.mstat--out { opacity: .5; }
+.mstat--out .mstat-img { filter: grayscale(1); }
+
+/* As the card narrows, first SHRINK to a compact size (smaller sprite, columns and
+   header text) so all six stat columns keep fitting side by side, and only once even
+   the compact columns won't fit do we start shedding them one at a time. This uses
+   the width instead of jumping straight to just Started + KOs, and keeps the two
+   tables side by side (never stacked). A compact side is 8px padding + 38px sprite
+   + N*(34px col + 2px gap); two of them plus the 20px column-gap must fit in
+   .match-stats (the query container), so each drop threshold is 2*(46 + N*36) + 20.
+   Drop order, least-important first: Healing (child 7), Presence (6), Damage (5),
+   Faints (4). Started (2) and KOs (3) always stay. */
+@container mstats (max-width: 652px) { /* two full tables no longer fit: go compact, keep all six */
+  .mstat { grid-template-columns: 38px repeat(6, 34px); font-size: 10px; }
+  .mstat-img { width: 20px; height: 20px; }
+  .mstat-mon .tera-icon { width: 13px; height: 13px; }
+  .mstat-head { font-size: 8px; }
+}
+@container mstats (max-width: 544px) { /* compact columns no longer all fit: drop Healing */
+  .mstat { grid-template-columns: 38px repeat(5, 34px); }
+  .mstat > :nth-child(7) { display: none; }
+}
+@container mstats (max-width: 472px) { /* + Presence */
+  .mstat { grid-template-columns: 38px repeat(4, 34px); }
+  .mstat > :nth-child(n + 6) { display: none; }
+}
+@container mstats (max-width: 400px) { /* + Damage */
+  .mstat { grid-template-columns: 38px repeat(3, 34px); }
+  .mstat > :nth-child(n + 5) { display: none; }
+}
+@container mstats (max-width: 328px) { /* + Faints: only Started + KOs remain */
+  .mstat { grid-template-columns: 38px repeat(2, 34px); }
+  .mstat > :nth-child(n + 4) { display: none; }
+}
 
 /* Size tiers. The hero is the biggest, "mine" a step up from normal, and the
    history pair ("small"/"small-mine") a step down. */
@@ -1331,16 +1573,40 @@ main {
   padding: 18px 18px;
   gap: 12px;
 }
-.match--hero .match-team-name { font-size: 20px; font-weight: 750; }
+.match--hero .match-team-name { font-size: 25px; font-weight: 750; }
 .match--hero .match-mid { font-size: 15px; }
 .match--hero .match-mid.match-score { font-size: 26px; }
 
-.match--mine .match-team-name { font-size: 17px; }
+.match--mine .match-team-name { font-size: 20px; }
 .match--small { padding: 8px 12px; opacity: .82; }
-.match--small .match-team-name { font-size: 13px; }
+.match--small .match-team-name { font-size: 14px; }
 .match--small .match-mid.match-score { font-size: 15px; }
 .match--small-mine { padding: 10px 12px; opacity: .95; }
-.match--small-mine .match-team-name { font-size: 15px; }
+.match--small-mine .match-team-name { font-size: 16px; }
+
+/* Mobile: the full-size name + 44px avatar + score won't fit the narrow row, so the
+   name truncates to a few characters. Keep everything on the one row (the grid
+   already does) but shrink the name font and the avatar so the name sits next to the
+   score with room to actually read it. */
+@media (max-width: 620px) {
+  .match-row { gap: 8px; }
+  .match-team { gap: 5px; }
+  .match-team-avatar { width: 34px; height: 34px; }
+  .match--hero .match-team-avatar { width: 40px; height: 40px; }
+  .match--small .match-team-avatar, .match--small-mine .match-team-avatar { width: 26px; height: 26px; }
+  .match-team-name { font-size: 13px; }
+  .match--hero .match-team-name { font-size: 17px; }
+  .match--mine .match-team-name { font-size: 15px; }
+  .match--small .match-team-name { font-size: 12px; }
+  .match--small-mine .match-team-name { font-size: 13px; }
+  .match-mid.match-score { font-size: 16px; }
+  .match--hero .match-mid.match-score { font-size: 20px; }
+  /* Stack the replay/edit/remove actions vertically so the middle column is only as
+     wide as one link (not all three in a row), leaving the side name columns real
+     width instead of ~70px. */
+  .match-mid-wrap { gap: 2px; }
+  .match-mid-actions { flex-direction: column; gap: 2px; font-size: 11px; }
+}
 
 /* Picks feed as three grid columns: the draft pick (+ its Tera) on the left, the
    passed options centrally, and the coach + tier hard right. Appended so it wins
@@ -1383,7 +1649,7 @@ main {
 /* The standings card and the leaders grid stack with the same gap the leader
    cards use between themselves (.leaders-grid). The gap lives on #scoreboard-body
    because that's the element that actually holds both sections. */
-#scoreboard-body { display: flex; flex-direction: column; gap: 16px; }
+#scoreboard-body { display: flex; flex-direction: column; gap: 16px; container: scoreboard / inline-size; }
 
 .standings-list, .leader-list {
   list-style: none; margin: 8px 0 0; padding: 0;
@@ -1396,84 +1662,309 @@ main {
    keeps its own column and spans both rows. */
 .standings-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-areas: "rank name stats";
+  /* Fixed MVP column (between the flexing name and the stats) so the MVP block is
+     the same size and position on every row and its "MVP" label lines up down the
+     list. */
+  grid-template-columns: auto auto 1fr 220px auto;
+  grid-template-areas: "rank avatar name mvp stats";
   align-items: center; column-gap: 12px; row-gap: 4px;
   padding: 10px 12px; border-radius: 10px;
+}
+/* The team MVP mon: a small labelled cell. Hidden on narrow windows (below) so it
+   can't crowd the record chips. */
+.standings-mvp {
+  grid-area: mvp;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 0;
+}
+/* badge + sprite + tera on one line (the label sits before them, the name after). */
+.standings-mvp-mon { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+.standings-mvp-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); flex: none; }
+.standings-mvp .tier-badge { flex: none; }
+/* Bigger sprite that fills toward the top/bottom edges of the entry (a negative
+   vertical margin lets it grow into the row's padding without making the row taller). */
+.standings-mvp-img {
+  width: 40px; height: 40px; margin: -9px 0;
+  object-fit: contain; image-rendering: pixelated; flex: none;
+}
+/* Fixed-width Tera slot, kept even when the MVP has no Tera so names line up. */
+.standings-mvp-tera { width: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.standings-mvp-tera .tera-icon { width: 16px; height: 16px; }
+.standings-mvp-name {
+  /* Fixed width (not max-width) so the whole block is a constant size and stays
+     centred + aligned row to row; long names ellipsize. */
+  font-size: 12px; font-weight: 600; flex: none; width: 7.5em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text); /* plain white text, not tier-tinted */
 }
 .standings-rank {
   grid-area: rank;
   font-weight: 700; font-variant-numeric: tabular-nums;
   min-width: 1.4em; text-align: center; color: var(--muted);
 }
+/* The trainer's Discord avatar, just after the rank. Always a fixed round slot so
+   rows line up; --blank (dummies / no avatar) is just the empty circle. */
+.standings-avatar {
+  grid-area: avatar;
+  width: 30px; height: 30px; flex: none;
+  border-radius: 50%; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.standings-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Your own team: a Poké-red ring on your standings row and on the mons you drafted
+   in the leaderboards. Drawn as an inset box-shadow beneath each row's own rank /
+   tier left-edge lip (the combined shadows live after the lip rules below), so the
+   lip overlaps it. */
+.standings-row--mine .standings-name,
+.tier-entry--mine .leader-mon,
+.tier-entry--mine .dstat-name,
+.tier-fill--mine .pick-name { font-weight: 700; }
 .standings-name { grid-area: name; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .standings-stats { grid-area: stats; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
+@media (max-width: 760px) {
+  /* Not enough room for the full block beside the name + record chips, but there's
+     room to stack the "MVP" title above the sprite in the far-right column. The
+     badge, Tera and name stay hidden here. */
+  .standings-row {
+    grid-template-columns: auto auto 1fr auto 40px;
+    grid-template-areas: "rank avatar name stats mvp";
+  }
+  .standings-mvp { flex-direction: column; gap: 1px; }
+  .standings-mvp-tera, .standings-mvp-name, .standings-mvp .tier-badge { display: none; }
+  .standings-mvp-img { width: 32px; height: 32px; margin: 0; }
+}
+
 @media (max-width: 620px) {
   /* Too narrow for the name + every chip on one line: stack the name above the
-     stats. The rank stays in place, spanning both rows. */
+     stats. Rank + avatar stay put (span both rows). The entry is now tall enough
+     to bring the FULL MVP back in the far-right column, laid out vertically: the
+     "MVP" title, the tier badge + a bigger sprite + Tera, and the name. */
   .standings-row {
-    grid-template-columns: auto 1fr;
-    grid-template-areas: "rank name" "rank stats";
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-areas:
+      "rank avatar name  mvp"
+      "rank avatar stats mvp";
   }
   .standings-name { white-space: normal; overflow: visible; text-overflow: clip; } /* show the full name */
   .standings-stats { justify-content: flex-start; }
+
+  .standings-mvp { flex-direction: column; justify-content: center; gap: 1px; }
+  .standings-mvp-label { display: block; }
+  .standings-mvp .tier-badge { display: inline-block; }
+  .standings-mvp-tera { display: inline-flex; }
+  .standings-mvp-name { display: block; width: auto; max-width: 8.5em; text-align: center; }
+  .standings-mvp-img { width: 44px; height: 44px; margin: 0; } /* bigger — the stacked row is taller */
 }
 
-.stat-chip { display: flex; flex-direction: column; align-items: center; line-height: 1.1; min-width: 3em; }
+/* Fixed width (not min-width) so the same-position chip is the same size on
+   every row — that's what makes the columns line up down the standings. */
+.stat-chip { display: flex; flex-direction: column; align-items: center; line-height: 1.1; flex: 0 0 3.9em; }
 .stat-chip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .stat-chip-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* The four stat leaderboards, side by side and wrapping on narrow screens. */
+/* Tooltip affordance: titles that explain a column get a help cursor and a
+   dotted underline so it's discoverable that hovering shows what they mean. */
+.stat-chip[title] { cursor: help; }
+.stat-chip[title] .stat-chip-label,
+.leader-title[title] {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.leader-title[title] { cursor: help; width: fit-content; }
+
+/* The four stat leaderboards, side by side and wrapping on narrow screens. Each
+   card is given plenty of width (min 280px) so the mon name and its value never
+   crowd each other; the grid drops to fewer columns as the window shrinks. */
+/* Four leader cards. Go 1 -> 2 -> 4 across, NEVER 3 (which would leave an ugly
+   lone card on a second row). Container-query driven off #scoreboard-body's width,
+   so it tracks the real space, not the viewport. */
 .leaders-grid {
   display: grid; gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: 1fr;
+}
+@container scoreboard (min-width: 580px) {
+  .leaders-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@container scoreboard (min-width: 1180px) {
+  .leaders-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
-.leader-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: 10px;
+/* ── Standard: tier-coloured Pokémon entries ─────────────────────────────
+   The shared look for any row/element that represents a drafted Pokémon, tinted
+   by its tier. TWO composable pieces:
+
+     * .tier-fill  is the COLOURING, and is display-agnostic: a solid tier lip on
+       the left edge + a 90° wash (strongest under the sprite/name, fading toward
+       the value). Add `tier-fill tier--X [tier-fill--mine]` to ANY element that
+       represents a drafted mon — a flex leaderboard row, a grid draft pick, a
+       battle-stats row. (The Stats TABLE re-implements the same look per-cell,
+       since box-shadow on a <tr> is unreliable and its columns are sticky.)
+     * .tier-entry  is .tier-fill PLUS a ready-made flex sprite/name/value ROW
+       LAYOUT, for the simple lists (Scoreboard leaderboards, Draft Stats). It
+       reads --entry-sprite (default 34px), the SCALABLE HEIGHT knob: the row and
+       its sprite grow/shrink together, so callers pick a size without new rules.
+
+   tier--S/A/B/C set --tc (the tier colour); omit them for a neutral/untiered row.
+   tier-fill--mine / tier-entry--mine is the BOOLEAN HIGHLIGHT: add it for the
+   signed-in coach's own mon to overlay a Poké-red accent ring + faint wash; it
+   stacks with the tier lip (both are inset box-shadows). */
+.tier-fill.tier--S, .tier-fill.tier--A, .tier-fill.tier--B, .tier-fill.tier--C,
+.tier-entry.tier--S, .tier-entry.tier--A, .tier-entry.tier--B, .tier-entry.tier--C {
+  box-shadow: inset 4px 0 0 var(--tc);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--tc) 28%, transparent),
+    color-mix(in srgb, var(--tc) 5%, transparent));
 }
-.leader-sprite { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; flex: none; }
-.leader-who { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.15; }
+.tier-fill--mine, .tier-entry--mine {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.tier-fill--mine.tier--S, .tier-fill--mine.tier--A, .tier-fill--mine.tier--B, .tier-fill--mine.tier--C,
+.tier-entry--mine.tier--S, .tier-entry--mine.tier--A, .tier-entry--mine.tier--B, .tier-entry--mine.tier--C {
+  box-shadow: inset 4px 0 0 var(--tc), inset 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.tier-entry {
+  --entry-sprite: 34px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 9px 5px 12px; border-radius: 9px; /* extra left pad so the sprite clears the tier lip */
+  background-color: color-mix(in srgb, var(--muted) 7%, transparent);
+}
+
+/* The scoreboard leaderboards are tier-entries with a taller sprite and their own
+   two-line who/value layout. Coloring + highlight come from .tier-entry above. */
+.leader-row {
+  --entry-sprite: 40px;
+  /* Own flex layout, not inherited from .tier-entry, so the greyed empty slots
+     (which carry .leader-row but NOT .tier-entry) lay out in a row too, matching
+     the filled rows' height instead of stacking taller. */
+  display: flex; align-items: center;
+  gap: 10px; padding: 8px 10px 8px 13px; border-radius: 10px; /* extra left pad so the sprite clears the tier lip */
+  overflow: hidden; /* clip, never scroll, if some name is unusually long */
+}
+.leader-sprite { width: var(--entry-sprite); height: var(--entry-sprite); object-fit: contain; image-rendering: pixelated; flex: none; }
+.leader-who { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; line-height: 1.15; }
 .leader-mon-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .leader-mon-line .tera-icon { flex: none; }
-.leader-mon { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leader-mon { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .leader-trainer { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.leader-value { font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+/* flex:none + padding keeps the value on its own, never overlapping the name. */
+.leader-value { font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; flex: none; padding-left: 10px; }
 
-/* A slight diagonal sheen, top-left → bottom-right, over every coloured entry in
-   the standings and the stat-leader lists. It's a background-IMAGE, so it layers
-   on top of the tint colour (a background-COLOR) below without replacing it. */
-.standings-row, .leader-row {
-  background-image: linear-gradient(135deg, rgba(255, 255, 255, .11), rgba(0, 0, 0, .09));
+/* Smaller windows: scale the entries down a touch rather than let anything
+   overlap or overflow. */
+@media (max-width: 620px) {
+  .leaders-grid { gap: 12px; }
+  .leader-row { --entry-sprite: 34px; padding: 6px 8px; gap: 8px; } /* scale the row down via the height knob */
+  .leader-mon, .leader-value { font-size: 14px; }
+  .leader-trainer { font-size: 11px; }
 }
 
-/* OPGB — orange, purple, green, blue — the background tint for each standings
-   entry from the top down, cycling every four. A translucent tint over the card
-   keeps text (var(--text)) legible in both light and dark themes; the solid
-   accent bar on the left carries the full colour. */
-.opgb-0 { background-color: rgba(230, 126, 34, .15); box-shadow: inset 4px 0 0 #e07e22; }
-.opgb-1 { background-color: rgba(139, 92, 246, .15); box-shadow: inset 4px 0 0 #8b5cf6; }
-.opgb-2 { background-color: rgba(34, 197, 94, .15);  box-shadow: inset 4px 0 0 #22c55e; }
-.opgb-3 { background-color: rgba(59, 130, 246, .15); box-shadow: inset 4px 0 0 #3b82f6; }
+/* A greyed, empty rank: shown in place of a mon that contributed nothing to the
+   category. No tier tint or sheen — just a faint neutral slot. */
+.leader-row--empty {
+  background-image: none;
+  background-color: color-mix(in srgb, var(--muted) 8%, transparent);
+  box-shadow: inset 4px 0 0 color-mix(in srgb, var(--muted) 45%, transparent);
+  color: var(--muted);
+}
+.leader-sprite--empty {
+  border: 1px dashed color-mix(in srgb, var(--muted) 40%, transparent);
+  border-radius: 6px; box-sizing: border-box;
+}
+.leader-row--empty .leader-mon, .leader-row--empty .leader-value { color: var(--muted); font-weight: 400; }
 
+/* One four-colour gradient (orange -> purple -> green -> blue) spread across the
+   WHOLE list: each row's colour is interpolated from its rank by the JS and passed
+   in as --opgb. Per row it's a pronounced wash (strong left under the rank/name,
+   fading toward the stats) plus a solid left lip and a faint diagonal sheen. */
+.standings-row {
+  box-shadow: inset 4px 0 0 var(--opgb);
+  background-image:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--opgb, transparent) 42%, transparent),
+      color-mix(in srgb, var(--opgb, transparent) 6%, transparent) 82%),
+    linear-gradient(135deg, rgba(255, 255, 255, .10), rgba(0, 0, 0, .08));
+}
+
+/* Dark theme: push the wash a little harder so it reads over the darker card. */
 @media (prefers-color-scheme: dark) {
-  .opgb-0 { background-color: rgba(230, 126, 34, .22); }
-  .opgb-1 { background-color: rgba(139, 92, 246, .22); }
-  .opgb-2 { background-color: rgba(34, 197, 94, .22); }
-  .opgb-3 { background-color: rgba(59, 130, 246, .22); }
-}
-
-/* Stat-leader rows are tinted by the mon's draft tier (S/A/B/C) via --tc, which
-   the shared .tier--X classes set. Same translucent-tint + accent-bar treatment
-   as the OPGB standings rows, but keyed to tier instead of rank. */
-.leader-row.tier--S, .leader-row.tier--A, .leader-row.tier--B, .leader-row.tier--C {
-  background-color: color-mix(in srgb, var(--tc) 16%, transparent);
-  box-shadow: inset 4px 0 0 var(--tc);
-}
-@media (prefers-color-scheme: dark) {
-  .leader-row.tier--S, .leader-row.tier--A, .leader-row.tier--B, .leader-row.tier--C {
-    background-color: color-mix(in srgb, var(--tc) 24%, transparent);
+  .standings-row {
+    background-image:
+      linear-gradient(90deg,
+        color-mix(in srgb, var(--opgb, transparent) 52%, transparent),
+        color-mix(in srgb, var(--opgb, transparent) 8%, transparent) 82%),
+      linear-gradient(135deg, rgba(255, 255, 255, .08), rgba(0, 0, 0, .10));
   }
+}
+
+/* The signed-in coach's row: an accent ring layered under the gradient lip, the
+   same BOOLEAN-HIGHLIGHT idea as .tier-entry--mine, combined with the rank lip. */
+.standings-row--mine {
+  box-shadow: inset 4px 0 0 var(--opgb), inset 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* ── Draft Stats tab ─────────────────────────────────────────────────────
+   Analytics over the draft: instant picks, most-rejected mons, and Tera-type
+   pick/reject breakdowns. Cards laid out in a responsive grid per section. */
+/* Cards stay compact and in one horizontal row: fixed width, never growing to
+   fill, never shrinking. When they no longer fit, the row scrolls sideways
+   rather than wrapping or stacking. */
+.draftstats-view { min-width: 0; }
+.dstat-grid {
+  display: flex; gap: 14px; margin-top: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px; /* leave room for the scrollbar under the cards */
+}
+.dstat-card { display: flex; flex-direction: column; flex: 0 0 240px; }
+.dstat-hint { margin: -2px 0 10px; font-size: 12px; line-height: 1.35; }
+.dstat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* Base layout shared by the monlist rows AND the Tera-rate rows. The monlist rows
+   additionally carry .tier-entry, which supplies the tier colouring + --mine
+   highlight; the Tera rows override the background with their type wash below. */
+.dstat-row {
+  --entry-sprite: 34px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 9px 5px 12px; border-radius: 9px; /* extra left pad so the sprite clears the tier lip */
+  background-color: color-mix(in srgb, var(--muted) 7%, transparent);
+}
+.dstat-row .mon-img { width: var(--entry-sprite); height: var(--entry-sprite); object-fit: contain; image-rendering: pixelated; flex: none; }
+/* Two lines: the mon name pulled up tight, with a much smaller drafter line under. */
+.dstat-who { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.05; }
+.dstat-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dstat-drafter {
+  margin-top: 1px; font-size: 10.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dstat-drafter--none { font-style: italic; }
+.dstat-value { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
+
+/* Tera rows: the Tera-type symbol, its name, a proportional bar, then the value.
+   The whole row gets a very subtle wash in the type's colour, faint on the left
+   and building to the right. */
+/* Every Tera row washes from faint on the text/symbol (left) side to a more
+   pronounced type colour toward the bar/value on the right. */
+/* Lightest (fully clear) under the Tera symbol on the left, building to the type
+   colour toward the bar/value. Only the type rows — the Pokémon rows keep their
+   own tier gradient. */
+.dstat-tera-row {
+  gap: 8px;
+  background: linear-gradient(90deg,
+    transparent,
+    color-mix(in srgb, var(--tcol, var(--muted)) 34%, transparent));
+}
+.dstat-tera-row .tera-icon { flex: none; }
+/* Fixed label slot so the bars line up across every row. */
+.dstat-tera-name { flex: none; width: 58px; font-weight: 600; }
+.dstat-bar {
+  flex: 1; height: 8px; min-width: 40px; border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden;
+}
+.dstat-bar-fill {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--tcol, var(--accent));
 }
