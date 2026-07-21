@@ -19,39 +19,57 @@ const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
 const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
 const { buildTeamWithTera } = require('../lib/random-team');
 
-// A RandomPlayerAI that terastallizes a C-tier mon the first turn it's able to.
-// It leaves the base AI's random move choice untouched and just appends
-// `terastallize` to that move for a marked mon. Tera is once per SIDE per battle
-// (not once per mon), so it teras the first eligible C-tier mon and then stops.
+// A RandomPlayerAI that takes the league's two gimmicks the first turn it can:
+// it MEGA-EVOLVES any mon holding a mega stone (a strict upgrade, so always take
+// it), and TERASTALLIZES a marked C-tier mon to its drafted type. It leaves the
+// base AI's random move choice untouched and just appends `mega` / `terastallize`
+// to that move. Each is once per SIDE per battle (not once per mon). A mon can't
+// do both, so megas take mega and C-tier non-mega mons take tera.
 class TeraPlayerAI extends RandomPlayerAI {
   constructor(playerStream, teraNames) {
     super(playerStream);
     this.teraNames = teraNames instanceof Set ? teraNames : new Set(teraNames || []);
     this.teraUsed = false;
+    this.megaUsed = false;
   }
 
   receiveRequest(request) {
-    this._request = request; // captured so choose() can see which slots may tera
+    this._request = request; // captured so choose() can see which slots may tera/mega
     super.receiveRequest(request);
   }
 
   choose(choice) {
     const req = this._request;
-    if (req && req.active && this.teraNames.size && !this.teraUsed) {
+    if (req && req.active) {
       const pokemon = req.side && req.side.pokemon || [];
       const parts = choice.split(', ');
-      for (let i = 0; i < parts.length && !this.teraUsed; i++) {
+      // Mega-evolve the first eligible mon (once per side). `canMegaEvo` is set on
+      // the request when the mon holds its stone and hasn't evolved yet; the AI
+      // otherwise never takes the free upgrade.
+      for (let i = 0; i < parts.length && !this.megaUsed; i++) {
         const act = req.active[i];
         const part = parts[i];
-        if (!act || !act.canTerastallize) continue;      // not this mon, or already tera'd
-        if (!/^move /.test(part)) continue;              // only when it's actually attacking
-        if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue; // has a gimmick
-        const mon = pokemon[i] || {};
-        const nick = (mon.ident || '').split(': ')[1] || '';
-        const species = (mon.details || '').split(',')[0].trim();
-        if (this.teraNames.has(nick) || this.teraNames.has(species)) {
-          parts[i] = `${part} terastallize`;
-          this.teraUsed = true; // once per side per battle
+        if (!act || !act.canMegaEvo) continue;
+        if (!/^move /.test(part)) continue;
+        if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue;
+        parts[i] = `${part} mega`;
+        this.megaUsed = true;
+      }
+      // Terastallize a marked C-tier mon (once per side).
+      if (this.teraNames.size && !this.teraUsed) {
+        for (let i = 0; i < parts.length && !this.teraUsed; i++) {
+          const act = req.active[i];
+          const part = parts[i];
+          if (!act || !act.canTerastallize) continue;      // not this mon, or already tera'd
+          if (!/^move /.test(part)) continue;              // only when it's actually attacking
+          if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue; // has a gimmick
+          const mon = pokemon[i] || {};
+          const nick = (mon.ident || '').split(': ')[1] || '';
+          const species = (mon.details || '').split(',')[0].trim();
+          if (this.teraNames.has(nick) || this.teraNames.has(species)) {
+            parts[i] = `${part} terastallize`;
+            this.teraUsed = true; // once per side per battle
+          }
         }
       }
       choice = parts.join(', ');

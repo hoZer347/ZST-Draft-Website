@@ -120,6 +120,48 @@ function installReportPlugin() {
 
 installReportPlugin();
 
+// Merge the league's custom "megas" (ChampionsRegMA content) into the bundled
+// engine's dex. They're PLAIN gen-9 mega data — species + string-format stones +
+// a formats-data row (see showdown-config/custom-megas.js) — so the stock engine's
+// own canMegaEvo evolves them with NO sim/ruleset/format changes (an earlier
+// attempt to port the teambuilder's whole custom fork broke 130+ formats; this
+// additive approach doesn't). We copy the data file in and append an idempotent
+// Object.assign to the three compiled data modules, re-merging after an `npm
+// install` resets node_modules, exactly like the custom formats above.
+//
+// NOTE the target is `module.exports`, not `exports`: the data modules are esbuild
+// output ending in `module.exports = __toCommonJS(...)`, so the CJS `exports` we'd
+// otherwise mutate is stale and ignored.
+function installCustomMegas() {
+  const dataDir = path.join(psDir, 'dist', 'data');
+  const src = path.join(__dirname, '..', 'showdown-config', 'custom-megas.js');
+  const MARK = '[draft-league] custom megas';
+  const merges = [
+    ['pokedex.js', 'Pokedex'],
+    ['items.js', 'Items'],
+    ['formats-data.js', 'FormatsData'],
+  ];
+  try {
+    fs.copyFileSync(src, path.join(dataDir, 'custom-megas.js'));
+    let did = false;
+    for (const [file, key] of merges) {
+      const p = path.join(dataDir, file);
+      const txt = fs.readFileSync(p, 'utf8');
+      if (txt.includes(MARK)) continue; // already merged (until an npm install resets node_modules)
+      fs.writeFileSync(p, txt +
+        `\n// ${MARK} (additive; module.exports is the esbuild __toCommonJS object)\n` +
+        `try { Object.assign(module.exports.${key}, require('./custom-megas.js').${key}); } ` +
+        `catch (e) { console.error('[draft-league] mega merge failed in ${file}:', e.message); }\n`);
+      did = true;
+    }
+    console.log(did ? '[showdown] merged custom megas into the dex' : '[showdown] custom megas already merged');
+  } catch (e) {
+    console.warn('[showdown] could not merge custom megas:', e.message);
+  }
+}
+
+installCustomMegas();
+
 // The bundled server has optional chat plugins (youtube, mafia, seasons, …) that
 // persist JSON into config/chat-plugins/. That dir doesn't ship, so they log
 // noisy (non-fatal) ENOENT "CRASH" lines on write. Create it so they stay quiet.

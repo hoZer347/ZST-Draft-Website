@@ -153,3 +153,86 @@ test('buildRandomTeam samples `count` from a larger roster and skips unknowns', 
   assert.equal(team.length, 6, 'brings exactly 6');
   assert.ok(team.every((s) => Dex.species.get(s.species).exists), 'no unknown species slip in');
 });
+
+// ── the league's custom "megas" (ChampionsRegMA content) ─────────────────────
+// They aren't in a vanilla pokemon-showdown; scripts/showdown.js merges them into
+// the bundled engine as PLAIN gen-9 mega data (species + string-format stones +
+// a formats-data row — see showdown-config/custom-megas.js) so the stock engine's
+// own canMegaEvo evolves them with no sim/ruleset/format changes. The data file is
+// checked unconditionally; the behaviour tests need the merge (which the running
+// battle server does) and SKIP on a fresh checkout rather than failing.
+
+const CUSTOM_MEGAS = require('../showdown-config/custom-megas.js');
+
+test('custom-megas.js is well-formed: string-format stones mapping base <-> a listed mega', () => {
+  const { Pokedex, Items } = CUSTOM_MEGAS;
+  assert.ok(Object.keys(Pokedex).length >= 40, `expected a full set, got ${Object.keys(Pokedex).length}`);
+  const megaNames = new Set(Object.values(Pokedex).map((s) => s.name));
+  const stoneNames = new Set(Object.values(Items).map((i) => i.name));
+  for (const [id, item] of Object.entries(Items)) {
+    // Plain strings are what the STOCK canMegaEvo reads (not the cache's object form).
+    assert.equal(typeof item.megaStone, 'string', `${id}.megaStone is a string`);
+    assert.equal(typeof item.megaEvolves, 'string', `${id}.megaEvolves is a string`);
+    assert.ok(megaNames.has(item.megaStone), `${id} evolves into a listed species (${item.megaStone})`);
+  }
+  for (const sp of Object.values(Pokedex)) {
+    assert.equal(sp.forme && sp.forme.startsWith('Mega'), true, `${sp.name} is a Mega forme`);
+    assert.ok(stoneNames.has(sp.requiredItem), `${sp.name} needs a listed stone (${sp.requiredItem})`);
+    // A formats-data row must exist, or Mix and Mega's init crashes writing to it.
+    assert.ok(CUSTOM_MEGAS.FormatsData[Dex.toID(sp.name)], `${sp.name} has a formats-data row`);
+  }
+});
+
+const MEGA_ENGINE = Dex.species.get('malamarmega').exists
+  ? false
+  : 'custom megas not merged into node_modules — start the battle server (scripts/showdown.js) once';
+
+test('a merged custom mega is a real mega species its string stone evolves', { skip: MEGA_ENGINE }, () => {
+  const sp = Dex.species.get('malamarmega');
+  assert.ok(sp.isMega, 'Malamar-Mega is a mega');
+  assert.equal(sp.baseSpecies, 'Malamar');
+  const stone = Dex.items.get(sp.requiredItem);
+  assert.equal(stone.megaEvolves, 'Malamar');
+  assert.equal(stone.megaStone, 'Malamar-Mega');
+});
+
+test('a custom mega slug is fielded as its BASE form holding its stone', { skip: MEGA_ENGINE }, () => {
+  const set = randomSet('malamar-mega');
+  assert.equal(set.species, 'Malamar', 'base form, not Malamar-Mega');
+  assert.equal(set.item, 'Malamarite', 'holds its stone');
+});
+
+test('a roster of custom megas fields a full team (drafted megas no longer vanish)', { skip: MEGA_ENGINE }, () => {
+  // The reported bug: a 9-mon roster with FOUR custom megas fielded only its 5
+  // non-mega mons, because the engine didn't know the megas and dropped them.
+  const roster = ['froslass-mega', 'masquerain', 'scrafty-mega', 'staraptor-mega',
+    'mandibuzz', 'volbeat', 'yanmega', 'tauros-paldeaaqua', 'falinks-mega'];
+  assert.equal(roster.filter((s) => Dex.species.get(s).exists).length, roster.length, 'all nine are known');
+  assert.equal(Teams.unpack(buildRandomTeam(roster, 6)).length, 6, 'brings a full 6, not 5');
+});
+
+test('every format still builds with the custom megas merged (Mix and Mega guard)', { skip: MEGA_ENGINE }, () => {
+  // Adding mega stones used to crash Mix and Mega\'s init (it writes isNonstandard
+  // to each stone\'s formats-data row); the merged formats-data rows prevent that,
+  // so every format\'s rule table still builds (no server-connect crash).
+  Dex.includeFormats();
+  for (const f of Dex.formats.all()) {
+    assert.doesNotThrow(() => Dex.formats.getRuleTable(f), `format ${f.id} should still build`);
+  }
+});
+
+test('a custom mega mega-evolves in a sim battle, with C-tier tera alongside', { skip: MEGA_ENGINE, timeout: 60000 }, () => {
+  // Home leads a custom-mega Malamar (holds its stone → megas turn 1) next to a
+  // C-tier Pikachu (teras). One battle exercises both gimmicks: mega + tera.
+  const spec = { matches: [{
+    homeName: 'H', awayName: 'A',
+    homeTeam: [{ s: 'malamar-mega', t: null }, { s: 'pikachu', t: 'Water' }],
+    awayTeam: [{ s: 'snorlax', t: null }, { s: 'skarmory', t: null }],
+  }] };
+  const script = path.join(__dirname, '..', 'scripts', 'simulate-season.js');
+  const res = spawnSync('node', [script], { input: JSON.stringify(spec), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(res.status, 0, res.stderr);
+  const log = JSON.parse(res.stdout)[0].log;
+  assert.ok(/\|-mega\|[^\n]*Malamar/.test(log), `custom Malamar should mega-evolve; log had no Malamar mega`);
+  assert.ok(/\|-terastallize\|[^\n]*Pikachu\|Water/.test(log), 'C-tier Pikachu should still tera to Water');
+});
