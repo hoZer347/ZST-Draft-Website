@@ -10,7 +10,7 @@ namespace DraftLeague.Web.Data;
 /// as UTC ticks keeps ordering and range filters running in SQL instead of
 /// forcing every such query to buffer client-side.
 ///
-/// Applied by convention to every DateTimeOffset property — nullable ones
+/// Applied by convention to every DateTimeOffset property, nullable ones
 /// included, which EF handles automatically.
 /// </summary>
 public class UtcTicksConverter() : ValueConverter<DateTimeOffset, long>(
@@ -44,7 +44,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder b)
     {
-        // Discord's snowflake is the identity for the whole system — one row
+        // Discord's snowflake is the identity for the whole system, one row
         // per Discord account, no duplicates.
         b.Entity<User>()
             .HasIndex(u => u.DiscordId)

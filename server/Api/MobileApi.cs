@@ -19,7 +19,7 @@ public record DraftSettingsRequest(int Weeks, int PickTimerSeconds);
 /// The surface both the Flutter app and the web frontend use.
 ///
 /// Every route here is authenticated. The caller's identity comes from the JWT,
-/// never from the request body — an earlier version took a userId in the body
+/// never from the request body, an earlier version took a userId in the body
 /// and trusted it, which let anyone act as anyone.
 /// </summary>
 public static class MobileApi
@@ -41,7 +41,7 @@ public static class MobileApi
             if (existing is not null)
             {
                 // A token can move to a different account when a device is
-                // handed over — reassigning is correct, and stops the previous
+                // handed over, reassigning is correct, and stops the previous
                 // owner's alerts landing on someone else's phone.
                 existing.UserId = userId;
                 existing.Platform = req.Platform;
@@ -154,7 +154,7 @@ public static class MobileApi
             return Results.Ok(pool);
         });
 
-        // Pre-built random teams from the signed-in coach's own drafted roster —
+        // Pre-built random teams from the signed-in coach's own drafted roster,
         // the teambuilder's "pre-build my teams" seed (a ready starter team per
         // week the coach can then edit). Best-effort: empty if the roster or the
         // generator is unavailable.
@@ -178,7 +178,7 @@ public static class MobileApi
         });
 
         // Admin-only: one demo random team per player who's READIED UP for the draft,
-        // keyed by the player's name — for the admin to seed onto their own device (a
+        // keyed by the player's name, for the admin to seed onto their own device (a
         // folder per player) as examples. A demo team is built from the player's
         // drafted roster if they have one, otherwise from the whole league pool (so it
         // works before the draft, when readied players have no picks yet). Falls back
@@ -195,7 +195,7 @@ public static class MobileApi
             static string Slug(PokemonEntry e) =>
                 !string.IsNullOrWhiteSpace(e.Sprite) && !e.Sprite.StartsWith("http") ? e.Sprite : e.Name;
 
-            // The full pool — the source for a player who hasn't drafted yet.
+            // The full pool, the source for a player who hasn't drafted yet.
             var pool = (await db.Pokemon.Where(p => p.LeagueId == draft.LeagueId).ToListAsync(ct))
                 .Select(Slug).ToList();
 
@@ -380,7 +380,7 @@ public static class MobileApi
                     ? (int?)null
                     : Math.Max(0, (int)Math.Ceiling((draft.PickDeadline.Value - DateTimeOffset.UtcNow).TotalSeconds)),
                 // Every team in the league, and how many of each tier they still
-                // owe — the client renders per-team roster columns from this.
+                // owe, the client renders per-team roster columns from this.
                 teams = draft.League.Teams.Select(t => new
                 {
                     t.Id, t.Name, t.CoachName, t.CoachId, t.SkipsRemaining,
@@ -485,7 +485,7 @@ public static class MobileApi
         });
 
         // Undo the most recent pick. Allowed for an admin or the coach who made
-        // that pick — a coach can take back their own mistake, but not someone
+        // that pick, a coach can take back their own mistake, but not someone
         // else's. (The admin group below also exposes this for tooling.)
         api.MapPost("/drafts/{draftId:int}/rollback", async (
             int draftId, ClaimsPrincipal me, DraftEngine engine, AppDbContext db, CancellationToken ct) =>
@@ -516,13 +516,13 @@ public static class MobileApi
             var draft = await db.Drafts.Include(d => d.League).FirstOrDefaultAsync(d => d.Id == id, ct);
             if (draft is null) return Results.NotFound();
 
-            // Pre-start settings are applied at kickoff, not saved separately — the
+            // Pre-start settings are applied at kickoff, not saved separately, the
             // numbers the admin sees on the panel are the ones the draft runs with.
             // StartAsync reads PickTimerSeconds off this same tracked league, so the
             // new clock takes effect immediately.
             //
             // Never 400 the Start over settings. Weeks stays sane (the round-robin
-            // needs at least one). The pick timeout is taken exactly as given — even
+            // needs at least one). The pick timeout is taken exactly as given, even
             // 0, which makes every pick auto-fire immediately so a draft can be
             // fast-forwarded/simulated. Negatives (a past deadline) behave like 0.
             if (req is not null)
@@ -533,7 +533,7 @@ public static class MobileApi
             }
 
             // Refresh the pool from the source sheet before the draft begins, so
-            // sheet edits show up here. Best-effort — RefreshAsync swallows and
+            // sheet edits show up here. Best-effort, RefreshAsync swallows and
             // logs failures rather than blocking the draft.
             await sync.RefreshAsync(draft.LeagueId, ct);
 
@@ -563,7 +563,7 @@ public static class MobileApi
 
         // Admin: rebuild a league's stored PokemonStat aggregates from scratch by
         // re-scraping every reported match's stored replay log with the CURRENT
-        // scraper. Non-destructive — matches, replays and standings are untouched;
+        // scraper. Non-destructive, matches, replays and standings are untouched;
         // only the derived per-mon stat rows (and the per-team presence denominators
         // they share) are recomputed. Run this after a scraper fix so the stats page
         // reflects corrected attribution without re-simulating the season.
@@ -691,7 +691,7 @@ public static class MobileApi
             }
 
             await db.SaveChangesAsync(ct);
-            await notifier.PlayersChangedAsync(ct); // roster grew — refresh everyone
+            await notifier.PlayersChangedAsync(ct); // roster grew, refresh everyone
             return Results.Ok(new { discordId = id, username = user.Username, readied });
         });
 

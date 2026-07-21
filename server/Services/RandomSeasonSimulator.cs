@@ -43,7 +43,7 @@ public class RandomSeasonSimulator(
     /// <param name="seed">Fixed seed for a reproducible season; null for a fresh random one.</param>
     /// <param name="realBattles">When true, play each match as a real headless Showdown battle
     /// (random teams, random moves) and record its result + scraped stats through the real
-    /// report pipeline. When false (or the runner is unavailable), the schedule stays Pending —
+    /// report pipeline. When false (or the runner is unavailable), the schedule stays Pending,
     /// no result, no score, no stats. Nothing is ever fabricated either way.</param>
     public async Task<SimResult> SimulateAsync(
         int draftId, int teamCount = 8, int? seed = null, bool realBattles = true, CancellationToken ct = default)
@@ -85,7 +85,7 @@ public class RandomSeasonSimulator(
         await db.SaveChangesAsync(ct);
 
         // ── coaches: real signed-in members first, then synthetic sim coaches, all
-        // readied up through the real participant mechanism (no bespoke insertion —
+        // readied up through the real participant mechanism (no bespoke insertion,
         // the same DraftParticipant rows a coach's "ready up" makes). The reserved
         // admin oversees and never plays.
         var realUsers = (await db.Users.ToListAsync(ct))
@@ -117,7 +117,7 @@ public class RandomSeasonSimulator(
 
         // ── drive the draft through the REAL engine: on each turn "press" a random
         // tier the team still owes, then randomly lapse / skip / pick. The engine
-        // records the picks, the skips and every passed option — nothing is written
+        // records the picks, the skips and every passed option, nothing is written
         // by hand here. ──
         var maxSteps = teamCount * (quota.Values.Sum() + DraftEngine.MaxSkipsPerTeam) + teamCount + 10;
         for (var step = 0; step < maxSteps; step++)
@@ -193,7 +193,7 @@ public class RandomSeasonSimulator(
         return new SimResult(teamsCount, pickCount, matches.Count, real, skipCount);
     }
 
-    // The pool slug the battle runner keys on — the Showdown sprite slug, falling
+    // The pool slug the battle runner keys on, the Showdown sprite slug, falling
     // back to the name for the odd mon without one (Node skips anything Showdown
     // doesn't know).
     private static string SlugOf(Pick p) =>
@@ -203,9 +203,9 @@ public class RandomSeasonSimulator(
 
     /// <summary>
     /// Plays every match as a real headless Showdown battle, then records each battle
-    /// through the EXACT live pipeline — <see cref="ReplayScorer.ReportAsync"/> maps the
+    /// through the EXACT live pipeline, <see cref="ReplayScorer.ReportAsync"/> maps the
     /// log to its scheduled match and scores it, and <see cref="MatchReporting"/> writes
-    /// the result, standings, stats and replay link — identical to what our Showdown
+    /// the result, standings, stats and replay link, identical to what our Showdown
     /// server's auto-report does for a real game. Nothing is computed here; the sim only
     /// hands the real logs to the real recorder. Returns false (leaving the matches
     /// Pending) if the battle runner isn't available.
@@ -235,7 +235,7 @@ public class RandomSeasonSimulator(
             if (!report.Ok)
             {
                 // A log the scorer couldn't attribute to a pending match leaves that
-                // game unrecorded — surfaced, not papered over (the live path drops it too).
+                // game unrecorded, surfaced, not papered over (the live path drops it too).
                 log.LogWarning("Sim battle not recorded: {Reason}", report.Reason);
                 continue;
             }

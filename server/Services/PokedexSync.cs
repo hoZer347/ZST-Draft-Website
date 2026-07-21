@@ -8,7 +8,7 @@ namespace DraftLeague.Web.Services;
 /// draft is started, so edits to the sheet (new mons, retiers, stat fixes) take
 /// effect on the next draft without a redeploy.
 ///
-/// Upsert only — matched by name, existing rows are updated and new ones added.
+/// Upsert only, matched by name, existing rows are updated and new ones added.
 /// Nothing is deleted: a mon already drafted must not vanish mid-history, and a
 /// re-sync must never un-draft one. The local supplement (pokemon-extra.json) is
 /// merged in for mons the sheet doesn't carry.
@@ -33,7 +33,7 @@ public class PokedexSync(AppDbContext db, HttpClient http, IConfiguration config
         }
         catch (Exception ex)
         {
-            // Never block a draft on the sheet being unreachable or malformed —
+            // Never block a draft on the sheet being unreachable or malformed,
             // the existing pool is still perfectly playable.
             log.LogWarning(ex, "Pokédex sync: could not fetch/parse the sheet; keeping the existing pool");
             return 0;
@@ -57,7 +57,7 @@ public class PokedexSync(AppDbContext db, HttpClient http, IConfiguration config
 
         await db.SaveChangesAsync(ct);
 
-        // Drop pool mons the sheet no longer lists — a ban (or retier out of
+        // Drop pool mons the sheet no longer lists, a ban (or retier out of
         // S/A/B/C) removes the row from the draftable set, so it should leave the
         // local pool too. A mon that's already been drafted is spared, so a
         // mid-season ban never rewrites history.

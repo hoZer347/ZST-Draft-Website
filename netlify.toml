@@ -1,6 +1,6 @@
 # Netlify serves the static frontend only.
 #
-# The ASP.NET Core server in server/ CANNOT run here — Netlify has no .NET
+# The ASP.NET Core server in server/ CANNOT run here, Netlify has no .NET
 # runtime, and the draft clock and SignalR hub both need a long-lived process.
 # Deploy that separately (Azure App Service, Fly.io, Render, a VPS) and point
 # web/config.js at it.
@@ -16,7 +16,7 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# config.js carries the API URL and is edited between deploys — don't let a
+# config.js carries the API URL and is edited between deploys, don't let a
 # cached copy point the site at a stale backend.
 [[headers]]
   for = "/config.js"

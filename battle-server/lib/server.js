@@ -20,7 +20,7 @@ const DEMO_TEAMS = {
 /**
  * The self-hosted battle server: a thin WebSocket transport over BattleRoom.
  *
- * It owns no game logic — BattleRoom does — and no matchmaking policy; in the
+ * It owns no game logic, BattleRoom does, and no matchmaking policy; in the
  * real flow the .NET side decides who plays whom and seats them. This layer just
  * (1) holds live rooms by id, (2) fans each side's redacted protocol out to the
  * sockets watching that side, and (3) relays decisions back down. Same-origin to

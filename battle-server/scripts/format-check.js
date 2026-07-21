@@ -24,7 +24,7 @@ function main() {
   console.log(`  clauses/limits: ${clauses.join(', ') || '(none)'}`);
   console.log(`  bans:           ${bans.join(', ') || '(none)'}`);
 
-  console.log('\nOK — every declared rule applied.');
+  console.log('\nOK, every declared rule applied.');
 }
 
 try { main(); }

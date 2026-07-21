@@ -16,7 +16,7 @@ namespace DraftLeague.Web.Tests;
 /// the offered options.
 ///
 /// Each test gets its own factory (and throwaway DB) so the set of signed-in
-/// users — which IS the draft roster — never leaks between tests.
+/// users, which IS the draft roster, never leaks between tests.
 /// </summary>
 public class DraftTests : IAsyncLifetime
 {
@@ -238,7 +238,7 @@ public class DraftTests : IAsyncLifetime
         var picks = final.GetProperty("picks").EnumerateArray().ToList();
         Assert.Equal(20, picks.Count); // 2 teams × 10
 
-        // No mon drafted twice — the pool really depletes.
+        // No mon drafted twice, the pool really depletes.
         var ids = picks.Select(p => Int(p, "pokemonEntryId")).ToList();
         Assert.Equal(ids.Count, ids.Distinct().Count());
 
@@ -348,7 +348,7 @@ public class DraftTests : IAsyncLifetime
     public async Task An_auto_pick_with_no_tier_opened_still_snapshots_passed_options()
     {
         // A coach whose clock expires WITHOUT ever opening a tier had nothing
-        // offered to snapshot — the feed used to show them with an empty "passed"
+        // offered to snapshot, the feed used to show them with an empty "passed"
         // run. Now the engine samples the picked tier's remaining pool so an
         // auto-pick reads like a manual one.
         var (admin, draftId, _) = await StartWithAsync("p1", "p2");

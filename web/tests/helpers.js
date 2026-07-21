@@ -41,7 +41,7 @@ function randomPool(seed, n) {
   return Array.from({ length: n }, (_, i) => randomMon(rand, i));
 }
 
-// One drafted mon with a battle-stat row, as the team endpoint returns it —
+// One drafted mon with a battle-stat row, as the team endpoint returns it,
 // the shape pickMvp consumes. `gp` 0 means "never played" (ineligible).
 function randomTeam(seed, size) {
   const rand = rng(seed);

@@ -4,7 +4,7 @@ namespace DraftLeague.Web.Data;
 
 /// <summary>
 /// Creates a small playable league so the draft can be exercised without
-/// hand-building rows. Development only — wired up in Program.cs behind
+/// hand-building rows. Development only, wired up in Program.cs behind
 /// an IsDevelopment check.
 ///
 /// Teams and the pick order are deliberately NOT seeded: the draft lines up
@@ -37,7 +37,7 @@ public static class DevSeed
         db.Leagues.Add(league);
         await db.SaveChangesAsync(ct);
 
-        // Empty draft — teams and snake order are built from the signed-in
+        // Empty draft, teams and snake order are built from the signed-in
         // players when an admin presses Start.
         var draft = new Draft { LeagueId = league.Id };
         db.Drafts.Add(draft);

@@ -17,7 +17,7 @@ builder.Services.AddSignalR();
 
 // The frontend is served by Netlify on another origin, so every call from the
 // browser is cross-origin and blocked without this. AllowCredentials is what
-// SignalR's WebSocket handshake needs — and it forbids AllowAnyOrigin, hence
+// SignalR's WebSocket handshake needs, and it forbids AllowAnyOrigin, hence
 // the explicit list.
 const string CorsPolicy = "frontend";
 var allowedOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
@@ -144,7 +144,7 @@ builder.Services.AddScoped<MatchStatsRecorder>();
 builder.Services.AddScoped<NodeTeamGenerator>();
 builder.Services.AddScoped<INotificationQueue, NotificationQueue>();
 
-// Swap for an FCM-backed sender once credentials are configured — see PUSH_SETUP.md.
+// Swap for an FCM-backed sender once credentials are configured, see PUSH_SETUP.md.
 builder.Services.AddScoped<IPushSender, LoggingPushSender>();
 
 builder.Services.AddHostedService<DraftClock>();
@@ -203,7 +203,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 // Serve the web/ SPA (the real UI) from the site root, so one self-hosted server
-// hosts BOTH the frontend and the API on a single origin — no separate static
+// hosts BOTH the frontend and the API on a single origin, no separate static
 // host, and no CORS between them. web/ sits next to server/ in the repo.
 var webRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "web"));
 if (Directory.Exists(webRoot))
@@ -216,7 +216,7 @@ if (Directory.Exists(webRoot))
         OnPrepareResponse = ctx =>
         {
             // index.html carries the ?v= cache-busters for every other asset, so it
-            // MUST always be revalidated — otherwise a browser serves a stale copy
+            // MUST always be revalidated, otherwise a browser serves a stale copy
             // pointing at old asset versions and CSS/JS changes never appear. The
             // versioned assets themselves can be cached hard.
             var path = ctx.File.Name;
@@ -265,7 +265,7 @@ if (app.Environment.IsDevelopment())
         return Results.Ok(result);
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
-    // Rebuild the league as a finished season from PURELY RANDOM data — synthetic
+    // Rebuild the league as a finished season from PURELY RANDOM data, synthetic
     // teams, a random valid draft, random results/stats. No replays/network, so
     // it's instant. Optional ?teams= and ?seed= (seed makes it reproducible).
     // Admin-only and Development-only.
@@ -292,7 +292,7 @@ if (app.Environment.IsDevelopment())
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
     // Force a pool re-sync from the source Google Sheet without starting a draft
-    // or simulating — the quick way to make the tier list reflect sheet edits.
+    // or simulating, the quick way to make the tier list reflect sheet edits.
     app.MapPost("/dev/sync-pokedex", async (
         PokedexSync sync, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
     {
@@ -304,7 +304,7 @@ if (app.Environment.IsDevelopment())
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
     // Shortens the clock so auto-pick and warnings can be exercised without
-    // sitting through a real five-minute pick. Development only — this would
+    // sitting through a real five-minute pick. Development only, this would
     // let anyone skip a coach's turn.
     app.MapPost("/dev/drafts/{id:int}/expire", async (int id, AppDbContext db) =>
     {
@@ -316,7 +316,7 @@ if (app.Environment.IsDevelopment())
     });
 
     // Mints a token for an account so the app can be driven on localhost without
-    // standing up Discord. Development only — it is an auth bypass. Returns the full
+    // standing up Discord. Development only, it is an auth bypass. Returns the full
     // user so the web "Sign in as" picker can store a session shaped like a real login.
     app.MapPost("/dev/token/{discordId}", async (string discordId, bool? admin, AppDbContext db, TokenService tokens, CancellationToken ct) =>
     {
@@ -348,7 +348,7 @@ if (app.Environment.IsDevelopment())
         });
     });
 
-    // Existing accounts the localhost "Sign in as" picker can offer — the reserved
+    // Existing accounts the localhost "Sign in as" picker can offer, the reserved
     // admin plus everyone a simulation created (or a real member who has logged in).
     // Development only, unauthenticated like /dev/token (both are the local bypass).
     app.MapGet("/dev/accounts", async (AppDbContext db, CancellationToken ct) =>

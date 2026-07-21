@@ -21,7 +21,7 @@ public class League
     /// <summary>Discord user id of the league owner.</summary>
     public required string OwnerId { get; set; }
 
-    /// <summary>Default pick timeout (24 hours) — restored on abort so the
+    /// <summary>Default pick timeout (24 hours), restored on abort so the
     /// settings panel shows a clean slate for the next draft.</summary>
     public const int DefaultPickTimerSeconds = 86400;
 
@@ -29,10 +29,10 @@ public class League
     public const int DefaultSeasonWeeks = 8;
 
     /// <summary>Seconds each coach gets per pick before auto-pick fires. Default
-    /// 24 hours — draft leagues usually pick asynchronously over days.</summary>
+    /// 24 hours, draft leagues usually pick asynchronously over days.</summary>
     public int PickTimerSeconds { get; set; } = DefaultPickTimerSeconds;
 
-    /// <summary>How many weeks the season runs — the default the round-robin
+    /// <summary>How many weeks the season runs, the default the round-robin
     /// schedule is generated over. Set before the draft starts.</summary>
     public int SeasonWeeks { get; set; } = DefaultSeasonWeeks;
 
@@ -89,8 +89,8 @@ public class Team
     public int BattleTurns { get; set; }
 
     /// <summary>
-    /// Skip tokens left this draft. A coach may skip their turn — deferring the
-    /// pick to a later cycle — this many times. The engine resets it to
+    /// Skip tokens left this draft. A coach may skip their turn, deferring the
+    /// pick to a later cycle, this many times. The engine resets it to
     /// DraftEngine.MaxSkipsPerTeam when the draft starts (or aborts); this
     /// literal default just covers teams created outside that path.
     /// </summary>
@@ -119,7 +119,7 @@ public class PokemonEntry
     /// </summary>
     public string? Sprite { get; set; }
 
-    // Battle profile, from the source sheet — shown on the team page. Display
+    // Battle profile, from the source sheet, shown on the team page. Display
     // only; the draft never reads these.
     public int Hp { get; set; }
     public int Atk { get; set; }
@@ -133,7 +133,7 @@ public class PokemonEntry
     public string? Ability2 { get; set; }
     public string? HiddenAbility { get; set; }
 
-    /// <summary>Base stat total — the usual at-a-glance power number.</summary>
+    /// <summary>Base stat total, the usual at-a-glance power number.</summary>
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public int BaseStatTotal => Hp + Atk + Def + SpAtk + SpDef + Speed;
 
@@ -152,7 +152,7 @@ public class Draft
     public DraftState State { get; set; } = DraftState.NotStarted;
 
     /// <summary>
-    /// Flat list of TeamIds in pick order — snake, linear or otherwise.
+    /// Flat list of TeamIds in pick order, snake, linear or otherwise.
     /// The engine does not compute order; it just walks this list.
     /// </summary>
     public List<DraftSlot> Order { get; set; } = [];
@@ -177,7 +177,7 @@ public class Draft
 
 /// <summary>
 /// A coach who has readied up for a draft before it starts. The Start roster is
-/// built from these rows — not merely everyone signed in — so participation is an
+/// built from these rows, not merely everyone signed in, so participation is an
 /// explicit opt-in, and a coach can Leave to opt back out while NotStarted.
 /// </summary>
 public class DraftParticipant
@@ -189,7 +189,7 @@ public class DraftParticipant
     /// <summary>Discord id of the coach who readied up.</summary>
     public required string DiscordId { get; set; }
 
-    /// <summary>When they readied — also the order they join the snake in.</summary>
+    /// <summary>When they readied, also the order they join the snake in.</summary>
     public DateTimeOffset ReadyAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -218,7 +218,7 @@ public class OfferedOption
     public Tier Tier { get; set; }
 
     /// <summary>
-    /// The Tera type rolled for this option — C tier only, null otherwise. It's
+    /// The Tera type rolled for this option, C tier only, null otherwise. It's
     /// assigned when the option is offered (so a refresh can't reroll it) and
     /// carries onto the Pick when this option is chosen.
     /// </summary>
@@ -245,11 +245,11 @@ public class Pick
     /// <summary>True when the clock expired and the engine picked.</summary>
     public bool WasAutoPick { get; set; }
 
-    /// <summary>The Tera type this pick was drafted with — C tier only, else null.</summary>
+    /// <summary>The Tera type this pick was drafted with, C tier only, else null.</summary>
     public string? TeraType { get; set; }
 
     /// <summary>
-    /// JSON snapshot of the options that were offered this turn but NOT taken —
+    /// JSON snapshot of the options that were offered this turn but NOT taken,
     /// the roads not travelled, shown in the pick feed. A denormalised
     /// [{name,sprite,dexNumber,tier}] captured at pick time; null for a fresh
     /// auto-pick that never opened a tier (no options to snapshot).
@@ -308,10 +308,10 @@ public class PokemonStat
     public Pick Pick { get; set; } = null!;
 
     public int GamesPlayed { get; set; }
-    /// <summary>Games this mon led — was thrown out first (an initial active mon,
+    /// <summary>Games this mon led, was thrown out first (an initial active mon,
     /// switched in before turn 1), summed across its games.</summary>
     public int Starts { get; set; }
-    /// <summary>Games this mon finished — was still on the field and not fainted
+    /// <summary>Games this mon finished, was still on the field and not fainted
     /// when the battle ended, summed across its games.</summary>
     public int Finishes { get; set; }
     public int Kills { get; set; }
@@ -323,7 +323,7 @@ public class PokemonStat
     public int ActiveTurns { get; set; }
 
     /// <summary>
-    /// Total turns of the games this mon actually played in, summed — i.e. each
+    /// Total turns of the games this mon actually played in, summed, i.e. each
     /// game's full turn count added once per game the mon was brought to. The
     /// denominator for in-game ("usage") presence: ActiveTurns / PlayedTurns is
     /// the share of the field it held across only the games it appeared in,
@@ -334,7 +334,7 @@ public class PokemonStat
 
     /// <summary>Direct (move) damage dealt to opponents, cumulative % of a full HP bar.</summary>
     public double DamageDealtDirect { get; set; }
-    /// <summary>Indirect damage dealt to opponents — hazards, status chip, Rocky Helmet, Leech Seed — cumulative %.</summary>
+    /// <summary>Indirect damage dealt to opponents, hazards, status chip, Rocky Helmet, Leech Seed, cumulative %.</summary>
     public double DamageDealtIndirect { get; set; }
     /// <summary>Direct friendly-fire damage dealt to your own allies (spread moves), cumulative %. Excluded from Dealt by default.</summary>
     public double DamageDealtAllyDirect { get; set; }
@@ -342,9 +342,9 @@ public class PokemonStat
     public double DamageDealtAllyIndirect { get; set; }
     /// <summary>Direct (move) damage taken from opponents, cumulative %.</summary>
     public double DamageTakenDirect { get; set; }
-    /// <summary>Indirect damage taken from others — opposing hazards, status, weather — cumulative %.</summary>
+    /// <summary>Indirect damage taken from others, opposing hazards, status, weather, cumulative %.</summary>
     public double DamageTakenIndirect { get; set; }
-    /// <summary>Self-inflicted damage — recoil, Life Orb, Toxic/Flame Orb, confusion, crash, HP-cost moves — cumulative %. Kept out of the taken totals.</summary>
+    /// <summary>Self-inflicted damage, recoil, Life Orb, Toxic/Flame Orb, confusion, crash, HP-cost moves, cumulative %. Kept out of the taken totals.</summary>
     public double DamageTakenSelf { get; set; }
     /// <summary>Self-healing (Recover/Roost/Leftovers/drain…), cumulative %.</summary>
     public double HpRecovered { get; set; }
@@ -375,14 +375,14 @@ public class Match
     public string? ReplayUrl { get; set; }
 
     /// <summary>
-    /// The scored battle log for this match — from the headless sim or fetched from
+    /// The scored battle log for this match, from the headless sim or fetched from
     /// a submitted replay. Kept so the result + per-mon stats can be backed out
     /// (and recomputed) if the replay is changed or removed, without re-fetching.
     /// Null while the match is Pending (no replay).
     /// </summary>
     public string? ReplayLog { get; set; }
 
-    /// <summary>Which battle side ("p1"/"p2") was the home team in ReplayLog — needed
+    /// <summary>Which battle side ("p1"/"p2") was the home team in ReplayLog, needed
     /// to attribute the stored log's stats back to the right team on a back-out.</summary>
     public string? ReplayHomeSide { get; set; }
 
@@ -396,7 +396,7 @@ public class Match
     public string? AwayTeamExport { get; set; }
 
     /// <summary>
-    /// Pokémon left standing on each side, read off the submitted replay — the
+    /// Pokémon left standing on each side, read off the submitted replay, the
     /// usual "4-0" style score. Null until a replay has been scored.
     /// </summary>
     public int? HomeScore { get; set; }

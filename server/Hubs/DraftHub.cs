@@ -11,7 +11,7 @@ namespace DraftLeague.Web.Hubs;
 /// HTTP endpoints so there is one authorised path into the engine.
 ///
 /// Authenticated because the feed narrates a league's draft as it happens.
-/// The token arrives as an access_token query param — see the JwtBearer
+/// The token arrives as an access_token query param, see the JwtBearer
 /// OnMessageReceived hook in Program.cs.
 /// </summary>
 [Authorize]

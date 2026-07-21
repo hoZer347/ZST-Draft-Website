@@ -6,10 +6,10 @@
 //   • unit-tested headlessly by the Node runner (test/seed-teams.test.js).
 //
 // The rule it enforces (do not "fix" without updating the tests):
-//   • Matchup weeks ("ZST Season 4 / Week N vs <opp>") are seeded BLANK — one empty
+//   • Matchup weeks ("ZST Season 4 / Week N vs <opp>") are seeded BLANK, one empty
 //     team per matchup, for the coach to fill. Never pre-filled. Existing entries
 //     (a team the coach already edited) are left untouched.
-//   • Demo teams ("Demo teams / <player>") are FILLED — one packed team per player,
+//   • Demo teams ("Demo teams / <player>") are FILLED, one packed team per player,
 //     seeded only when demo data is passed. Re-seeding OVERWRITES (they're
 //     regeneratable examples), so a stale entry from an older build can't linger.
 //

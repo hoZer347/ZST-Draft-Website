@@ -19,7 +19,7 @@ public interface IDraftNotifier
     Task DraftStateChangedAsync(int draftId, DraftState state, CancellationToken ct = default);
 
     /// <summary>
-    /// The league roster changed — someone signed in (claimed a slot / logged in
+    /// The league roster changed, someone signed in (claimed a slot / logged in
     /// with Discord) or was removed. Tells every connected client to reload the
     /// players list. Not tied to a draft, so it fans out to all clients.
     /// </summary>

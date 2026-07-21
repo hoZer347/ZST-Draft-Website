@@ -21,7 +21,7 @@ primary_region = "yyz"
   internal_port = 8080
   force_https = true
 
-  # The draft clock is an always-on background service — it fires auto-picks
+  # The draft clock is an always-on background service, it fires auto-picks
   # when a coach's timer expires. If Fly stops the machine when HTTP traffic
   # goes quiet, the clock stops with it and an idle draft stalls forever.
   # That is exactly the failure the timer exists to prevent, so the machine

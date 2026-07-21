@@ -8,8 +8,8 @@ namespace DraftLeague.Web.Services;
 /// <summary>
 /// The single place a scored battle becomes a recorded result: it writes the match
 /// fields, folds the log into standings and per-mon stats, and broadcasts the
-/// change. Shared by every path that records a game — a coach pasting a replay, our
-/// Showdown server's auto-report, and the season simulator — so all of them derive
+/// change. Shared by every path that records a game, a coach pasting a replay, our
+/// Showdown server's auto-report, and the season simulator, so all of them derive
 /// the result the same way (from the log, via <see cref="ReplayScorer"/>) and none
 /// of them invents a score, a result, or a stat.
 /// </summary>
@@ -30,10 +30,18 @@ public static class MatchReporting
         Match match, ReplayScorer.AutoReport report, string? replayUrl, string? reporterId, CancellationToken ct,
         string? p1Export = null, string? p2Export = null)
     {
+        // Redo-safe: if this match already carries a recorded result (the same game
+        // re-played on our server, or a corrected replay), back the OLD result + stats
+        // out first, from its stored log, so we replace it rather than double-count.
+        // No-op when the match is still Pending (the normal first report).
+        await BackOutAsync(recorder, match, ct);
+
         match.Result = report.Outcome;
         match.HomeScore = report.HomeScore;
         match.AwayScore = report.AwayScore;
-        // Team exports, mapped from battle side (p1/p2) to home/away.
+        // Team exports, mapped from battle side (p1/p2) to home/away. Only overwrite
+        // when this report actually carries builds, so a redo that has them refreshes
+        // the stored ones and a build-less path leaves the last captured builds intact.
         if (report.HomeSide is not null && (p1Export is not null || p2Export is not null))
         {
             match.HomeTeamExport = report.HomeSide == "p1" ? p1Export : p2Export;
@@ -41,7 +49,7 @@ public static class MatchReporting
         }
         // An explicit URL wins (a coach pasted a real Showdown replay). Otherwise,
         // when we captured the log ourselves (the Showdown server's auto-report or a
-        // headless sim battle), point "Watch replay" at our local renderer — so an
+        // headless sim battle), point "Watch replay" at our local renderer, so an
         // auto-reported battle still gets a replay link, not just a score.
         if (replayUrl is not null) match.ReplayUrl = replayUrl;
         else if (!string.IsNullOrEmpty(report.Log)) match.ReplayUrl = $"/api/matches/{match.Id}/replay";
@@ -60,7 +68,7 @@ public static class MatchReporting
     /// <summary>
     /// Backs a match's currently-recorded result out of the standings and the stats
     /// page, using its STORED log (no re-fetch). No-op if the match is Pending. Does
-    /// NOT save — the caller persists after clearing the match fields.
+    /// NOT save, the caller persists after clearing the match fields.
     /// </summary>
     public static async Task BackOutAsync(MatchStatsRecorder recorder, Match match, CancellationToken ct)
     {

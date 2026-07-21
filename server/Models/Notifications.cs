@@ -4,7 +4,7 @@ public enum DevicePlatform { Android, IOS, Desktop }
 
 /// <summary>
 /// What happened. The mobile app switches on this to pick an icon,
-/// sound and deep link, so values are part of the app's contract —
+/// sound and deep link, so values are part of the app's contract,
 /// add new ones, don't renumber or repurpose existing ones.
 /// </summary>
 public enum NotificationKind
@@ -35,7 +35,7 @@ public enum NotificationKind
 }
 
 /// <summary>
-/// A push target registered by the Flutter app. One row per device per user —
+/// A push target registered by the Flutter app. One row per device per user,
 /// a coach with a phone and a desktop gets two.
 /// </summary>
 public class DeviceRegistration

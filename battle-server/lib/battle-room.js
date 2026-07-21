@@ -7,7 +7,7 @@ const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
  *
  * getPlayerStreams gives us a redacted stream per side (p1 never sees p2's
  * hidden info), a spectator stream (public view), and an omniscient stream
- * (everything — used here only to detect the result). This class is transport
+ * (everything, used here only to detect the result). This class is transport
  * agnostic: a WebSocket layer, the .NET bridge, or a test drives it entirely
  * through `on(channel, fn)` to receive protocol and `choose(side, decision)` to
  * submit moves. It knows nothing about how players are connected.
@@ -30,7 +30,7 @@ class BattleRoom {
     // Per-channel backlog. The sim starts emitting protocol the instant this
     // room is constructed, but a networked subscriber (a browser, a spectator
     // joining mid-battle) attaches several round-trips later and would miss the
-    // opening chunks — including the first request, which deadlocks the battle.
+    // opening chunks, including the first request, which deadlocks the battle.
     // We record each channel's chunks and replay them to any late subscriber.
     this._log = { p1: [], p2: [], spectator: [] };
     this._streams = getPlayerStreams(new BattleStream());
@@ -77,7 +77,7 @@ class BattleRoom {
   }
 
   // The omniscient feed is authoritative for the outcome. We never forward it to
-  // a player — it would leak hidden info — only mine it for the winner.
+  // a player, it would leak hidden info, only mine it for the winner.
   async _watchResult() {
     for await (const chunk of this._streams.omniscient) {
       for (const line of chunk.split('\n')) {

@@ -6,7 +6,7 @@ namespace DraftLeague.Web.Services;
 /// <summary>
 /// Bridge to <c>battle-server/scripts/random-teams.js</c>: turns a drafted roster
 /// into N random-but-legal packed Showdown teams, for the "pre-build my teams"
-/// option that seeds a coach's teambuilder. Best-effort — returns null if Node or
+/// option that seeds a coach's teambuilder. Best-effort, returns null if Node or
 /// the battle-server isn't available, so the teambuilder just opens with blank
 /// teams instead.
 /// </summary>
@@ -19,7 +19,7 @@ public class NodeTeamGenerator(IHostEnvironment env, ILogger<NodeTeamGenerator> 
     public Task<IReadOnlyList<string>?> GenerateAsync(IReadOnlyList<string> roster, int count, CancellationToken ct = default) =>
         roster.Count == 0 || count <= 0 ? Task.FromResult<IReadOnlyList<string>?>([]) : InvokeAsync(new { roster, count }, ct);
 
-    /// <summary>One random team per roster (batch — for demo teams across all players).</summary>
+    /// <summary>One random team per roster (batch, for demo teams across all players).</summary>
     public Task<IReadOnlyList<string>?> GenerateBatchAsync(IReadOnlyList<IReadOnlyList<string>> rosters, CancellationToken ct = default) =>
         rosters.Count == 0 ? Task.FromResult<IReadOnlyList<string>?>([]) : InvokeAsync(new { rosters }, ct);
 

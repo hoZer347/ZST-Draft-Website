@@ -63,7 +63,7 @@ public static class AuthApi
 
             // Configured Discord ids are admins. Applied on every sign-in so a
             // promotion takes effect on the next login without a DB edit; only
-            // promotes — it never demotes anyone set admin by other means.
+            // promotes, it never demotes anyone set admin by other means.
             var adminIds = config.GetSection("Admin:DiscordIds").Get<string[]>() ?? [];
             var shouldBeAdmin = adminIds.Contains(identity.Id);
 
@@ -82,7 +82,7 @@ public static class AuthApi
             }
             else
             {
-                // Refresh the cached display fields — usernames change.
+                // Refresh the cached display fields, usernames change.
                 user.Username = identity.Username;
                 user.AvatarHash = identity.Avatar;
                 user.LastLoginAt = DateTimeOffset.UtcNow;
@@ -90,7 +90,7 @@ public static class AuthApi
             }
             await db.SaveChangesAsync(ct);
 
-            // A new player just joined the roster — refresh it for everyone.
+            // A new player just joined the roster, refresh it for everyone.
             if (isNew) await notifier.PlayersChangedAsync(ct);
 
             var pair = await tokens.IssueAsync(user, req.DeviceLabel, ct);

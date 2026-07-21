@@ -6,7 +6,7 @@ const { seedTeams, FORMAT, MATCHUP_FOLDER, DEMO_FOLDER } = require('../lib/seed-
 
 // seedTeams is the single source of truth for what the Teambuilder pre-seeds into
 // localStorage. The invariant these guard (the exact thing the user asked for):
-//   • "Week N vs <opp>" teams are BLANK — the coach fills them, we never pre-fill.
+//   • "Week N vs <opp>" teams are BLANK, the coach fills them, we never pre-fill.
 //   • Demo teams are FILLED, and only appear when demo data is passed (i.e. the
 //     admin built them). Re-seeding overwrites; coach-made teams are never touched.
 
@@ -30,7 +30,7 @@ test('matchup weeks seed one BLANK team per matchup', () => {
   for (const l of lines) {
     assert.equal(l.format, FORMAT);
     assert.ok(l.key.startsWith(MATCHUP_FOLDER + '/Week '), 'in the season folder');
-    assert.equal(l.packed, '', 'the week team is blank — never pre-filled');
+    assert.equal(l.packed, '', 'the week team is blank, never pre-filled');
   }
   assert.deepEqual(lines.map((l) => l.key), [
     `${MATCHUP_FOLDER}/Week 1 vs Alice`,

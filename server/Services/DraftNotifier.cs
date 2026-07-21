@@ -11,7 +11,7 @@ namespace DraftLeague.Web.Services;
 /// the draft, and queued as a push notification for the mobile app.
 ///
 /// Browsers get everything, because the user is already looking at it. Push is
-/// rationed to things worth buzzing a pocket for — see ShouldPush.
+/// rationed to things worth buzzing a pocket for, see ShouldPush.
 /// </summary>
 public class DraftNotifier(
     AppDbContext db,
@@ -30,7 +30,7 @@ public class DraftNotifier(
             UserId = team.CoachId,
             Kind = NotificationKind.YourTurn,
             Title = "You're on the clock",
-            Body = $"{team.League.Name} — your pick is up.",
+            Body = $"{team.League.Name}, your pick is up.",
             DeepLink = $"draft/{draftId}",
             LeagueId = team.LeagueId,
         }, ct);
@@ -49,7 +49,7 @@ public class DraftNotifier(
             UserId = team.CoachId,
             Kind = NotificationKind.TurnWarning,
             Title = $"{label} left to pick",
-            Body = $"{team.League.Name} — you'll be auto-picked when the clock runs out.",
+            Body = $"{team.League.Name}, you'll be auto-picked when the clock runs out.",
             DeepLink = $"draft/{draftId}",
             LeagueId = team.LeagueId,
         }, ct);
@@ -77,7 +77,7 @@ public class DraftNotifier(
             UserId = "",
             Kind = NotificationKind.PickMade,
             Title = $"{team.Name} drafted {mon.Name}",
-            Body = $"{team.League.Name} — pick {pick.PickNumber}, {pick.Tier} tier.",
+            Body = $"{team.League.Name}, pick {pick.PickNumber}, {pick.Tier} tier.",
             DeepLink = $"draft/{pick.DraftId}",
             LeagueId = team.LeagueId,
         }, ct);
@@ -101,7 +101,7 @@ public class DraftNotifier(
             UserId = team.CoachId,
             Kind = NotificationKind.AutoPicked,
             Title = $"You were auto-picked {mon.Name}",
-            Body = $"{team.League.Name} — your clock expired on pick {pick.PickNumber}.",
+            Body = $"{team.League.Name}, your clock expired on pick {pick.PickNumber}.",
             DeepLink = $"draft/{pick.DraftId}",
             LeagueId = team.LeagueId,
         }, ct);
@@ -111,7 +111,7 @@ public class DraftNotifier(
             UserId = "",
             Kind = NotificationKind.PickMade,
             Title = $"{team.Name} auto-picked {mon.Name}",
-            Body = $"{team.League.Name} — pick {pick.PickNumber}, {pick.Tier} tier.",
+            Body = $"{team.League.Name}, pick {pick.PickNumber}, {pick.Tier} tier.",
             DeepLink = $"draft/{pick.DraftId}",
             LeagueId = team.LeagueId,
         }, ct);
@@ -127,7 +127,7 @@ public class DraftNotifier(
         var team = await LoadTeamAsync(teamId, ct);
         if (team is null) return;
 
-        // A rollback rewrites history under everyone's feet — tell the league.
+        // A rollback rewrites history under everyone's feet, tell the league.
         await FanOutToLeagueAsync(team.LeagueId, exceptUserId: null, new NotificationRecord
         {
             UserId = "",
@@ -150,9 +150,9 @@ public class DraftNotifier(
 
         var (title, body) = state switch
         {
-            DraftState.Running => ("Draft is live", $"{leagueName} — the draft has started."),
-            DraftState.Paused => ("Draft paused", $"{leagueName} — the draft was paused."),
-            DraftState.Complete => ("Draft complete", $"{leagueName} — every pick is in."),
+            DraftState.Running => ("Draft is live", $"{leagueName}, the draft has started."),
+            DraftState.Paused => ("Draft paused", $"{leagueName}, the draft was paused."),
+            DraftState.Complete => ("Draft complete", $"{leagueName}, every pick is in."),
             _ => (null, null),
         };
         if (title is null) return;
@@ -174,7 +174,7 @@ public class DraftNotifier(
         hub.Clients.All.SendAsync("playersChanged", new { }, ct);
 
     public Task ReadyChangedAsync(int draftId, CancellationToken ct = default) =>
-        // Someone readied up or left before the draft — refresh the ready button
+        // Someone readied up or left before the draft, refresh the ready button
         // and the roster's ready markers for everyone watching this draft.
         hub.Clients.Group(Group(draftId)).SendAsync("readyChanged", new { draftId }, ct);
 
@@ -207,7 +207,7 @@ public class DraftNotifier(
         if (coachIds.Count == 0) return;
 
         // One batched insert for the whole league, not a query+insert+commit per
-        // coach — that per-coach loop was the bulk of a pick's server time.
+        // coach, that per-coach loop was the bulk of a pick's server time.
         var records = coachIds.Select(coachId => new NotificationRecord
         {
             UserId = coachId,

@@ -11,7 +11,7 @@ namespace DraftLeague.Web.Tests;
 /// The dev-only <see cref="RandomSeasonSimulator"/>: a synthetic season driven
 /// through the real <see cref="DraftEngine"/> (offer a tier, then pick/skip). With
 /// realBattles:false it builds the draft + schedule but plays no games, so
-/// results/stats come only from real battles (or later-added replays) — the matches
+/// results/stats come only from real battles (or later-added replays), the matches
 /// stay Pending, with no scores and no stats. These assert that structure.
 /// </summary>
 public class RandomSeasonSimTests : DraftScenarioBase
@@ -32,7 +32,7 @@ public class RandomSeasonSimTests : DraftScenarioBase
         using (var scope = Factory.Services.CreateScope())
         {
             var sim = scope.ServiceProvider.GetRequiredService<RandomSeasonSimulator>();
-            // realBattles:false — no battles, so the test stays fast and offline (no
+            // realBattles:false, no battles, so the test stays fast and offline (no
             // Node/battle-server dependency).
             result = await sim.SimulateAsync(draftId, teamCount: 6, seed: 42, realBattles: false);
         }
@@ -49,7 +49,7 @@ public class RandomSeasonSimTests : DraftScenarioBase
 
         var picks = await db.Picks.Include(p => p.PokemonEntry).Where(p => p.DraftId == draftId).ToListAsync();
         Assert.Equal(60, picks.Count);
-        // The pool depletes — no mon drafted twice.
+        // The pool depletes, no mon drafted twice.
         Assert.Equal(picks.Count, picks.Select(p => p.PokemonEntryId).Distinct().Count());
 
         foreach (var team in picks.GroupBy(p => p.TeamId))
@@ -174,7 +174,7 @@ public class RandomSeasonSimTests : DraftScenarioBase
             draftId = draft.Id; leagueId = draft.LeagueId;
 
             // Controlled pool: keep enough distinct S/A/B, and rebuild C with regular
-            // mons plus the three Tera-barred kinds — a mega by "M-" name, a mega by
+            // mons plus the three Tera-barred kinds, a mega by "M-" name, a mega by
             // "-mega" sprite, and Shedinja. Only C draws a Tera at all.
             db.Pokemon.RemoveRange(await db.Pokemon.Where(p => p.LeagueId == leagueId).ToListAsync());
             void Add(Tier t, int dex, string name, string sprite) =>

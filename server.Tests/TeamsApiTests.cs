@@ -35,14 +35,14 @@ public class TeamsApiTests : DraftScenarioBase
 
         var c1 = await Factory.SignedInAsAsync("coach-1");
         var c2 = await Factory.SignedInAsAsync("coach-2");
-        await Factory.SignedInAsAsync("coach-3"); // signs in but never readies — excluded
+        await Factory.SignedInAsAsync("coach-3"); // signs in but never readies, excluded
         await ReadyAsync(c1, draftId);
         await ReadyAsync(c2, draftId);
 
         var body = await admin.GetFromJsonAsync<JsonElement>("/api/teams/demo");
         var teams = body.GetProperty("teams").EnumerateArray().ToList();
 
-        // One per readied player — the un-readied coach-3 does not appear.
+        // One per readied player, the un-readied coach-3 does not appear.
         Assert.Equal(2, teams.Count);
         Assert.All(teams, t =>
         {

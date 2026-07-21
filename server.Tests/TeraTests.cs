@@ -6,11 +6,11 @@ namespace DraftLeague.Web.Tests;
 /// <summary>
 /// The C-tier Tera-type mechanic: only C-tier options roll a Tera type, it's one
 /// of the 19 known types, and the type a coach was offered is the one that sticks
-/// to the pick — through the pick history and the team preview both.
+/// to the pick, through the pick history and the team preview both.
 /// </summary>
 public class TeraTests : DraftScenarioBase
 {
-    // The 18 elemental types plus Stellar — mirrors DraftEngine.TeraTypes.
+    // The 18 elemental types plus Stellar, mirrors DraftEngine.TeraTypes.
     private static readonly HashSet<string> KnownTeraTypes = new(StringComparer.Ordinal)
     {
         "Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison", "Ground",
@@ -125,7 +125,7 @@ public class TeraTests : DraftScenarioBase
 
         var pick = (await StateAsync(admin, draftId)).GetProperty("picks").EnumerateArray()
             .Single(p => Int(p, "pokemonEntryId") == chosenId);
-        // The pick keeps the exact type it was offered with — not a fresh roll.
+        // The pick keeps the exact type it was offered with, not a fresh roll.
         Assert.Equal(offeredTera, Str(pick, "teraType"));
     }
 

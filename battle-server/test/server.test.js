@@ -14,7 +14,7 @@ async function boot() {
   return { url: `ws://${host}:${port}`, http: `http://${host}:${port}`, server };
 }
 
-// A player socket that answers every non-wait request with a legal default —
+// A player socket that answers every non-wait request with a legal default,
 // enough to play a battle to its end over the wire.
 function autoPlayer(url, matchId, side) {
   const ws = new WebSocket(url);

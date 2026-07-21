@@ -7,7 +7,10 @@
 // so a "random season" produces genuine, recordable stats instead of made-up ones.
 //
 //   stdin : { "matches": [ { "homeTeam": [slug,...], "awayTeam": [slug,...] }, ... ] }
-//   stdout: [ { "winner": "p1"|"p2"|null, "turns": N, "log": "<full battle log>" }, ... ]
+//   stdout: [ { "winner": "p1"|"p2"|null, "turns": N, "log": "<full battle log>",
+//              "p1Export": "<pokepaste>", "p2Export": "<pokepaste>" }, ... ]
+// The two exports are each side's ACTUAL random build, so the season simulator stores
+// them on the match exactly like a real reported game does (the Team build links).
 //
 // Both sides are driven by a RandomPlayerAI that picks a random legal MOVE each
 // turn and never voluntarily switches. The one gimmick it takes is Terastallization:
@@ -15,7 +18,7 @@
 // TeraPlayerAI + buildTeamWithTera), matching how the league plays C-tier tera.
 // Forced switches after a faint still happen.
 
-const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
+const { BattleStream, getPlayerStreams, Teams } = require('pokemon-showdown');
 const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
 const { buildTeamWithTera } = require('../lib/random-team');
 
@@ -81,11 +84,19 @@ class TeraPlayerAI extends RandomPlayerAI {
 // The ZST Season 4 format is National Dex DOUBLES. The headless sim uses a
 // doubles custom game (gen9's dex → megas usable; no tier banlist, so the draft
 // pool decides legality; no learnset validation for the random movesets). Endless
-// Battle Clause so a stall can't hang the run — it bans no moves, so it never
+// Battle Clause so a stall can't hang the run, it bans no moves, so it never
 // rejects a random team.
 const FORMAT = 'gen9doublescustomgame@@@Endless Battle Clause';
 const BRING = 6;        // straight doubles: bring 6, two active at a time (NOT VGC's bring-6-pick-4)
 const MAX_TURNS = 1000; // backstop in case a battle somehow never resolves
+
+// Export a packed team to pokepaste / Showdown import text, so the season simulator
+// can store each side's ACTUAL build on the match (the same builds a real reported
+// game captures). Best-effort: any hiccup just yields null and the battle still records.
+function exportTeam(packed) {
+  try { return Teams.export(Teams.unpack(packed)) || null; }
+  catch { return null; }
+}
 
 async function runBattle(match) {
   const streams = getPlayerStreams(new BattleStream());
@@ -103,7 +114,7 @@ async function runBattle(match) {
   let winnerName = null;
   let turns = 0;
   const lines = [];
-  // Read the SPECTATOR stream (the clean public battle log — no |split|/|request|
+  // Read the SPECTATOR stream (the clean public battle log, no |split|/|request|
   // noise), so the same string both scrapes into stats AND renders as a replay.
   const done = (async () => {
     for await (const chunk of streams.spectator) {
@@ -131,7 +142,10 @@ async function runBattle(match) {
   const id = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const winner = id(winnerName) === id(p1.name) ? 'p1'
     : id(winnerName) === id(p2.name) ? 'p2' : null;
-  return { winner, turns, log: lines.join('\n') };
+  return {
+    winner, turns, log: lines.join('\n'),
+    p1Export: exportTeam(home.team), p2Export: exportTeam(away.team),
+  };
 }
 
 function readStdin() {

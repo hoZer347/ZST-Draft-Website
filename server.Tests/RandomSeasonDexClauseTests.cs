@@ -120,8 +120,8 @@ public class RandomSeasonDexClauseTests : DraftScenarioBase
                 var others = JsonSerializer.Deserialize<List<JsonElement>>(p.OtherOptions!)!;
                 // The passed run is simply the rest of that turn's real offer: every
                 // option shares the pick's tier and none is the picked mon itself. Two
-                // forms of one species CAN appear — the live engine offers unheld forms
-                // without de-duping — so, unlike the drafted rosters, this run isn't
+                // forms of one species CAN appear, the live engine offers unheld forms
+                // without de-duping, so, unlike the drafted rosters, this run isn't
                 // dex-unique, and we don't assert that it is.
                 foreach (var o in others)
                 {

@@ -9,7 +9,7 @@ namespace DraftLeague.Web.Api;
 /// Analytics over a league's draft: which mons were snapped up the instant they
 /// were offered, which were passed over the most, and how Tera types fared among
 /// chosen picks vs rejected options. Everything is derived from the picks + skips
-/// and their OtherOptions snapshots — the options offered but not taken each turn —
+/// and their OtherOptions snapshots, the options offered but not taken each turn,
 /// so nothing here is stored separately; it's a read-only view over the draft.
 /// </summary>
 public static class DraftStatsApi
@@ -138,7 +138,7 @@ public static class DraftStatsApi
                 .Select(x => new { name = x.Name, sprite = x.Sprite, dexNumber = x.Dex, tier = x.Tier, trainer = x.Trainer, rejections = x.Rej, mine = Mine(x.CoachId) })
                 .ToList();
 
-            // Undraftables: pool mons that never appeared in a single offer — not
+            // Undraftables: pool mons that never appeared in a single offer, not
             // drafted, and never once shown as an option to anyone. Ordered by tier
             // (S→A→B→C) then name. The mons that decided they weren't gonna show up.
             var appeared = new HashSet<string>(drafted.Keys, cmp);

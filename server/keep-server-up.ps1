@@ -4,18 +4,18 @@
 # Startup folder). Every few seconds it relaunches the server if it isn't up,
 # unless the pause flag exists. During a rebuild the server must be stopped to
 # unlock the exe, so the rebuild flow creates `.server-paused` before killing
-# the server and deletes it after — while that file exists the watchdog stands
+# the server and deletes it after, while that file exists the watchdog stands
 # down and relaunches nothing.
 #
 # Identity: on start it writes its own PID to `.watchdog.pid`, and every loop it
 # overwrites `.watchdog.alive` with a timestamp. Manage the watchdog through
-# those files — NEVER by string-matching command lines, because a management
+# those files, NEVER by string-matching command lines, because a management
 # command that mentions this script's name matches (and would kill) itself.
 
 $ErrorActionPreference = 'Continue'
 $root  = $PSScriptRoot
 # Run a RENAMED COPY (DraftLeagueLive.exe) from run/, NOT the build output. The
-# VS Code C# Dev Kit hard-kills the running server so it can rebuild — and it
+# VS Code C# Dev Kit hard-kills the running server so it can rebuild, and it
 # targets it by PROCESS NAME ("DraftLeague.Web"), so a same-named copy in run/
 # still got killed. DraftLeagueLive.exe is the same apphost renamed (it still
 # loads DraftLeague.Web.dll by the DLL's embedded name), so its process name is
@@ -56,7 +56,7 @@ Log "watchdog start (pid $PID); root=$root exe-exists=$(Test-Path $exe)"
 # serving when we walk away. The system never sleeps or hibernates and disks
 # stay spun up; only the monitor is allowed to power off (where most of the
 # visible savings are anyway, and it doesn't touch the server). Done once at
-# startup — the settings persist, so no need to reassert each loop.
+# startup, the settings persist, so no need to reassert each loop.
 try {
     & powercfg /change standby-timeout-ac 0    # never sleep
     & powercfg /change hibernate-timeout-ac 0  # never hibernate
@@ -80,7 +80,7 @@ while ($true) {
                 Log "relaunched server"
             }
         }
-        # Keep the Cloudflare tunnel up too — independent of the rebuild pause,
+        # Keep the Cloudflare tunnel up too, independent of the rebuild pause,
         # since the tunnel doesn't lock the build output.
         $cf = Get-Process -Name 'cloudflared' -ErrorAction SilentlyContinue
         if (-not $cf -and (Test-Path $cloudflared)) {

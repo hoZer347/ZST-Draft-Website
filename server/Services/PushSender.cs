@@ -7,7 +7,7 @@ namespace DraftLeague.Web.Services;
 /// <summary>
 /// Delivers a queued notification to one device. Implemented against Firebase
 /// Cloud Messaging, which covers Android, iOS and desktop Flutter from one
-/// provider — see PUSH_SETUP.md.
+/// provider, see PUSH_SETUP.md.
 /// </summary>
 public interface IPushSender
 {
@@ -29,7 +29,7 @@ public class LoggingPushSender(ILogger<LoggingPushSender> log) : IPushSender
     public Task<(bool, bool, string?)> SendAsync(
         DeviceRegistration device, NotificationRecord n, CancellationToken ct = default)
     {
-        log.LogInformation("[push:{Platform}] -> {User}: {Title} — {Body} ({Link})",
+        log.LogInformation("[push:{Platform}] -> {User}: {Title}, {Body} ({Link})",
             device.Platform, n.UserId, n.Title, n.Body, n.DeepLink);
         return Task.FromResult<(bool, bool, string?)>((true, false, null));
     }
@@ -93,7 +93,7 @@ public class PushDispatcher(
         {
             if (!byUser.TryGetValue(n.UserId, out var targets) || targets.Count == 0)
             {
-                // No device registered. Mark sent so it stops being retried —
+                // No device registered. Mark sent so it stops being retried,
                 // it still shows in the in-app history when they next log in.
                 n.SentAt = DateTimeOffset.UtcNow;
                 continue;

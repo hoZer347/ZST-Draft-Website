@@ -7,7 +7,7 @@ namespace DraftLeague.Web.Services;
 /// Development-only bridge to the headless Showdown battle runner in
 /// <c>battle-server/scripts/simulate-season.js</c>. Given a set of matchups (each
 /// side a list of pool species slugs), it spawns Node once, streams the spec in,
-/// and reads back one real battle log per match — which the season simulator then
+/// and reads back one real battle log per match, which the season simulator then
 /// feeds through the normal replay-stats pipeline.
 ///
 /// Best-effort: any failure (Node missing, battle-server not installed, a crash)
@@ -43,7 +43,7 @@ public class NodeBattleSimulator(IHostEnvironment env, ILogger<NodeBattleSimulat
             matches = matches.Select(m => new
             {
                 homeName = m.HomeName, awayName = m.AwayName,
-                // { s: slug, t: teraType|null } per mon — see TeamMon.
+                // { s: slug, t: teraType|null } per mon, see TeamMon.
                 homeTeam = m.HomeTeam.Select(x => new { s = x.Slug, t = x.TeraType }),
                 awayTeam = m.AwayTeam.Select(x => new { s = x.Slug, t = x.TeraType }),
             }),

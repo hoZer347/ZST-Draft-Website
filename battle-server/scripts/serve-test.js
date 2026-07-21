@@ -14,7 +14,7 @@ const TEAM_A = ['charizard-megay', 'venusaur', 'blastoise-mega', 'butterfree', '
 const TEAM_B = ['venusaur-mega', 'charizard', 'wartortle', 'blastoise', 'charizard-megax', 'weedle'];
 
 // A client that joins a side and answers every non-wait request with a legal
-// default action — enough to play a battle to its end over the socket.
+// default action, enough to play a battle to its end over the socket.
 function autoClient(url, matchId, side) {
   const ws = new WebSocket(url);
   ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'join', matchId, side })));

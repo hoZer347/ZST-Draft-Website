@@ -41,7 +41,7 @@ public class DraftLeagueFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.ConfigureServices(services =>
         {
             // The app registers AppDbContext against the real draftleague.db.
-            // Tests must never touch it — a stray write would corrupt the dev
+            // Tests must never touch it, a stray write would corrupt the dev
             // data the app is running on.
             var descriptor = services.SingleOrDefault(
                 d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));
@@ -63,7 +63,7 @@ public class DraftLeagueFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     /// <summary>
     /// A client authenticated as a seeded coach, via the Development-only
-    /// /dev/token endpoint — no Discord round trip.
+    /// /dev/token endpoint, no Discord round trip.
     /// </summary>
     public async Task<HttpClient> SignedInAsAsync(string discordId, bool admin = false)
     {

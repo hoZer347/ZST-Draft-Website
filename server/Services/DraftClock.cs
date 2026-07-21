@@ -8,7 +8,7 @@ namespace DraftLeague.Web.Services;
 /// Drives every running draft's pick clock.
 ///
 /// The Python version spawned a thread per draft that slept in one-second
-/// increments and held the remaining time in memory — so a restart reset
+/// increments and held the remaining time in memory, so a restart reset
 /// every clock, and N drafts meant N threads. This is a single background
 /// service that compares each draft's persisted deadline against the wall
 /// clock, which survives restarts and scales to any number of drafts.

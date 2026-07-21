@@ -22,7 +22,7 @@ public static class PlayersApi
         g.MapGet("/", async (AppDbContext db, CancellationToken ct) =>
         {
             // The reserved admin oversees the league without appearing as a
-            // player — UNLESS they've opted in by readying up or already hold a
+            // player, UNLESS they've opted in by readying up or already hold a
             // team, in which case they're a coach like anyone else and belong in
             // the roster.
             var adminPlays =
@@ -62,7 +62,7 @@ public static class PlayersApi
 
             // Devices, notifications and preferences key on the Discord id as a
             // plain string, not a foreign key, so deleting the User doesn't
-            // cascade to them — clear them explicitly. Refresh tokens do cascade
+            // cascade to them, clear them explicitly. Refresh tokens do cascade
             // (they hold the User's int id), so removing the user ends every
             // session. Teams keep their CoachId string; a reclaim re-links it.
             await db.DeviceRegistrations.Where(d => d.UserId == discordId).ExecuteDeleteAsync(ct);
@@ -71,11 +71,11 @@ public static class PlayersApi
 
             db.Users.Remove(user);
             await db.SaveChangesAsync(ct);
-            await notifier.PlayersChangedAsync(ct); // roster shrank — refresh everyone
+            await notifier.PlayersChangedAsync(ct); // roster shrank, refresh everyone
             return Results.NoContent();
         }).RequireAuthorization(p => p.RequireRole("admin"));
 
-        // A player's full drafted team, with each mon's battle profile — the
+        // A player's full drafted team, with each mon's battle profile, the
         // team page opens this when you click a name in the roster. Empty until
         // that player has a team (created at Start) and has drafted.
         g.MapGet("/{discordId}/team", async (string discordId, AppDbContext db, CancellationToken ct) =>
@@ -154,7 +154,7 @@ public static class PlayersApi
         });
 
         // The signed-in player updates their own team customisation (name, icon,
-        // Showdown handle). You can only edit your own — identity is the JWT.
+        // Showdown handle). You can only edit your own, identity is the JWT.
         g.MapPost("/me/profile", async (
             UpdateProfileRequest req, ClaimsPrincipal me, AppDbContext db, IDraftNotifier notifier, CancellationToken ct) =>
         {
@@ -165,7 +165,7 @@ public static class PlayersApi
 
             user.TeamName = Clean(req.TeamName, 40);
             user.ShowdownName = Clean(req.ShowdownName, 40);
-            // Only accept an http(s) URL as an icon — a bare string would render
+            // Only accept an http(s) URL as an icon, a bare string would render
             // as a broken image and could smuggle a javascript: URL.
             var icon = Clean(req.TeamIcon, 500);
             user.TeamIcon = icon is not null && (icon.StartsWith("https://") || icon.StartsWith("http://")) ? icon : null;

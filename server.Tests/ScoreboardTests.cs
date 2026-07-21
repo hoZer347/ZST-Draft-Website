@@ -146,7 +146,7 @@ public class ScoreboardTests : IAsyncLifetime
             //         name  k  d  active dealt taken heal    presence  +/-  ratio  heal
             AddMon(db, draft, league, solo, "m1", 10, 1, 90, 200, 100, 50); // .90   9    2.0    50
             AddMon(db, draft, league, solo, "m2", 8, 2, 80, 150, 50, 40);   // .80   6    3.0    40
-            AddMon(db, draft, league, solo, "m3", 6, 6, 70, 50, 0, 30);     // .70   0    inf    30
+            AddMon(db, draft, league, solo, "m3", 6, 6, 70, 50, 0, 30);     // .70   0    51.0   30  (ratio now (d+1)/(t+1))
             AddMon(db, draft, league, solo, "m4", 4, 1, 60, 100, 200, 20);  // .60   3    0.5    20
             AddMon(db, draft, league, solo, "m5", 2, 5, 50, 10, 100, 10);   // .50  -3    0.1    10
             AddMon(db, draft, league, solo, "m6", 1, 1, 40, 0, 0, 5);       // .40   0    0      5
@@ -170,17 +170,18 @@ public class ScoreboardTests : IAsyncLifetime
         // proves that self-recovery is excluded.
         Assert.Equal(new[] { "m1", "m2", "m3", "m4", "m5" }, Names("healing"));
         Assert.Equal(50.0, leaders.GetProperty("healing").EnumerateArray().First().GetProperty("value").GetDouble(), 3);
-        // Damage ratio = dealt / taken; m3 took no damage -> infinite, ranked 1st.
-        Assert.Equal(new[] { "m3", "m2", "m1", "m4", "m5" }, Names("damageRatio"));
+        // Damage ratio = (dealt+1)/(taken+1). m3 (51/1=51) leads; m6 (0 dealt, 0 taken
+        // -> 1/1=1.0) now ranks above m4 (101/201) and m5 (11/101). Top-5 drops m5.
+        Assert.Equal(new[] { "m3", "m2", "m1", "m6", "m4" }, Names("damageRatio"));
 
         var topPres = leaders.GetProperty("presence").EnumerateArray().First();
         Assert.Equal(0.90, topPres.GetProperty("value").GetDouble(), 3);
         Assert.Equal("Solo", topPres.GetProperty("trainer").GetString()); // trainer travels with the mon
 
-        // Infinite ratio serializes as null; the next entry is a finite 3.0.
+        // The +1 smoothing gives a finite ratio even when a mon took no damage.
         var ratios = leaders.GetProperty("damageRatio").EnumerateArray().ToList();
-        Assert.Equal(JsonValueKind.Null, ratios[0].GetProperty("value").ValueKind);
-        Assert.Equal(3.0, ratios[1].GetProperty("value").GetDouble(), 3);
+        Assert.Equal(51.0, ratios[0].GetProperty("value").GetDouble(), 3);        // m3: (50+1)/(0+1)
+        Assert.Equal(151.0 / 51.0, ratios[1].GetProperty("value").GetDouble(), 3); // m2: (150+1)/(50+1)
 
         Assert.Equal(9, leaders.GetProperty("plusMinus").EnumerateArray().First().GetProperty("value").GetDouble());
     }

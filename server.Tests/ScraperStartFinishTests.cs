@@ -1,7 +1,7 @@
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The Started (led the battle — thrown out first) and Finished (still on the field,
+/// The Started (led the battle, thrown out first) and Finished (still on the field,
 /// not fainted, when the game ended) flags the scraper sets per game, which feed the
 /// "Starts" and "Finished" season stats.
 /// </summary>
@@ -69,7 +69,7 @@ public class ScraperStartFinishTests
     {
         var run = ReplayLogRunner.Run(BenchReplacementLog);
 
-        // Snorlax came in AFTER turn 1, so it never led — but it was standing at the end.
+        // Snorlax came in AFTER turn 1, so it never led, but it was standing at the end.
         Assert.False(run.Of("Snorlax").Started);
         Assert.True(run.Of("Snorlax").Finished);
 

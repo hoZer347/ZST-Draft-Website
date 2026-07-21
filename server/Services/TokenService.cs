@@ -23,7 +23,7 @@ public class JwtOptions
     public string Issuer { get; set; } = "draft-league";
     public string Audience { get; set; } = "draft-league";
 
-    /// <summary>Short by design — a JWT can't be revoked once issued.</summary>
+    /// <summary>Short by design, a JWT can't be revoked once issued.</summary>
     public int AccessTokenMinutes { get; set; } = 30;
 
     public int RefreshTokenDays { get; set; } = 30;
@@ -70,7 +70,7 @@ public class TokenService(AppDbContext db, IConfiguration config)
 
         var access = new JwtSecurityTokenHandler().WriteToken(jwt);
 
-        // 256 bits from a CSPRNG — this value is a bearer credential.
+        // 256 bits from a CSPRNG, this value is a bearer credential.
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
         db.RefreshTokens.Add(new RefreshToken

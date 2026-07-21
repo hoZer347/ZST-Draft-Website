@@ -13,7 +13,7 @@ public interface INotificationQueue
     Task EnqueueAsync(NotificationRecord record, CancellationToken ct = default);
 
     /// <summary>
-    /// Persists many notifications in a single round trip — one preference query
+    /// Persists many notifications in a single round trip, one preference query
     /// and one save for the whole batch. Used by the league fan-out, which would
     /// otherwise issue a query+insert+commit per coach and stall the request that
     /// triggered it (e.g. a draft pick waiting on a dozen sequential writes).

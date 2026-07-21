@@ -1,7 +1,7 @@
 'use strict';
 
 // Generates random-but-legal packed teams from a drafted roster, for the draft
-// app's "pre-build my teams" option — it seeds a coach's teambuilder with a ready
+// app's "pre-build my teams" option, it seeds a coach's teambuilder with a ready
 // starter team per week that they can then edit. Same builder the headless sim
 // uses (lib/random-team.js): even EVs, neutral nature, random ability, random 4
 // moves from the movepool, random item unless mega.

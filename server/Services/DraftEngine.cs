@@ -27,7 +27,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     /// <summary>How many times a coach may skip (defer) a pick over the draft.</summary>
     public const int MaxSkipsPerTeam = 5;
 
-    /// <summary>The 18 types plus Stellar — the pool a C-tier option's Tera type
+    /// <summary>The 18 types plus Stellar, the pool a C-tier option's Tera type
     /// is rolled from.</summary>
     private static readonly string[] TeraTypes =
     [
@@ -41,7 +41,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     /// Some C-tier mons are barred from a Tera type by league rule: megas (they
     /// already transform, so a Tera on top is too much) and Shedinja specifically
     /// (Tera would give its 1-HP shell a real defensive typing). Megas are the
-    /// "M-" name prefix or a "-mega" sprite slug — matched WITH the hyphen so a
+    /// "M-" name prefix or a "-mega" sprite slug, matched WITH the hyphen so a
     /// species that merely contains "mega" (Meganium, Yanmega) isn't caught.
     /// Shedinja is matched by name.
     /// </summary>
@@ -75,7 +75,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             if (RemainingSlots(draft, teamId, tier) <= 0)
                 return DraftActionResult.Fail($"No {tier} tier slots remaining");
 
-            // Already offered this turn — return the same set rather than reroll.
+            // Already offered this turn, return the same set rather than reroll.
             if (draft.Offered.Count > 0)
             {
                 if (draft.Offered[0].Tier == tier) return DraftActionResult.Success();
@@ -83,7 +83,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             }
 
             // A team can't be offered a mon that shares a national dex number with
-            // one it already holds — that would stack alternate forms of the same
+            // one it already holds, that would stack alternate forms of the same
             // species (megas, regional/gender forms). Dex numbers come straight
             // from the sheet; 0 means "unset" and is ignored so it can't block.
             var teamDex = await TeamDexNumbersAsync(teamId, ct);
@@ -104,7 +104,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                     DraftId = draft.Id,
                     PokemonEntryId = p.Id,
                     Tier = tier,
-                    // C tier draws a Tera type; other tiers don't have one — and
+                    // C tier draws a Tera type; other tiers don't have one, and
                     // megas / Shedinja are barred even in C (see TeraBarred).
                     TeraType = RollTera(tier, p.Name, p.Sprite),
                 });
@@ -194,7 +194,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 }
             }
 
-            // If they already opened a tier, honour it — they were mid-decision.
+            // If they already opened a tier, honour it, they were mid-decision.
             var tiers = draft.Offered.Count > 0
                 ? [draft.Offered[0].Tier]
                 : new[] { Tier.C, Tier.B, Tier.A, Tier.S };
@@ -221,7 +221,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
                     // Randomise client-side. Ordering by Guid.NewGuid() is a SQL
                     // Server idiom that EF cannot translate for SQLite, and it
-                    // threw on every tick — silently wedging the whole clock.
+                    // threw on every tick, silently wedging the whole clock.
                     var candidates = await db.Pokemon
                         .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier && p.DraftedByTeamId == null
                                     && !teamDex.Contains(p.DexNumber))
@@ -246,7 +246,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 return DraftActionResult.Success(pick);
             }
 
-            // Nothing eligible anywhere — skip rather than stall the draft.
+            // Nothing eligible anywhere, skip rather than stall the draft.
             log.LogWarning("Skipping pick {Index} in draft {Draft}: no eligible pokemon for team {Team}",
                 draft.CurrentIndex, draftId, teamId);
 
@@ -288,7 +288,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             {
                 DraftId = draft.Id, TeamId = teamId,
                 AfterPickNumber = draft.Picks.Count, WasAuto = false,
-                // They passed on everything offered this turn — snapshot it for the feed.
+                // They passed on everything offered this turn, snapshot it for the feed.
                 OtherOptions = OfferedSnapshot(draft),
             });
             db.OfferedOptions.RemoveRange(draft.Offered);
@@ -322,7 +322,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             db.OfferedOptions.RemoveRange(draft.Offered);
 
             // Put the clock back on the coach who made that pick, not just one
-            // position back — Advance may have auto-skipped finished teams after
+            // position back, Advance may have auto-skipped finished teams after
             // the pick, so the previous position isn't necessarily theirs.
             var pickerSlot = draft.Order
                 .Where(s => s.Position < draft.CurrentIndex && s.TeamId == last.TeamId)
@@ -371,7 +371,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             draft.League.SeasonWeeks = League.DefaultSeasonWeeks;
             draft.League.PickTimerSeconds = League.DefaultPickTimerSeconds;
 
-            // The schedule is downstream of the draft — clear it too, so a re-run
+            // The schedule is downstream of the draft, clear it too, so a re-run
             // starts from a clean slate rather than fixtures for teams that are
             // about to re-draft.
             await db.Matches.Where(m => m.LeagueId == draft.LeagueId).ExecuteDeleteAsync(ct);
@@ -397,7 +397,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
     /// <summary>
     /// Starts the draft, building the roster and snake order from whoever has
-    /// signed in — not a fixed seeded set. Every real user (the reserved admin
+    /// signed in, not a fixed seeded set. Every real user (the reserved admin
     /// excluded) gets a team if they don't already have one, and the order is
     /// rebuilt over those teams so a restart picks up anyone who joined since.
     /// </summary>
@@ -441,7 +441,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 }
                 else
                 {
-                    // Keep both fresh — a team first created before the user had a
+                    // Keep both fresh, a team first created before the user had a
                     // proper display name (e.g. a /dev/token sign-in names them
                     // after their id) would otherwise stay stuck showing the id.
                     team.Name = u.Username;
@@ -453,14 +453,14 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             await db.SaveChangesAsync(ct); // assign team ids before wiring the order
 
             // Rebuild the snake order. Each team owes Σ SlotsPerTeam picks, plus
-            // up to MaxSkipsPerTeam deferrals — so lay down that many rounds and
+            // up to MaxSkipsPerTeam deferrals, so lay down that many rounds and
             // every team is guaranteed enough turns to fill even if it skips the
             // maximum. Finished teams' surplus turns are auto-skipped in Advance.
             db.DraftSlots.RemoveRange(draft.Order);
             draft.Order.Clear();
             // Randomise who drafts first: shuffle the roster (Fisher-Yates via
             // Random.Shared) so the snake order doesn't just follow the order coaches
-            // readied up in. `roster` itself is left untouched — it's reused below only
+            // readied up in. `roster` itself is left untouched, it's reused below only
             // as an id set, which doesn't care about order.
             var order = roster.ToArray();
             Random.Shared.Shuffle(order);
@@ -480,7 +480,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
             // A real draft's league contains exactly this roster. Starting the draft
             // begins a fresh season, so clear the previous schedule + the standings it
-            // fed, and delete any team lingering from a prior run — most often the
+            // fed, and delete any team lingering from a prior run, most often the
             // "Sim Coach" teams a simulated season leaves behind. Without this the
             // round-robin laid down next (ScheduleApi.GenerateAsync schedules EVERY
             // team in the league, and skips a league that already has results) would
@@ -545,7 +545,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
 
     /// <summary>
     /// A sample of the lowest tier a team still owes, in a pick's OtherOptions JSON
-    /// shape — so a timed-out auto-skip where the coach never opened a tier still
+    /// shape, so a timed-out auto-skip where the coach never opened a tier still
     /// shows the options they lapsed on. Walks C -> S (least valuable first, like
     /// the auto-pick fallback), honouring the dex-number guard. Null if nothing is
     /// draftable anywhere.
@@ -588,7 +588,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             .Include(d => d.Skips)
             // Split query: these are several independent collections (Order, Picks,
             // Offered, TierRules). Loaded in one SQL statement they'd cartesian-
-            // multiply — Order × Picks rows — so each pick's load grew with the
+            // multiply, Order × Picks rows, so each pick's load grew with the
             // draft. Separate queries keep every load proportional to the data.
             .AsSplitQuery()
             .FirstOrDefaultAsync(d => d.Id == draftId, ct);
@@ -615,7 +615,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             .Distinct()
             .ToListAsync(ct);
 
-    /// <summary>Total picks a full roster holds — the sum of every tier's slots.</summary>
+    /// <summary>Total picks a full roster holds, the sum of every tier's slots.</summary>
     private static int TotalSlots(Draft draft) => draft.League.TierRules.Sum(r => r.SlotsPerTeam);
 
     /// <summary>
@@ -633,7 +633,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
         var pick = new Pick
         {
             DraftId = draft.Id,
-            // Sequential over actual picks, not the position index — with skips
+            // Sequential over actual picks, not the position index, with skips
             // and auto-skips the index is sparse, which would leave gaps in the
             // "#N" pick numbering.
             PickNumber = draft.Picks.Count + 1,
@@ -643,7 +643,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             WasAutoPick = auto,
             TeraType = teraType,
         };
-        // Snapshot the options offered but not taken, before they're cleared —
+        // Snapshot the options offered but not taken, before they're cleared,
         // the pick feed shows what the coach passed on.
         var others = draft.Offered
             .Where(o => o.PokemonEntryId != pokemonId && o.PokemonEntry is not null)
@@ -657,7 +657,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             })
             .ToList();
         // An auto-pick where the coach never opened a tier has nothing offered to
-        // snapshot — so sample the same tier's still-available mons to fill the
+        // snapshot, so sample the same tier's still-available mons to fill the
         // "passed" run, matching what a manual pick on that tier would have shown.
         if (others.Count == 0 && auto)
         {
@@ -692,8 +692,8 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
         draft.CurrentIndex++;
 
         // Cycle forward to the next team that still owes picks. Teams that have
-        // already filled their roster — whether they finished early or deferred
-        // with skips and then filled up — are silently passed over. The draft is
+        // already filled their roster, whether they finished early or deferred
+        // with skips and then filled up, are silently passed over. The draft is
         // done the moment every roster is full (or, as a backstop, when the laid-
         // down order runs out).
         while (true)
@@ -708,7 +708,7 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             var teamId = CurrentTeamId(draft);
             if (teamId is not null && IsRosterFull(draft, teamId.Value))
             {
-                draft.CurrentIndex++; // finished team — skip their turn
+                draft.CurrentIndex++; // finished team, skip their turn
                 continue;
             }
 

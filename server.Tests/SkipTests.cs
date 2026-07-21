@@ -219,7 +219,7 @@ public class SkipTests : DraftScenarioBase
 
         // Open a HIGHER tier (B) than the auto-skip fallback would pick, then let
         // the window lapse. The passed run must be the B options they actually
-        // opened — not the C fallback.
+        // opened, not the C fallback.
         (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/offer", new { teamId = onClock, tier = B }))
             .EnsureSuccessStatusCode();
         var offered = await OfferedIdsAsync(admin, draftId);

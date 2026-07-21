@@ -9,8 +9,8 @@ namespace DraftLeague.Web.Tests;
 /// <summary>
 /// Mega-evolution attribution: a mon drafted as its Mega form (name "M-Charizard-X",
 /// sprite "charizard-megax") appears in the replay under its BASE species and, when
-/// it Mega-evolves, switches species mid-battle. Every stat — before evolving, after
-/// evolving, or if it never evolves or never leaves the bench — must land on the ONE
+/// it Mega-evolves, switches species mid-battle. Every stat, before evolving, after
+/// evolving, or if it never evolves or never leaves the bench, must land on the ONE
 /// drafted Pick's PokemonStat row (the row the stats page reads), never split across
 /// a phantom "base" and "mega" entry, and never leaking to a teammate.
 ///
@@ -274,7 +274,7 @@ public class MegaStatsTests(DraftLeagueFactory factory) : IClassFixture<DraftLea
         // 40 (first stint, as mega) + 40 (after coming back in as the mega species) = 80.
         Assert.Equal(80, char_!.DamageDealtDirect, 2);
         Assert.Equal(1, char_.GamesPlayed);
-        // Exactly one row — the base and mega species names never spawn a second entry.
+        // Exactly one row, the base and mega species names never spawn a second entry.
         Assert.Equal(1, await db.PokemonStats.CountAsync(s => s.PickId == r.Picks["M-Charizard-X"].Id));
     }
 
@@ -283,7 +283,7 @@ public class MegaStatsTests(DraftLeagueFactory factory) : IClassFixture<DraftLea
     // The league format is doubles, so the real case is a Mega evolving with a
     // partner beside it and using a spread move afterward. The KO and enemy damage
     // must go to the Mega pick's Dealt, while the chip on its own ally is kept as
-    // friendly fire (DealtAlly) — all still on the one pick, after the evolution.
+    // friendly fire (DealtAlly), all still on the one pick, after the evolution.
     private const string DoublesLateMegaLog = """
         |player|p1|Alice|1|
         |player|p2|Bob|2|

@@ -1,11 +1,11 @@
 'use strict';
-// Performance guard for the tier-list filter — the hot path that runs on every
+// Performance guard for the tier-list filter, the hot path that runs on every
 // keystroke/checkbox in the browse view. It sets a benchmark and FAILS the
 // suite when a change makes filtering meaningfully slower.
 //
 // Wall-clock ms is machine-dependent, so we normalise: a fixed calibration loop
 // measures this CPU, and the recorded score is (filter time ÷ calibration time)
-// — a unitless ratio that's stable across machines and CI. The baseline lives
+//, a unitless ratio that's stable across machines and CI. The baseline lives
 // in perf-baseline.json; the first run (or UPDATE_BASELINE=1) writes it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,7 +21,7 @@ const WARN_FACTOR = 1.30;      // >30% slower than baseline → warn
 const FAIL_FACTOR = 2.50;      // >150% slower → fail (generous, absorbs noise)
 
 // A representative filter render touches the whole pool once per facet (the
-// facet-count passes) plus the final full pass — mirroring tlRefreshFacets +
+// facet-count passes) plus the final full pass, mirroring tlRefreshFacets +
 // renderTierList in app.js.
 const SKIPS = [null, 'type1', 'type2', 'tier', 'roles', 'search', 'avail'];
 const CRITERIA = { search: 'mon', availableOnly: true, tiers: ['S', 'B'], type1: 'Water', type2: '', roles: ['Fast'] };
@@ -89,11 +89,11 @@ test('tier-list filter stays within its performance budget', () => {
       `If this is an intentional cost, re-baseline with UPDATE_BASELINE=1.`);
   } else if (ratio >= WARN_FACTOR) {
     console.warn(`⚠️  ${line}\n   Filtering is >${Math.round((WARN_FACTOR - 1) * 100)}% slower ` +
-      `than baseline — a feature may have degraded the tier list.`);
+      `than baseline, a feature may have degraded the tier list.`);
   } else {
     console.log(`${line} ✓`);
     // A big, durable speedup is worth locking in so future regressions are
-    // measured from the new floor — but only when explicitly re-baselining.
+    // measured from the new floor, but only when explicitly re-baselining.
     if (updating) {
       fs.writeFileSync(BASELINE_PATH, JSON.stringify({ score, ...meta }, null, 2) + '\n');
     }

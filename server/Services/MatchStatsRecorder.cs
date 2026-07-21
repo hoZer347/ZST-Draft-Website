@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace DraftLeague.Web.Services;
 
 /// <summary>
-/// Folds one scored replay's per-mon stats into the two teams' running totals —
+/// Folds one scored replay's per-mon stats into the two teams' running totals,
 /// the same PokemonStat rows the stats page reads. This is what turns a real,
 /// coach-submitted replay into stats; the dev season simulator has its own copy
 /// of this accumulation for its bulk import.
@@ -16,7 +16,7 @@ namespace DraftLeague.Web.Services;
 /// </summary>
 public class MatchStatsRecorder(AppDbContext db, ILogger<MatchStatsRecorder> log)
 {
-    /// <param name="match">Loaded with HomeTeam and AwayTeam tracked — their Presence denominators are adjusted.</param>
+    /// <param name="match">Loaded with HomeTeam and AwayTeam tracked, their Presence denominators are adjusted.</param>
     /// <param name="homeSide">Which Showdown side ("p1"/"p2") played the home team, from the scorer.</param>
     /// <param name="battleLog">The raw replay log.</param>
     /// <param name="result">The match outcome, for per-mon W/L.</param>

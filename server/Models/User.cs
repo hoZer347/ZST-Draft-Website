@@ -3,7 +3,7 @@ namespace DraftLeague.Web.Models;
 /// <summary>
 /// A person, identified by Discord. Created on first successful login.
 ///
-/// The Discord snowflake is the primary identity across the whole system —
+/// The Discord snowflake is the primary identity across the whole system,
 /// Team.CoachId, DeviceRegistration.UserId and NotificationRecord.UserId all
 /// hold this value. Discord usernames are mutable and reusable, so they are
 /// cached for display only and never used to identify anyone.
@@ -24,7 +24,7 @@ public class User
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset LastLoginAt { get; set; } = DateTimeOffset.UtcNow;
 
-    /// <summary>Site-wide admin — can start drafts and roll picks back.</summary>
+    /// <summary>Site-wide admin, can start drafts and roll picks back.</summary>
     public bool IsAdmin { get; set; }
 
     // ── team customisation (player-set, shown on the team page) ──────────
@@ -55,7 +55,7 @@ public class RefreshToken
     public User User { get; set; } = null!;
 
     /// <summary>SHA-256 of the token. The raw value is only ever sent to the
-    /// client — a database leak must not hand over live sessions.</summary>
+    /// client, a database leak must not hand over live sessions.</summary>
     public required string TokenHash { get; set; }
 
     public DateTimeOffset ExpiresAt { get; set; }

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The pre-start ready-up flow: signing in no longer enrols you — you must ready
+/// The pre-start ready-up flow: signing in no longer enrols you, you must ready
 /// up, and the Start roster is built from who did. Covers the guards, idempotency,
 /// leaving, and the state fields the header toggle + roster markers read.
 /// </summary>
@@ -70,7 +70,7 @@ public class ReadyTests : DraftScenarioBase
     public async Task The_reserved_admin_can_ready_up_to_opt_in_as_a_coach()
     {
         // The admin oversees the league without appearing as a player UNLESS they
-        // opt in by readying up (see PlayersApi) — then they're a coach like anyone.
+        // opt in by readying up (see PlayersApi), then they're a coach like anyone.
         var admin = await Factory.SignedInAsAsync("admin", admin: true);
         var draftId = await DraftIdAsync(admin);
 

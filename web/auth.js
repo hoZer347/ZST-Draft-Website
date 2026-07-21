@@ -1,6 +1,6 @@
 /* Discord login for the browser, using Authorization Code + PKCE.
  *
- * This page is a public client — anything shipped here is readable by anyone,
+ * This page is a public client, anything shipped here is readable by anyone,
  * so it never sees the Discord client secret. It obtains a `code` from Discord
  * and hands it to our API, which does the secret-bearing exchange and returns
  * our own tokens.
@@ -34,7 +34,7 @@ const Auth = (() => {
 
   const randomString = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 
-  // SubtleCrypto (crypto.subtle) only exists in a secure context — HTTPS or
+  // SubtleCrypto (crypto.subtle) only exists in a secure context, HTTPS or
   // localhost. Opening the dev site on a phone over the LAN (plain http://<ip>)
   // leaves crypto.subtle undefined, and `crypto.subtle.digest(...)` threw
   // "Cannot read properties of undefined (reading 'digest')" during login. This
@@ -110,7 +110,7 @@ const Auth = (() => {
       if (!res.ok) throw new Error(`server returned ${res.status}`);
       cfg = await res.json();
     } catch {
-      throw new Error('Server is unavailable right now — please try again in a moment.');
+      throw new Error('Server is unavailable right now, please try again in a moment.');
     }
     if (!cfg.configured) {
       throw new Error('Discord login is not configured on the server (see AUTH_SETUP.md)');
@@ -188,7 +188,7 @@ const Auth = (() => {
     save(await res.json());
   }
 
-  /** The stashed admin's user, if currently viewing as a dummy — else null. */
+  /** The stashed admin's user, if currently viewing as a dummy, else null. */
   function impersonator() {
     try { return JSON.parse(localStorage.getItem(IMPERSONATOR))?.user ?? null; } catch { return null; }
   }
@@ -239,8 +239,8 @@ const Auth = (() => {
 
     // Without this check a third party could hand you a code of their choosing
     // and have you log in as them.
-    if (!expected || state !== expected) throw new Error('Login state mismatch — try again');
-    if (!verifier) throw new Error('Login verifier missing — try again');
+    if (!expected || state !== expected) throw new Error('Login state mismatch, try again');
+    if (!verifier) throw new Error('Login verifier missing, try again');
 
     const res = await fetch(`${apiBase}/api/auth/discord`, {
       method: 'POST',
@@ -252,7 +252,7 @@ const Auth = (() => {
         deviceLabel: 'Web',
       }),
     });
-    if (!res.ok) throw new Error('Login failed — the server rejected the code');
+    if (!res.ok) throw new Error('Login failed, the server rejected the code');
 
     save(await res.json());
     return true;
@@ -282,7 +282,7 @@ const Auth = (() => {
         body: JSON.stringify({ refreshToken: s.refreshToken }),
       });
     } catch {
-      // Network error / server unreachable — transient. Keep the session so a
+      // Network error / server unreachable, transient. Keep the session so a
       // later call can retry; the local dev API restarts constantly (watchdog),
       // and clearing here logged the user in and out every time it blipped.
       return classifyRefresh({ networkError: true }) === 'save';
@@ -300,7 +300,7 @@ const Auth = (() => {
 
   /**
    * fetch with the bearer token attached. On a 401 it refreshes once and
-   * retries — access tokens are deliberately short-lived, so this happens
+   * retries, access tokens are deliberately short-lived, so this happens
    * during normal use, not just at the edges.
    */
   async function authFetch(path, options = {}, retry = true) {
@@ -317,7 +317,7 @@ const Auth = (() => {
   }
 
   /**
-   * Synchronously drop the stored session — no network call, unlike logout().
+   * Synchronously drop the stored session, no network call, unlike logout().
    * Used by the hard-reload reset, which has to finish before the browser
    * navigates away.
    */

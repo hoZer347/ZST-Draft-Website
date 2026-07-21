@@ -16,7 +16,7 @@ public record PokemonRow(
 /// <summary>
 /// Loads the draft pool from two places: the committed snapshot the dev DB is
 /// first seeded from (Data/pokemon-pool.json), and a small local supplement for
-/// mons the source sheet doesn't carry (Data/pokemon-extra.json — e.g. AZ's
+/// mons the source sheet doesn't carry (Data/pokemon-extra.json, e.g. AZ's
 /// Eternal-Flower Floette). PokedexSync uses the same CSV parser against the
 /// live sheet, merged with the same supplement.
 /// </summary>
@@ -69,7 +69,7 @@ public static class Pokedex
     // ── CSV (the live sheet) ────────────────────────────────────────────
 
     /// <summary>
-    /// Parses the sheet's CSV export into draftable rows (tiers S/A/B/C only —
+    /// Parses the sheet's CSV export into draftable rows (tiers S/A/B/C only,
     /// the sheet's Z/X rows aren't in the draft). Column order can change, so
     /// everything is looked up by header name.
     /// </summary>
@@ -114,7 +114,7 @@ public static class Pokedex
 
     private static string? Str(string v) { v = v.Trim(); return v.Length == 0 ? null : v; }
 
-    /// <summary>Minimal RFC-4180 CSV splitter — handles quoted fields, escaped
+    /// <summary>Minimal RFC-4180 CSV splitter, handles quoted fields, escaped
     /// quotes and quoted newlines, which Google's export produces.</summary>
     private static List<string[]> SplitCsv(string text)
     {
@@ -156,7 +156,7 @@ public static class Pokedex
     };
 
     /// <summary>Copies the sheet's fields onto an existing row (keeps its id and
-    /// DraftedByTeamId — a re-sync must not un-draft a mon).</summary>
+    /// DraftedByTeamId, a re-sync must not un-draft a mon).</summary>
     public static void CopyInto(this PokemonRow r, PokemonEntry e)
     {
         e.Tier = r.TierEnum; e.DexNumber = r.Dex; e.Sprite = r.Sprite;

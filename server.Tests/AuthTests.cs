@@ -7,7 +7,7 @@ namespace DraftLeague.Web.Tests;
 
 /// <summary>
 /// Guards the claims AUTH_SETUP.md makes about the auth surface. These are the
-/// properties that fail silently and dangerously — an endpoint that stops
+/// properties that fail silently and dangerously, an endpoint that stops
 /// checking the caller looks fine until someone drafts for another team.
 /// </summary>
 public class AuthTests(DraftLeagueFactory factory) : IClassFixture<DraftLeagueFactory>

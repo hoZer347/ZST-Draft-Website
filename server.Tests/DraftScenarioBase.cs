@@ -7,7 +7,7 @@ namespace DraftLeague.Web.Tests;
 /// Shared scaffolding for the feature suites below. Each suite gets its OWN
 /// factory + throwaway DB (via <see cref="IAsyncLifetime"/>) because the draft
 /// roster IS the set of signed-in users and the debug-slot claims live in a
-/// per-app singleton — sharing either across tests would let one test's roster
+/// per-app singleton, sharing either across tests would let one test's roster
 /// leak into another's assertions.
 ///
 /// The helpers mirror the private ones in <see cref="DraftTests"/> so every suite

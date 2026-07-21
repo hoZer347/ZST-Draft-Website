@@ -8,7 +8,7 @@ namespace DraftLeague.Web.Tests;
 
 /// <summary>
 /// The real-replay pathway: <see cref="MatchStatsRecorder"/> folds a scored
-/// replay's per-mon stats — including self-heal and ally-heal — into the
+/// replay's per-mon stats, including self-heal and ally-heal, into the
 /// PokemonStat rows the stats page reads, and backs them out again on a −1 pass
 /// so a corrected re-report nets to zero. Uses the same hand-authored log as the
 /// scraper tests, seeded against a throwaway DB.
@@ -108,7 +108,7 @@ public class MatchStatsRecorderTests(DraftLeagueFactory factory) : IClassFixture
         Assert.Equal(4, home.BattleTurns);     // Presence denominator
         Assert.Equal(4, away.BattleTurns);
 
-        // Back it out — a corrected re-report subtracts the old game.
+        // Back it out, a corrected re-report subtracts the old game.
         await recorder.ApplyAsync(match, "p1", Log, MatchResult.HomeWin, -1);
         await db.SaveChangesAsync();
 

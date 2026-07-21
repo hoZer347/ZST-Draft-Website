@@ -9,7 +9,7 @@ namespace DraftLeague.Web.Services;
 
 /// <summary>
 /// Development-only: wipes a league and rebuilds it as a finished season from
-/// canned data (Data/sim-season.json) — 14 teams with their full drafted
+/// canned data (Data/sim-season.json), 14 teams with their full drafted
 /// rosters, the draft marked Complete, and matches imported (and scored) from a
 /// list of real Showdown replays. Lets the schedule/standings/team-page UI be
 /// exercised without hand-drafting and hand-playing a whole season.
@@ -55,7 +55,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
         // A canned trainer is bound to a real logged-in account when one exists,
         // so a member who has signed in owns their sim team (and sees it as "my
         // team") instead of a name-derived stand-in. Real accounts are matched by
-        // normalised handle — the same ToId the stand-in id is built from — so
+        // normalised handle, the same ToId the stand-in id is built from, so
         // Discord handles like ".hozer"/"hoZer" and "mr.whale."/"mrwhale" still
         // line up. A stand-in is only fabricated for trainers nobody has claimed.
         var trainerOrder = data.Picks.Select(p => p.Trainer).Distinct().ToList();
@@ -82,7 +82,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
             }
             else
             {
-                // No account claimed yet — keep the name-derived stand-in so the
+                // No account claimed yet, keep the name-derived stand-in so the
                 // player list still shows them (upserted; a prior sim may exist).
                 coachId = handle;
                 coachName = trainer;
@@ -93,7 +93,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
                     user.Username = trainer;
             }
 
-            // Team is shown by its coach's username / dummy name — no separate team name.
+            // Team is shown by its coach's username / dummy name, no separate team name.
             var team = new Team { LeagueId = leagueId, Name = coachName, CoachId = coachId, CoachName = coachName };
             db.Teams.Add(team);
             teamByTrainer[trainer] = team;
@@ -108,7 +108,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
         {
             if (!poolByName.TryGetValue(ToId(row.Pokemon), out var mon))
             {
-                // Not in the sheet pool — create a display-only entry. Sprite is a
+                // Not in the sheet pool, create a display-only entry. Sprite is a
                 // best-effort Showdown slug so most render; the season test cares
                 // about results, not sprite fidelity.
                 mon = new PokemonEntry
@@ -386,7 +386,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
     /// <summary>
     /// Species id with the mega suffix stripped, so a mon drafted as "M-Salamence"
     /// (sprite "salamence-mega") and the replay's base "Salamence" both key to the
-    /// same pick. Regional/other forms are kept — they're distinct draft picks.
+    /// same pick. Regional/other forms are kept, they're distinct draft picks.
     /// </summary>
     private static string BaseId(string species)
     {
@@ -407,7 +407,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
     /// <summary>
     /// Best-effort Showdown gen5 sprite slug for a display name. Handles "M-"
     /// megas, "-Incarnate" (I → base), a few regional/form suffixes, and numbered
-    /// forms (Zygarde-50). Anything unusual just toIds the base — a wrong sprite,
+    /// forms (Zygarde-50). Anything unusual just toIds the base, a wrong sprite,
     /// not a crash, which is fine for a test season.
     /// </summary>
     private static string SpriteSlug(string name)

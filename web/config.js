@@ -1,9 +1,9 @@
 // Where the .NET API lives. Netlify serves this folder as static files and has
-// no build step, so this is plain runtime config — edit it, commit, redeploy.
+// no build step, so this is plain runtime config, edit it, commit, redeploy.
 //
 // The API cannot be hosted on Netlify (no .NET runtime, and the draft clock and
 // SignalR hub both need a long-lived process). Point this at wherever the
-// server is deployed — Azure App Service, Fly.io, Render, a VPS. See DEPLOY.md.
+// server is deployed, Azure App Service, Fly.io, Render, a VPS. See DEPLOY.md.
 //
 // Whatever origin serves this page must also appear in the server's
 // Cors:Origins config, or the browser will block every request.
@@ -25,7 +25,7 @@ window.DRAFT_CONFIG = {
     location.hostname === 'localhost' || location.hostname === '127.0.0.1'
       ? 'localhost:8787'
       // Self-hosted Showdown server, tunnelled at its own subdomain (the ~~
-      // client syntax needs a host, not a path — so a subdomain, not /showdown).
+      // client syntax needs a host, not a path, so a subdomain, not /showdown).
       : location.hostname.endsWith('loomhozer.ca')
         ? 'showdown.loomhozer.ca'
         : 'REPLACE-ME.example.com:8787',

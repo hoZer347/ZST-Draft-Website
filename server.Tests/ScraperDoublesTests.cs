@@ -8,7 +8,7 @@ namespace DraftLeague.Web.Tests;
 public class ScraperDoublesTests
 {
     // Rillaboom (p1a) and Incineroar (p1b) Ally Switch, so Incineroar ends up in the
-    // p1a slot. Garchomp then hits p1a — which is now Incineroar, not Rillaboom.
+    // p1a slot. Garchomp then hits p1a, which is now Incineroar, not Rillaboom.
     private const string AllySwitchLog = """
         |player|p1|Alice|1|
         |player|p2|Bob|2|
@@ -67,7 +67,7 @@ public class ScraperDoublesTests
         var run = ReplayLogRunner.Run(DoublesPresenceLog);
 
         Assert.Equal(2, run.Result.Turns);
-        // Every mon that stayed on the field is present for both turns — including
+        // Every mon that stayed on the field is present for both turns, including
         // the two that shared a side, so the team's field-time is 2 mons × 2 turns.
         foreach (var mon in new[] { "Rillaboom", "Incineroar", "Garchomp", "Landorus" })
             Assert.Equal(2, run.Of(mon).ActiveTurns);

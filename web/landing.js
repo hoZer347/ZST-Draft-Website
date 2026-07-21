@@ -1,7 +1,7 @@
 // Pure, DOM-free logic for where to land after sign-in.
 //
-// Extracted from app.js so the ONE invariant that must never break — the
-// remembered tab is only shown AFTER the draft has initialised — is unit-testable.
+// Extracted from app.js so the ONE invariant that must never break, the
+// remembered tab is only shown AFTER the draft has initialised, is unit-testable.
 // (It regressed once: the saved tab was restored before initDraft ran, so the
 // schedule / scoreboard / draft-stats tabs, which read leagueId that initDraft
 // sets, failed to load on a refresh.)
@@ -25,7 +25,7 @@
   }
 
   // Reveal the landing tab, but ONLY after `init` has resolved. The schedule /
-  // scoreboard / draft-stats tabs read leagueId, which init sets — so showing a
+  // scoreboard / draft-stats tabs read leagueId, which init sets, so showing a
   // remembered tab before init leaves those tabs unable to load. Awaiting init
   // first is exactly what keeps that from regressing.
   //

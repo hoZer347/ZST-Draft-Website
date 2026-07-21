@@ -6,7 +6,7 @@ public class DiscordOptions
 {
     public const string Section = "Discord";
 
-    /// <summary>Public — safe to ship in the frontend.</summary>
+    /// <summary>Public, safe to ship in the frontend.</summary>
     public string ClientId { get; set; } = "";
 
     /// <summary>
@@ -18,7 +18,7 @@ public class DiscordOptions
 
     /// <summary>
     /// Redirect URIs a client is allowed to name in an exchange. The value the
-    /// client sends must appear here AND be registered in the Discord portal —
+    /// client sends must appear here AND be registered in the Discord portal,
     /// Discord checks it matches the one used at authorize time, and we check
     /// it's one we actually recognise, so a stolen code can't be redeemed
     /// against an attacker-chosen redirect.
@@ -43,7 +43,7 @@ public interface IDiscordAuth
 {
     /// <summary>
     /// Trades an authorization code for the Discord identity behind it.
-    /// Returns null when Discord rejects the code — expired, replayed, wrong
+    /// Returns null when Discord rejects the code, expired, replayed, wrong
     /// verifier, or simply forged.
     /// </summary>
     Task<DiscordUser?> ExchangeCodeAsync(string code, string codeVerifier, string redirectUri, CancellationToken ct = default);
@@ -60,7 +60,7 @@ public class DiscordAuth(HttpClient http, IConfiguration config, ILogger<Discord
 
         if (string.IsNullOrWhiteSpace(opts.ClientSecret))
         {
-            log.LogError("Discord:ClientSecret is not configured — login cannot work. See AUTH_SETUP.md.");
+            log.LogError("Discord:ClientSecret is not configured, login cannot work. See AUTH_SETUP.md.");
             return null;
         }
 

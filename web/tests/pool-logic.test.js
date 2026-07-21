@@ -14,7 +14,7 @@ test('MVP: nobody has played → null', () => {
 });
 
 test('MVP: only mons with a logged game are eligible', () => {
-  // The unplayed S-tier has a gaudy record on paper but gp:0 — the played
+  // The unplayed S-tier has a gaudy record on paper but gp:0, the played
   // C-tier wins by default.
   const played = mon('C', 3, 5, 1, 2, 1);
   const benched = { tier: 'S', stats: { gp: 0, k: 99, d: 0, w: 0, l: 0 } };
@@ -116,7 +116,7 @@ test('filter: type1/type2 each match either of the mon\'s types', () => {
 });
 
 test('filter: roles require ALL selected roles', () => {
-  // Garchomp: atk 130 (Physical), speed 102 (Fast) — but not Special.
+  // Garchomp: atk 130 (Physical), speed 102 (Fast), but not Special.
   assert.ok(poolMatches(dragon, { ...none, roles: ['Physical', 'Fast'] }));
   assert.ok(!poolMatches(dragon, { ...none, roles: ['Physical', 'Special'] }));
 });

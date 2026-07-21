@@ -12,7 +12,7 @@ namespace DraftLeague.Web.Tests;
 /// reproducible.
 ///
 /// Rather than assert a scripted outcome, each run checks the invariants that
-/// must hold for ANY valid season — the roster shape, a depleting pool, the
+/// must hold for ANY valid season, the roster shape, a depleting pool, the
 /// snake order, C-tier Tera assignment, and that the "passed options" snapshot
 /// shown in the pick feed matches what was really offered.
 /// </summary>
@@ -20,7 +20,7 @@ public class RandomSeasonTests : DraftScenarioBase
 {
     public static IEnumerable<object[]> Seasons()
     {
-        // (seed, playerCount) — a spread of roster sizes across several seeds.
+        // (seed, playerCount), a spread of roster sizes across several seeds.
         yield return [1, 2];
         yield return [7, 3];
         yield return [42, 4];
@@ -87,7 +87,7 @@ public class RandomSeasonTests : DraftScenarioBase
         var picks = state.GetProperty("picks").EnumerateArray().ToList();
         Assert.Equal(players * slotsPerRoster, picks.Count);
 
-        // The pool really depletes — no mon drafted twice.
+        // The pool really depletes, no mon drafted twice.
         var ids = picks.Select(p => Int(p, "pokemonEntryId")).ToList();
         Assert.Equal(ids.Count, ids.Distinct().Count());
 
@@ -119,7 +119,7 @@ public class RandomSeasonTests : DraftScenarioBase
             var tera = Str(p, "teraType");
             var name = p.GetProperty("name").GetString()!;
 
-            // Tera is a C-tier-only mechanic — and even in C, megas and Shedinja
+            // Tera is a C-tier-only mechanic, and even in C, megas and Shedinja
             // are barred from one (see DraftEngine.TeraBarred). Megas all carry the
             // "M-" name prefix.
             var teraBarred = name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)

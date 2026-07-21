@@ -73,7 +73,7 @@ test('demo teams are appended and round-trip as [{player, team}] JSON', () => {
   const url = buildTeambuilderUrl('Admin', null, null, demo);
   const raw = new URL(url).searchParams.get('demo');
   assert.ok(raw, 'demo param present');
-  // The seeding block in serve-client.js reads .player and .team by name — the
+  // The seeding block in serve-client.js reads .player and .team by name, the
   // shape must survive the round-trip exactly (a field rename there broke it once).
   assert.deepEqual(JSON.parse(raw), demo);
 });
@@ -111,7 +111,7 @@ test('opens the real teambuilder URL in a SINGLE window.open, not about:blank', 
   // noopener would make the named target behave like _blank, opening a NEW tab
   // each time; the old tab keeps the coach's name and the new one can't log in.
   assert.ok(!features || !String(features).includes('noopener'),
-    'no noopener — it breaks named-tab reuse and causes name conflicts');
+    'no noopener, it breaks named-tab reuse and causes name conflicts');
 });
 
 test('opens with name even when there are no matchups', () => {

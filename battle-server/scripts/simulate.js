@@ -3,7 +3,7 @@
 // Headless proof that two drafted rosters produce a real, playable battle.
 // Builds a team for each side, drops a random-move AI on both, runs the battle
 // to completion, and prints the winner. This de-risks the league-specific core
-// — species naming and team packing — before we stand up the interactive server.
+//, species naming and team packing, before we stand up the interactive server.
 //
 //   node scripts/simulate.js
 
@@ -44,7 +44,7 @@ async function main() {
 
   await done;
 
-  if (!winner) throw new Error('Battle ended with no winner — something is wrong.');
+  if (!winner) throw new Error('Battle ended with no winner, something is wrong.');
   console.log(`Battle ran ${turns} turns. Winner: ${winner}`);
 }
 

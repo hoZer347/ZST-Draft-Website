@@ -31,7 +31,7 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '
 
 // Auto-login the coach into the self-hosted Showdown client when the draft app's
 // Teambuilder tab opens it with ?name=<coach>. Our server runs noguestsecurity,
-// so a chosen name needs no login-server assertion — we send `/trn <name>,0,`.
+// so a chosen name needs no login-server assertion, we send `/trn <name>,0,`.
 // Kept in our launcher, not the vendored client, so it survives a client rebuild.
 //
 // Two parts, because timing matters:
@@ -39,12 +39,12 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '
 //    script. The classic client strips the query string during init
 //    (history.replaceState in dispatchFragment); on our same-origin dev host that
 //    init now runs immediately, so a bottom-of-page read would find ?name already
-//    gone. Capturing it up top — into window + sessionStorage — beats that race.
+//    gone. Capturing it up top, into window + sessionStorage, beats that race.
 //  - AUTOLOGIN runs LAST (appended after the client scripts, once `app` exists)
 //    and drives the login off the captured name.
 // The team-seeding logic lives in lib/seed-teams.js (pure + unit-tested). We inline
 // its SOURCE into the page so the browser and the Node tests run the identical code
-// — the file attaches `seedTeams` to window. A second script then reads the URL +
+//, the file attaches `seedTeams` to window. A second script then reads the URL +
 // localStorage, calls it, and writes the result back.
 const SEED_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'seed-teams.js'), 'utf8');
 
@@ -121,8 +121,8 @@ const AUTOLOGIN = `
 // let them log out (which drops them to an anonymous Guest and breaks their
 // identity across battles/teambuilder) or rename to something else. The
 // OptionsPopup (the cog / name popup) renders a "Change name" and a "Log out"
-// button in its buttonbar; hide both. Everything else in that popup — the
-// avatar/portrait picker, sound, timestamps and other prefs — is untouched, so
+// button in its buttonbar; hide both. Everything else in that popup, the
+// avatar/portrait picker, sound, timestamps and other prefs, is untouched, so
 // coaches can still customise their trainer sprite.
 //
 // Scoped to `.ps-popup` so only the popup's controls are hidden: the userbar's
@@ -135,7 +135,7 @@ const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[
 // a FRONT sprite on the CDN and no back sprite, so they'd render blank from the
 // player's own side. As a fallback, we inject a small client patch: for those mons
 // only, a request for the BACK sprite returns the FRONT sprite instead (their own
-// mega art, just facing the camera — never the base form). Which mons lack a back
+// mega art, just facing the camera, never the base form). Which mons lack a back
 // sprite is computed against the CDN at startup, so this self-heals as the CDN adds
 // the real back sprites (a mon that gains one drops off the list on the next start).
 const CUSTOM_MEGAS = (() => { try { return require('../showdown-config/custom-megas.js'); } catch { return { Pokedex: {} }; } })();
@@ -159,7 +159,7 @@ async function computeMegaBackFallback() {
   console.log(`[serve-client] custom-mega back-sprite fallback: ${n} mon(s) will use their front sprite`);
 }
 
-// path -> { mtimeMs, raw, gz } — files don't change at runtime, so cache the
+// path -> { mtimeMs, raw, gz }, files don't change at runtime, so cache the
 // gzipped bytes after the first hit instead of recompressing 15 MB per request.
 const cache = new Map();
 
@@ -170,7 +170,7 @@ function load(file) {
   let raw = fs.readFileSync(file);
   const ext = path.extname(file);
   // The SPA shell is served for every client-side route. This shell has no
-  // <head>/<body> — it goes straight to <meta>/<script> tags. Inject CAPTURE_HEAD
+  // <head>/<body>, it goes straight to <meta>/<script> tags. Inject CAPTURE_HEAD
   // before the FIRST <script> so it grabs ?name before any client script can
   // strip the query string, and append AUTOLOGIN after the client scripts so it
   // runs last, once `app` exists.
@@ -192,7 +192,7 @@ function load(file) {
 
 // Probe the CDN for missing back sprites, then drop the cached shell so the next
 // request re-injects the patch with the populated list. Best-effort and off the
-// hot path — the server starts serving immediately.
+// hot path, the server starts serving immediately.
 computeMegaBackFallback()
   .catch((e) => console.warn('[serve-client] mega back-sprite fallback failed:', e.message))
   .finally(() => cache.delete(path.join(ROOT, 'index-old.html')));
@@ -243,7 +243,7 @@ http.createServer((req, res) => {
 
   const headers = {
     'content-type': MIME[entry.ext] || 'application/octet-stream',
-    // No-cache while we're actively patching the client — otherwise Cloudflare
+    // No-cache while we're actively patching the client, otherwise Cloudflare
     // caches our edited files for an hour and changes don't show. Raise this to a
     // long max-age once the client is finalised.
     'cache-control': 'no-cache',

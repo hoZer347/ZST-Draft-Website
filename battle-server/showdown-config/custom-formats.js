@@ -8,7 +8,7 @@
 //
 // The name contains "NatDex" on purpose: the teambuilder client keys its tier
 // table + mega legality off the format id (it must include natdex/nationaldex),
-// which routes it to the gen9natdex data — where megas are legal and where
+// which routes it to the gen9natdex data, where megas are legal and where
 // scripts/patch-client-tiers.js has written our X/S/A/B/C/Z tiers.
 
 exports.Formats = [
@@ -39,7 +39,7 @@ exports.Formats = [
       'Hidden Power',
       // Zippy Zap (+1 evasion via a 100% self-secondary) is NOT covered by the
       // Evasion Clause, so ban it explicitly. Double Team / Minimize are already
-      // banned BY that clause (via its Evasion Moves Clause) — listing them here
+      // banned BY that clause (via its Evasion Moves Clause), listing them here
       // too is a duplicate that Showdown rejects with "Rule already exists in
       // Evasion Moves Clause", which crashes the server worker on load. Do not
       // re-add them here.

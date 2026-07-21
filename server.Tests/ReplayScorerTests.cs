@@ -167,7 +167,7 @@ public class ReplayScorerTests : DraftScenarioBase
     }
 
     [Fact]
-    public async Task ReportAsync_ignores_a_matchup_with_no_pending_match()
+    public async Task ReportAsync_redoes_the_recorded_match_when_none_is_pending()
     {
         using var scope = Factory.Services.CreateScope();
         var db = Db(scope);
@@ -175,12 +175,16 @@ public class ReplayScorerTests : DraftScenarioBase
             ("alice", "Alice"), ["Pikachu", "Snorlax"],
             ("bob", "Bob"), ["Gengar", "Blissey"]);
 
-        // Mark the only match as already played.
-        s.Match.Result = MatchResult.HomeWin;
+        // The only scheduled match is already recorded (with the opposite result).
+        s.Match.Result = MatchResult.AwayWin;
         await db.SaveChangesAsync();
 
+        // A fresh battle between the same teams is treated as a REDO of that match, so
+        // a re-played game refreshes its result, rather than being ignored.
         var r = await Scorer(scope).ReportAsync(Log);
 
-        Assert.False(r.Ok);
+        Assert.True(r.Ok);
+        Assert.Equal(s.Match.Id, r.MatchId);
+        Assert.Equal(MatchResult.HomeWin, r.Outcome); // the redo's actual result
     }
 }

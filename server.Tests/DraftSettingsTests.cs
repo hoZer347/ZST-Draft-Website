@@ -9,7 +9,7 @@ namespace DraftLeague.Web.Tests;
 /// <summary>
 /// The pre-start Draft settings (season weeks + pick timeout) applied on Start,
 /// and the pick clock they drive. Start never 400s on settings: weeks are clamped
-/// to a sane range, but the pick timeout is taken exactly as given — including 0,
+/// to a sane range, but the pick timeout is taken exactly as given, including 0,
 /// which fast-forwards the whole draft. Covers the "0 → resets to 24" report and
 /// that the clock drains a zero-timeout draft to completion.
 /// </summary>
@@ -34,7 +34,7 @@ public class DraftSettingsTests : DraftScenarioBase
     {
         var (admin, draftId) = await ReadyOneAsync();
 
-        // Crucially NOT a 400 — accepted and started.
+        // Crucially NOT a 400, accepted and started.
         var res = await admin.PostAsJsonAsync($"/api/admin/drafts/{draftId}/start",
             new { weeks, pickTimerSeconds = secs });
         res.EnsureSuccessStatusCode();

@@ -7,9 +7,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The recorder persists the full split the scraper produces — friendly-fire
+/// The recorder persists the full split the scraper produces, friendly-fire
 /// damage, enemy-healing, and self-inflicted damage each in their own PokemonStat
-/// column — and a −1 pass backs every one of them out. Fresh DB per test.
+/// column, and a −1 pass backs every one of them out. Fresh DB per test.
 /// </summary>
 public class MatchStatsRecorderSplitTests : DraftScenarioBase
 {
@@ -73,7 +73,7 @@ public class MatchStatsRecorderSplitTests : DraftScenarioBase
         Assert.Equal(40, (await StatOf("incineroar")).DamageTakenDirect, 2);
         Assert.Equal(20, (await StatOf("landorus")).DamageTakenDirect, 2);
 
-        // Presence denominator is the game's turn count (2) — one field slot per
+        // Presence denominator is the game's turn count (2), one field slot per
         // turn. In doubles two mons are active each turn, so the team's mons sum to
         // 200% of it; the denominator itself stays at the 2 turns played.
         Assert.Equal(2, s.Home.BattleTurns);

@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace DraftLeague.Web.Tests;
 
 /// <summary>
-/// The roster list and the team-preview page behind it — the endpoints the web
+/// The roster list and the team-preview page behind it, the endpoints the web
 /// app's left-hand player list and click-through team page read. Covers who
 /// appears on the roster (and who doesn't), admin-only removal, and the shape of
 /// a drafted team including per-mon battle profile.
@@ -171,7 +171,7 @@ public class PlayersTests : DraftScenarioBase
         foreach (var stat in new[] { "hp", "atk", "def", "spAtk", "spDef", "speed" })
             Assert.True(mon.GetProperty(stat).GetInt32() >= 0);
 
-        // BST is exactly the sum of the six base stats — the card trusts this.
+        // BST is exactly the sum of the six base stats, the card trusts this.
         var expectedBst = Int(mon, "hp") + Int(mon, "atk") + Int(mon, "def")
             + Int(mon, "spAtk") + Int(mon, "spDef") + Int(mon, "speed");
         Assert.Equal(expectedBst, Int(mon, "bst"));

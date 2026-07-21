@@ -2,7 +2,7 @@
 
 // Proves the BattleRoom abstraction end-to-end through its real public surface:
 // each side is driven purely via room.on(side) to receive protocol and
-// room.choose(side, ...) to submit decisions — the exact contract the WebSocket
+// room.choose(side, ...) to submit decisions, the exact contract the WebSocket
 // layer and the .NET bridge will use. Here each side just answers every request
 // with "default" (the sim's auto-pick), which is enough to play a battle out.
 //

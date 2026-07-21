@@ -7,7 +7,7 @@ namespace DraftLeague.Web.Tests;
 /// The battle-stats pipeline that powers the team page (KOs/Faints, Damage
 /// Ratio, Presence) and the MVP badge, tested at its deterministic core:
 /// <see cref="ReplayStatsScraper.Scrape"/> against a hand-authored Showdown log
-/// whose every number is known. No network, no DB — just the parser.
+/// whose every number is known. No network, no DB, just the parser.
 /// </summary>
 public class SeasonScraperTests
 {
@@ -114,7 +114,7 @@ public class SeasonScraperTests
     }
 
     // Ferrothorn sets Stealth Rock; Charizard switches into it and faints. Both
-    // the chip damage and the KO belong to Ferrothorn, the setter — which is
+    // the chip damage and the KO belong to Ferrothorn, the setter, which is
     // still on the field on the other side.
     private const string HazardLog = """
         |player|p1|Alice|1|
@@ -141,7 +141,7 @@ public class SeasonScraperTests
     {
         var (r, picks) = RunLog(HazardLog);
 
-        // All indirect — Ferrothorn never hit Charizard with a move.
+        // All indirect, Ferrothorn never hit Charizard with a move.
         Assert.Equal(100, r.Stats[picks["ferrothorn"]].DealtIndirect, 2);
         Assert.Equal(0, r.Stats[picks["ferrothorn"]].DealtDirect, 2);
         Assert.Equal(1, r.Stats[picks["ferrothorn"]].Kills);
@@ -151,7 +151,7 @@ public class SeasonScraperTests
     }
 
     // Gengar poisons Snorlax, then switches out for Clefable. The poison ticks
-    // it down and eventually KOs it — both the chip and the kill must still trace
+    // it down and eventually KOs it, both the chip and the kill must still trace
     // to Gengar, off the field, not the Clefable now standing in its slot.
     private const string PoisonSwitchLog = """
         |player|p1|Alice|1|
@@ -254,7 +254,7 @@ public class SeasonScraperTests
         """;
 
     // Bad Dreams chips the sleeping foe each turn, carrying [of] the Darkrai
-    // holder — so it's credited to Darkrai like Rocky Helmet, not left uncredited.
+    // holder, so it's credited to Darkrai like Rocky Helmet, not left uncredited.
     private const string BadDreamsLog = """
         |player|p1|Alice|1|
         |player|p2|Bob|2|
@@ -287,7 +287,7 @@ public class SeasonScraperTests
 
         // Opponents: Rillaboom 30 + Incineroar 40 = 70 direct to enemies.
         Assert.Equal(70, chomp.DealtDirect, 2);
-        // Ally Landorus took 25 — friendly fire, banked apart, not in DealtDirect.
+        // Ally Landorus took 25, friendly fire, banked apart, not in DealtDirect.
         Assert.Equal(25, chomp.DealtAllyDirect, 2);
         Assert.Equal(25, r.Stats[picks["landorus"]].TakenDirect, 2);
     }
