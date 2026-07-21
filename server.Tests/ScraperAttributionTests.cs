@@ -35,6 +35,52 @@ public class ScraperAttributionTests
     }
 
     [Fact]
+    public void Recoil_tagged_capitalised_is_still_self_damage()
+    {
+        // Real replays tag recoil "Recoil" (capital), not the "recoil" the older test
+        // above uses — it must still count as SELF, never as opponent damage taken.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Crobat, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Crobat|Crobat, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Crobat|Brave Bird|p2a: Snorlax
+            |-damage|p2a: Snorlax|70/100
+            |-damage|p1a: Crobat|82/100|[from] Recoil
+            |win|A
+            """);
+        Assert.Equal(18, run.Of("Crobat").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Crobat").TakenDirect, 2);
+        Assert.Equal(0, run.Of("Crobat").TakenIndirect, 2);
+    }
+
+    [Fact]
+    public void Steel_beam_hp_cost_is_self_damage_not_indirect()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Sliggoo, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Sliggoo|Sliggoo, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Sliggoo|Steel Beam|p2a: Snorlax
+            |-damage|p2a: Snorlax|60/100
+            |-damage|p1a: Sliggoo|50/100|[from] steelbeam
+            |win|B
+            """);
+        Assert.Equal(50, run.Of("Sliggoo").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Sliggoo").TakenIndirect, 2);
+        Assert.Equal(40, run.Of("Sliggoo").DealtDirect, 2);
+    }
+
+    [Fact]
     public void Life_orb_is_self_damage()
     {
         var run = ReplayLogRunner.Run("""
@@ -381,7 +427,7 @@ public class ScraperAttributionTests
     {
         // Tyrantrum (p2b) Earthquakes, hitting its own ally Orthworm (p2a), whose
         // Earth Eater turns the Ground hit into a heal. Showdown's [of] on that heal
-        // points to the mon whose move triggered it (Tyrantrum), NOT a healer — so
+        // points to the mon whose move triggered it (Tyrantrum), NOT a healer, so
         // the heal is Orthworm's own self-recovery, never Tyrantrum ally-healing.
         // (Regression: this once credited Tyrantrum ~74% ally-heal over a game.)
         var run = ReplayLogRunner.Run("""
@@ -416,7 +462,7 @@ public class ScraperAttributionTests
     {
         // A foe attacks the holder with the matching move type; the absorb ability
         // turns it into a heal whose [of] points to the ATTACKER. That HP is the
-        // holder's own self-recovery — never credited as (enemy-)healing to the
+        // holder's own self-recovery, never credited as (enemy-)healing to the
         // attacker in [of]. Same class of bug as Earth Eater.
         var run = ReplayLogRunner.Run($"""
             |player|p1|A|1|
@@ -533,10 +579,10 @@ public class ScraperAttributionTests
         Assert.Equal(12, run.Of("Snorlax").TakenIndirect, 2);
     }
 
-    // ── Weather is counted as taken but credited to no dealer ────────────────
+    // ── Weather chip is credited to whoever set the weather ──────────────────
 
     [Fact]
-    public void Sandstorm_chip_is_taken_but_uncredited()
+    public void Sandstorm_chip_is_credited_to_the_ability_setter()
     {
         var run = ReplayLogRunner.Run("""
             |player|p1|A|1|
@@ -554,7 +600,137 @@ public class ScraperAttributionTests
             """);
         Assert.Equal(6, run.Of("Charizard").TakenIndirect, 2);
         Assert.Equal(0, run.Of("Charizard").TakenSelf, 2);
-        Assert.Equal(0, run.Of("Tyranitar").DealtIndirect, 2); // weather has no credited dealer
+        Assert.Equal(6, run.Of("Tyranitar").DealtIndirect, 2); // credited to the sand setter
+    }
+
+    [Fact]
+    public void Move_set_sandstorm_chip_is_credited_to_the_mover()
+    {
+        // Move-set weather carries no [of]; the setter is the mon that just used the
+        // Sandstorm move. Its chip and any KO belong to that mover, even after it
+        // has left the field.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Hippowdon, M|item
+            |poke|p1|Excadrill, M|item
+            |poke|p2|Charizard, M|item
+            |start
+            |switch|p1a: Hippowdon|Hippowdon, M|100/100
+            |switch|p2a: Charizard|Charizard, M|100/100
+            |turn|1
+            |move|p1a: Hippowdon|Sandstorm|p1a: Hippowdon
+            |-weather|Sandstorm
+            |turn|2
+            |switch|p1a: Excadrill|Excadrill, M|100/100
+            |-weather|Sandstorm|[upkeep]
+            |-damage|p2a: Charizard|0 fnt|[from] Sandstorm
+            |faint|p2a: Charizard
+            |win|A
+            """);
+        Assert.Equal(100, run.Of("Hippowdon").DealtIndirect, 2); // credited off the field
+        Assert.Equal(1, run.Of("Hippowdon").Kills);              // the sand KO
+        Assert.Equal(1, run.Of("Charizard").Deaths);
+    }
+
+    [Fact]
+    public void Sandstorm_chip_on_the_setters_own_ally_is_friendly_fire_not_a_kill()
+    {
+        // Weather hits both sides. A non-immune mon on the sand-setter's own side
+        // taking chip is friendly fire: it goes to the ally-damage bucket and its
+        // faint never scores a kill for the setter.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Tyranitar, M|item
+            |poke|p1|Charizard, M|item
+            |poke|p2|Garchomp, M|item
+            |poke|p2|Landorus, M|item
+            |start
+            |switch|p1a: Tyranitar|Tyranitar, M|100/100
+            |switch|p1b: Charizard|Charizard, M|100/100
+            |switch|p2a: Garchomp|Garchomp, M|100/100
+            |switch|p2b: Landorus|Landorus, M|100/100
+            |-weather|Sandstorm|[from] ability: Sand Stream|[of] p1a: Tyranitar
+            |turn|1
+            |-weather|Sandstorm|[upkeep]
+            |-damage|p1b: Charizard|0 fnt|[from] Sandstorm
+            |faint|p1b: Charizard
+            |-damage|p2a: Garchomp|94/100|[from] Sandstorm
+            |win|B
+            """);
+        Assert.Equal(6, run.Of("Tyranitar").DealtIndirect, 2);      // only the enemy chip
+        Assert.Equal(100, run.Of("Tyranitar").DealtAllyIndirect, 2); // its own ally's chip
+        Assert.Equal(0, run.Of("Tyranitar").Kills);                 // ally faint is not a kill
+        Assert.Equal(1, run.Of("Charizard").Deaths);
+    }
+
+    // ── Perish Song: the counter's KO is credited to whoever cast it ─────────
+
+    [Fact]
+    public void Perish_song_ko_is_credited_to_the_caster()
+    {
+        // Perish Song sets a |perish3| counter on every active mon; it ticks down each
+        // turn and the mon faints on |perish0| with no -damage of its own. That KO on a
+        // foe is the caster's kill.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Politoed, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Politoed|Politoed, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Politoed|Perish Song|p1a: Politoed
+            |-start|p1a: Politoed|perish3|[silent]
+            |-start|p2a: Snorlax|perish3
+            |turn|2
+            |-start|p1a: Politoed|perish2
+            |-start|p2a: Snorlax|perish2
+            |turn|3
+            |-start|p1a: Politoed|perish1
+            |-start|p2a: Snorlax|perish1
+            |turn|4
+            |-start|p2a: Snorlax|perish0
+            |faint|p2a: Snorlax
+            |win|A
+            """);
+        Assert.Equal(1, run.Of("Politoed").Kills);   // the perish KO on the foe
+        Assert.Equal(1, run.Of("Snorlax").Deaths);
+    }
+
+    [Fact]
+    public void Perish_song_that_fells_the_casters_own_ally_is_not_a_kill()
+    {
+        // Perish Song also counts down the caster's side. A teammate that faints to the
+        // caster's own Perish Song is friendly fire, never a kill for the caster (nor a
+        // self-kill on the caster itself).
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Politoed|item
+            |poke|p1|Whimsicott|item
+            |poke|p2|Garchomp|item
+            |poke|p2|Landorus|item
+            |start
+            |switch|p1a: Politoed|Politoed|100/100
+            |switch|p1b: Whimsicott|Whimsicott|100/100
+            |switch|p2a: Garchomp|Garchomp|100/100
+            |switch|p2b: Landorus|Landorus|100/100
+            |turn|1
+            |move|p1a: Politoed|Perish Song|p1a: Politoed
+            |-start|p1a: Politoed|perish3|[silent]
+            |-start|p1b: Whimsicott|perish3
+            |-start|p2a: Garchomp|perish3
+            |-start|p2b: Landorus|perish3
+            |turn|2
+            |-start|p1b: Whimsicott|perish0
+            |faint|p1b: Whimsicott
+            |win|B
+            """);
+        Assert.Equal(0, run.Of("Politoed").Kills);   // its own ally faint is not a kill
+        Assert.Equal(1, run.Of("Whimsicott").Deaths);
     }
 
     // ── KO credit edge cases ─────────────────────────────────────────────────
@@ -582,7 +758,7 @@ public class ScraperAttributionTests
             |faint|p2b: Landorus
             |win|A
             """);
-        Assert.Equal(0, run.Of("Garchomp").Kills);            // KO'd its own ally — no credit
+        Assert.Equal(0, run.Of("Garchomp").Kills);            // KO'd its own ally, no credit
         Assert.Equal(100, run.Of("Garchomp").DealtAllyDirect, 2);
         Assert.Equal(85, run.Of("Garchomp").DealtDirect, 2);  // 40 + 45 to the two opponents
         Assert.Equal(1, run.Of("Landorus").Deaths);
@@ -608,6 +784,72 @@ public class ScraperAttributionTests
         Assert.Equal(80, run.Of("Gengar").DealtDirect, 2);
         Assert.Equal(1, run.Of("Gengar").Deaths);
         Assert.Equal(0, run.Of("Gengar").Kills);
+    }
+
+    [Fact]
+    public void Destiny_bond_credits_the_KO_to_the_bond_user_that_dragged_its_killer_down()
+    {
+        // Ceruledge Destiny Bonds, faints to Dondozo's Crunch, and takes Dondozo down
+        // with it. Dondozo's faint carries NO -damage of its own — Showdown reports the
+        // bond user's own faint, then the |-activate ... Destiny Bond, then the killer's
+        // faint — so that KO must be credited to Ceruledge. (Regression: it was going
+        // uncredited because there was no last-damage dealer to attribute it to.)
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Dondozo, M|item
+            |poke|p2|Ceruledge, M|item
+            |start
+            |switch|p1a: Dondozo|Dondozo, M|100/100
+            |switch|p2a: Ceruledge|Ceruledge, M|100/100
+            |turn|1
+            |move|p2a: Ceruledge|Destiny Bond|p2a: Ceruledge
+            |-singlemove|p2a: Ceruledge|Destiny Bond
+            |move|p1a: Dondozo|Crunch|p2a: Ceruledge
+            |-supereffective|p2a: Ceruledge
+            |-damage|p2a: Ceruledge|0 fnt
+            |faint|p2a: Ceruledge
+            |-activate|p2a: Ceruledge|move: Destiny Bond
+            |faint|p1a: Dondozo
+            |win|B
+            """);
+        Assert.Equal(1, run.Of("Ceruledge").Kills);   // dragged Dondozo down via Destiny Bond
+        Assert.Equal(1, run.Of("Ceruledge").Deaths);
+        Assert.Equal(1, run.Of("Dondozo").Kills);     // its Crunch still KO'd Ceruledge
+        Assert.Equal(1, run.Of("Dondozo").Deaths);    // then it fainted to the bond
+    }
+
+    [Fact]
+    public void Bind_chip_damage_and_its_KO_are_credited_to_the_trapper()
+    {
+        // Whirlpool's per-turn chip carries [partiallytrapped] and NO [of]; the trapper
+        // (Lanturn) is named only in the -activate when the trap is set. That chip is
+        // Lanturn's indirect damage, and a faint from it is Lanturn's KO. (Regression:
+        // partial-trap chip + KO were going uncredited.)
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Lanturn, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Lanturn|Lanturn, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Lanturn|Whirlpool|p2a: Snorlax
+            |-damage|p2a: Snorlax|90/100
+            |-activate|p2a: Snorlax|move: Whirlpool|[of] p1a: Lanturn
+            |-damage|p2a: Snorlax|84/100|[from] move: Whirlpool|[partiallytrapped]
+            |turn|2
+            |-damage|p2a: Snorlax|0 fnt|[from] move: Whirlpool|[partiallytrapped]
+            |faint|p2a: Snorlax
+            |win|A
+            """);
+        Assert.Equal(1, run.Of("Lanturn").Kills);              // the bind chip KO'd Snorlax
+        Assert.Equal(1, run.Of("Snorlax").Deaths);
+        Assert.Equal(10, run.Of("Lanturn").DealtDirect, 2);   // the Whirlpool hit itself
+        Assert.Equal(90, run.Of("Lanturn").DealtIndirect, 2); // 6 + 84 bind chip
+        Assert.Equal(10, run.Of("Snorlax").TakenDirect, 2);
+        Assert.Equal(90, run.Of("Snorlax").TakenIndirect, 2);
     }
 
     // ── HP parsing / guards ──────────────────────────────────────────────────
