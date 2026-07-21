@@ -51,21 +51,83 @@ public static class ScheduleApi
         // Anonymous for the same reason as the replay link: it's a plain <a> that
         // opens in a new tab with no auth header. Only games with captured team data
         // have it (sim battles and Showdown-server-reported games).
-        app.MapGet("/api/matches/{matchId:int}/paste", async (int matchId, AppDbContext db, CancellationToken ct) =>
+        app.MapGet("/api/matches/{matchId:int}/paste", async (int matchId, string? team, AppDbContext db, CancellationToken ct) =>
         {
             var m = await db.Matches.Where(x => x.Id == matchId)
                 .Select(x => new { x.HomeTeamExport, x.AwayTeamExport, x.HomeTeamId, x.AwayTeamId })
                 .FirstOrDefaultAsync(ct);
-            if (m is null || (m.HomeTeamExport is null && m.AwayTeamExport is null)) return Results.NotFound();
+            if (m is null) return Results.NotFound();
 
             var names = await db.Teams.Where(t => t.Id == m.HomeTeamId || t.Id == m.AwayTeamId)
                 .ToDictionaryAsync(t => t.Id, t => t.CoachName, ct);
+
+            // ?team=home|away returns just that side's build (the per-team link under
+            // each scoresheet table); with no param it returns both (the combined link).
+            var wantHome = !string.Equals(team, "away", StringComparison.OrdinalIgnoreCase);
+            var wantAway = !string.Equals(team, "home", StringComparison.OrdinalIgnoreCase);
+
             var sb = new System.Text.StringBuilder();
-            if (m.HomeTeamExport is not null)
+            if (wantHome && m.HomeTeamExport is not null)
                 sb.Append("=== ").Append(names.GetValueOrDefault(m.HomeTeamId, "Home")).Append(" ===\n\n").Append(m.HomeTeamExport.Trim()).Append("\n\n");
-            if (m.AwayTeamExport is not null)
+            if (wantAway && m.AwayTeamExport is not null)
                 sb.Append("=== ").Append(names.GetValueOrDefault(m.AwayTeamId, "Away")).Append(" ===\n\n").Append(m.AwayTeamExport.Trim()).Append('\n');
+            if (sb.Length == 0) return Results.NotFound(); // no build captured for the requested side
             return Results.Content(sb.ToString(), "text/plain; charset=utf-8");
+        });
+
+        // A pokepaste-style hosted PAGE for a game's team builds: one card per mon
+        // (sprite, item, ability, spread, tera, moves) plus the raw export, rendered
+        // server-side (see BuildPageRenderer). ?team=home|away shows one side, no param
+        // shows both. Anonymous like the paste route: a plain link opened in a new tab.
+        app.MapGet("/matches/{matchId:int}/teams", async (int matchId, string? team, AppDbContext db, CancellationToken ct) =>
+        {
+            var m = await db.Matches.Where(x => x.Id == matchId)
+                .Select(x => new { x.LeagueId, x.Week, x.HomeTeamExport, x.AwayTeamExport, x.HomeTeamId, x.AwayTeamId })
+                .FirstOrDefaultAsync(ct);
+            if (m is null) return Results.NotFound();
+
+            var names = await db.Teams.Where(t => t.Id == m.HomeTeamId || t.Id == m.AwayTeamId)
+                .ToDictionaryAsync(t => t.Id, t => t.CoachName, ct);
+
+            // Species id -> (sprite slug, dex) for the whole pool, so parsed sets get the
+            // same sprites the rest of the site uses (name and slug both indexed, for forms).
+            var pool = await db.Pokemon.Where(p => p.LeagueId == m.LeagueId)
+                .Select(p => new { p.Name, p.Sprite, p.DexNumber, p.Tier }).ToListAsync(ct);
+            var spriteBy = new Dictionary<string, (string?, int?, string?)>();
+            foreach (var p in pool)
+            {
+                var v = ((string?)p.Sprite, (int?)p.DexNumber, (string?)p.Tier.ToString());
+                spriteBy[BuildPageRenderer.ToId(p.Name)] = v;
+                // Indexed by name AND sprite slug id, so a mega forme is findable by its
+                // slug (e.g. "lucario-mega"), which is how the renderer resolves a mega
+                // held via its stone to the forme's own tier/sprite, not the base's.
+                if (!string.IsNullOrEmpty(p.Sprite)) spriteBy.TryAdd(BuildPageRenderer.ToId(p.Sprite), v);
+            }
+            (string?, int?, string?) SpriteOf(string id) => spriteBy.TryGetValue(id, out var v) ? v : (null, null, null);
+
+            var wantHome = !string.Equals(team, "away", StringComparison.OrdinalIgnoreCase);
+            var wantAway = !string.Equals(team, "home", StringComparison.OrdinalIgnoreCase);
+
+            var views = new List<BuildPageRenderer.TeamView>();
+            if (wantHome && m.HomeTeamExport is not null)
+                views.Add(new(names.GetValueOrDefault(m.HomeTeamId, "Home"),
+                    BuildPageRenderer.Parse(m.HomeTeamExport, SpriteOf), m.HomeTeamExport.Trim()));
+            if (wantAway && m.AwayTeamExport is not null)
+                views.Add(new(names.GetValueOrDefault(m.AwayTeamId, "Away"),
+                    BuildPageRenderer.Parse(m.AwayTeamExport, SpriteOf), m.AwayTeamExport.Trim()));
+            if (views.Count == 0) return Results.NotFound();
+
+            // Title mirrors the coach's teambuilder team name for this match, "Week N
+            // vs <opponent>" for a single side, or the full matchup for both.
+            var home = names.GetValueOrDefault(m.HomeTeamId, "Home");
+            var away = names.GetValueOrDefault(m.AwayTeamId, "Away");
+            var title = (wantHome, wantAway) switch
+            {
+                (true, false) => $"Week {m.Week} vs {away}",
+                (false, true) => $"Week {m.Week} vs {home}",
+                _ => $"Week {m.Week}: {home} vs {away}",
+            };
+            return Results.Content(BuildPageRenderer.Render(title, views), "text/html; charset=utf-8");
         });
 
         // Everyone in the league sees the same schedule; the caller's own team is
@@ -80,7 +142,7 @@ public static class ScheduleApi
                 .Where(t => t.LeagueId == leagueId)
                 .Select(t => new { t.Id, t.Name, t.CoachId, t.CoachName, t.Wins, t.Losses, t.Draws })
                 .ToListAsync(ct);
-            // Teams are shown by their coach's username / dummy name — the league
+            // Teams are shown by their coach's username / dummy name, the league
             // doesn't use separate team names.
             var teamName = teams.ToDictionary(t => t.Id, t => t.CoachName);
 
@@ -112,10 +174,12 @@ public static class ScheduleApi
                     result = m.Result.ToString(),
                     m.HomeScore, m.AwayScore, m.ReplayUrl,
                     hasPaste = m.HomeTeamExport != null || m.AwayTeamExport != null,
+                    hasHomePaste = m.HomeTeamExport != null,
+                    hasAwayPaste = m.AwayTeamExport != null,
                 })
                 .ToListAsync(ct);
 
-            // "This week" is the earliest week that still has an unplayed match —
+            // "This week" is the earliest week that still has an unplayed match,
             // the front of the season. Everything before it is history.
             var currentWeek = matches
                 .Where(m => m.result == nameof(MatchResult.Pending))
@@ -142,7 +206,8 @@ public static class ScheduleApi
                     homeAvatar = teamAvatar.GetValueOrDefault(m.HomeTeamId),
                     m.AwayTeamId, awayName = teamName.GetValueOrDefault(m.AwayTeamId, $"Team {m.AwayTeamId}"),
                     awayAvatar = teamAvatar.GetValueOrDefault(m.AwayTeamId),
-                    m.result, m.HomeScore, m.AwayScore, m.ReplayUrl, m.hasPaste,
+                    m.result, m.HomeScore, m.AwayScore, m.ReplayUrl,
+                    m.hasPaste, m.hasHomePaste, m.hasAwayPaste,
                     played = m.result != nameof(MatchResult.Pending),
                     mine = myTeamId != null && (m.HomeTeamId == myTeamId || m.AwayTeamId == myTeamId),
                     battleStats = statsByMatch.GetValueOrDefault(m.Id),
@@ -308,7 +373,7 @@ public static class ScheduleApi
             // and their mons in the leaderboards.
             var myTeamId = teams.FirstOrDefault(t => t.CoachId == me.DiscordId())?.Id;
 
-            // Discord avatar hashes for the coaches that have one — synthetic coaches
+            // Discord avatar hashes for the coaches that have one, synthetic coaches
             // (dummies / sim) and anyone without an avatar simply won't be in here, so
             // the scoreboard shows an empty slot for them.
             var coachIds = teams.Select(t => t.CoachId).ToList();
@@ -397,7 +462,7 @@ public static class ScheduleApi
 
             // Leaderboards: up to the top 5 mons in each category, each with its
             // trainer. Every mon that PARTICIPATED (GamesPlayed > 0, the `mons`
-            // filter) is ranked, including ones sitting at 0 in a category — their 0
+            // filter) is ranked, including ones sitting at 0 in a category, their 0
             // still shows. Only ranks past the number of participants are left empty
             // for the client to grey out. Every ordering has explicit tiebreaks so
             // the result is deterministic.
@@ -422,16 +487,16 @@ public static class ScheduleApi
                 .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera, value = (double?)x.value })
                 .ToList();
 
-            // Damage ratio = dealt / taken, matching the Stats tab. A mon that never
-            // took damage is treated as infinite and ranked first; among those the
-            // bigger dealer leads. Infinity can't be JSON, so it serializes as null
-            // and the client renders it as the infinity symbol.
+            // Damage ratio = (dealt + 1) / (taken + 1), matching the Stats tab. The +1
+            // smoothing avoids dividing by zero, so a mon that never took damage just
+            // gets a large finite ratio (dealt + 1) instead of infinity; the bigger
+            // dealer among them still leads, with no infinity symbol to render.
             var damageRatio = mons
-                .Select(m => new { m, ratio = m.taken > 0 ? m.dealt / m.taken : (m.dealt > 0 ? double.PositiveInfinity : 0.0) })
+                .Select(m => new { m, ratio = (m.dealt + 1) / (m.taken + 1) })
                 .OrderByDescending(x => x.ratio).ThenByDescending(x => x.m.dealt).ThenBy(x => x.m.pokemon)
                 .Take(5)
                 .Select(x => new { x.m.pokemon, x.m.trainer, x.m.teamId, x.m.sprite, x.m.dex, x.m.tier, x.m.tera,
-                    value = double.IsInfinity(x.ratio) ? (double?)null : x.ratio })
+                    value = (double?)x.ratio })
                 .ToList();
 
             return Results.Ok(new
@@ -443,7 +508,7 @@ public static class ScheduleApi
             });
         });
 
-        // Submit a replay for one of your matches. The result — winner and score —
+        // Submit a replay for one of your matches. The result, winner and score,
         // is read off the replay itself, not taken on trust from the submitter.
         api.MapPost("/matches/{matchId:int}/replay", async (
             int matchId, SubmitReplayRequest req, ClaimsPrincipal me,
@@ -468,7 +533,7 @@ public static class ScheduleApi
             if (!score.Ok) return Results.BadRequest(new { error = score.Error });
 
             // Re-reporting is allowed (a corrected replay): back the current result
-            // out of standings + stats first — from the STORED log, no re-fetch — then
+            // out of standings + stats first, from the STORED log, no re-fetch, then
             // apply the new one.
             await BackOutAsync(recorder, match, ct);
 
@@ -497,7 +562,7 @@ public static class ScheduleApi
 
         // Remove a match's replay: back its result + stats out of the standings and
         // stats page, and return the match to Pending (no score). Same permissions as
-        // reporting — a coach in the match, or an admin.
+        // reporting, a coach in the match, or an admin.
         api.MapDelete("/matches/{matchId:int}/replay", async (
             int matchId, ClaimsPrincipal me, AppDbContext db, MatchStatsRecorder recorder,
             IHubContext<DraftHub> hub, CancellationToken ct) =>
@@ -530,7 +595,7 @@ public static class ScheduleApi
 
         // Paste a pokemonshowdown.com replay played anywhere (e.g. a coach who
         // prefers the official server) and we auto-attribute it to the most recent
-        // pending match between the two teams — no need to pick the match first.
+        // pending match between the two teams, no need to pick the match first.
         api.MapPost("/replays/auto", async (
             SubmitReplayRequest req, ClaimsPrincipal me, AppDbContext db, ReplayScorer scorer,
             MatchStatsRecorder recorder, IHubContext<DraftHub> hub, CancellationToken ct) =>
@@ -560,7 +625,7 @@ public static class ScheduleApi
 
         // Server-to-server: our own Showdown server POSTs every finished battle's
         // log here (see battle-server chat plugin). We work out which scheduled
-        // match it was and record it automatically — no coach action needed.
+        // match it was and record it automatically, no coach action needed.
         // Not on the authenticated /api group (the plugin has no JWT); guarded by a
         // shared secret instead, so a random tunnel request can't forge results.
         var report = app.MapPost("/api/showdown/report", async (
@@ -573,7 +638,7 @@ public static class ScheduleApi
             if (string.IsNullOrWhiteSpace(req.Log)) return Results.BadRequest();
 
             var report = await scorer.ReportAsync(req.Log, ct);
-            // Not a league game (teambuilder test, already recorded, unknown teams) —
+            // Not a league game (teambuilder test, already recorded, unknown teams),
             // acknowledge and move on rather than erroring.
             if (!report.Ok) return Results.Ok(new { recorded = false, reason = report.Reason });
 
@@ -656,6 +721,7 @@ public static class ScheduleApi
                         teamId = kv.Key.TeamId,
                         name = kv.Key.PokemonEntry.Name,
                         sprite = kv.Key.PokemonEntry.Sprite,
+                        dex = kv.Key.PokemonEntry.DexNumber, // lets applySprite fall back to Serebii/PokeAPI art for custom megas with no gen-5 sprite (e.g. M-Barbaracle)
                         tier = kv.Key.Tier.ToString(),
                         tera = kv.Key.TeraType,
                         teraUsed = g.Terastallized, // false -> the client greys the Tera icon
@@ -832,7 +898,7 @@ public static class ScheduleApi
 
     /// <summary>
     /// Applies an auto-identified result to its (still-pending) match. Delegates to
-    /// <see cref="MatchReporting.RecordReportAsync"/> — the one place a scored game is
+    /// <see cref="MatchReporting.RecordReportAsync"/>, the one place a scored game is
     /// recorded, shared with the Showdown auto-report and the season simulator.
     /// </summary>
     private static Task RecordReportAsync(

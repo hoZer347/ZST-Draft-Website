@@ -1,5 +1,5 @@
 /* App shell. Handles the Discord session and shows the signed-in view.
-   Everything past sign-in is a blank slate — build the app on top of this. */
+   Everything past sign-in is a blank slate, build the app on top of this. */
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -76,8 +76,8 @@ async function signedIn() {
   loadPlayers();
 
   // Land on the tab you were last on (persisted by showView). landOnSavedTab awaits
-  // resolveLeague FIRST — it sets leagueId, which the schedule / scoreboard /
-  // draft-stats tabs need — so a refresh on those tabs loads instead of failing.
+  // resolveLeague FIRST, it sets leagueId, which the schedule / scoreboard /
+  // draft-stats tabs need, so a refresh on those tabs loads instead of failing.
   // resolveLeague is only a single quick fetch, so we land directly on the cached tab
   // with no draft-tab flash. No redirects: the draft tab is just the default until
   // you've navigated somewhere the first time.
@@ -102,7 +102,7 @@ function readActiveTab() {
 // once viewing as someone, swaps to a "back to admin" button instead.
 async function renderImpersonation(user) {
   // Defensive: a cached HTML/JS mismatch (missing #view-as) must not throw and
-  // break sign-in — the impersonation controls are simply absent then.
+  // break sign-in, the impersonation controls are simply absent then.
   if (!user || !el.viewAs || !el.stopViewAs) return;
   const impersonating = !!Auth.impersonator();
   el.stopViewAs.hidden = !impersonating;
@@ -140,7 +140,7 @@ async function loadPlayers() {
     list.innerHTML = '';
     const li = document.createElement('li');
     li.className = 'muted';
-    li.textContent = `Couldn't load players — ${e.message}`;
+    li.textContent = `Couldn't load players, ${e.message}`;
     list.appendChild(li);
     return;
   }
@@ -151,7 +151,7 @@ async function loadPlayers() {
   }
 
   // Removing a player deletes an account, so the control is admin-only and the
-  // server enforces the same — this just hides a button that would 403.
+  // server enforces the same, this just hides a button that would 403.
   const me = Auth.user();
   const canRemove = !!me?.isAdmin;
 
@@ -171,7 +171,7 @@ async function loadPlayers() {
 
     const name = document.createElement('span');
     name.className = 'player-name';
-    // textContent, not innerHTML — usernames come from Discord and must not
+    // textContent, not innerHTML, usernames come from Discord and must not
     // be interpreted as markup.
     name.textContent = p.username;
 
@@ -195,7 +195,7 @@ async function loadPlayers() {
 
     li.append(avatar, name, tag);
 
-    // Never yourself — the server rejects self-removal and it would strand
+    // Never yourself, the server rejects self-removal and it would strand
     // your session.
     if (canRemove && p.discordId !== me.discordId) {
       const rm = document.createElement('button');
@@ -223,7 +223,7 @@ async function toggleReady(discordId, currentlyReady) {
     await refreshDraft();
     loadPlayers();
   } catch (e) {
-    showDraftError(`Could not change ready state — ${e.message}`);
+    showDraftError(`Could not change ready state, ${e.message}`);
   }
 }
 
@@ -270,7 +270,7 @@ async function openTeam(discordId, username) {
     if (!res.ok) throw new Error(`Failed (${res.status})`);
     renderTeam(await res.json());
   } catch (e) {
-    el.teamBody.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: `Couldn't load team — ${e.message}` }));
+    el.teamBody.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: `Couldn't load team, ${e.message}` }));
   }
 }
 
@@ -364,10 +364,10 @@ function monCard(m) {
     const mvp = document.createElement('span');
     mvp.className = 'mvp-badge';
     mvp.textContent = '★ MVP';
-    mvp.title = `Team MVP — ${m.stats.k}/${m.stats.d} KO/faint (${m.stats.k - m.stats.d >= 0 ? '+' : ''}${m.stats.k - m.stats.d})`;
+    mvp.title = `Team MVP, ${m.stats.k}/${m.stats.d} KO/faint (${m.stats.k - m.stats.d >= 0 ? '+' : ''}${m.stats.k - m.stats.d})`;
     name.append(' ', mvp);
   }
-  // C-tier mons were drafted with a Tera type — show it on the team page as the
+  // C-tier mons were drafted with a Tera type, show it on the team page as the
   // same round type-symbol icon the pick feed uses.
   if (m.teraType) name.append(' ', teraIcon(m.teraType));
 
@@ -461,8 +461,8 @@ function battlePanel(s) {
   const sign = (n) => (n >= 0 ? `+${n}` : `${n}`);
   const wr = s.w + s.l > 0 ? Math.round((100 * s.w) / (s.w + s.l)) : 0;
   const diff = s.k - s.d;
-  const ratio = s.taken > 0 ? (s.dealt / s.taken).toFixed(2) : (s.dealt > 0 ? '∞' : '—');
-  const presence = s.teamTurns > 0 ? `${Math.round((100 * s.activeTurns) / s.teamTurns)}%` : '—';
+  const ratio = ((s.dealt + 1) / (s.taken + 1)).toFixed(2); // (dealt+1)/(taken+1) smoothing, no infinity
+  const presence = s.teamTurns > 0 ? `${Math.round((100 * s.activeTurns) / s.teamTurns)}%` : '–';
 
   b.append(
     row('W / L', `${s.w} – ${s.l}`, { text: `${wr}%`, cls: 'tm-brow-sub' }),
@@ -479,13 +479,13 @@ const statClass = (v) => (v >= 100 ? 'stat--hi' : v <= 75 ? 'stat--lo' : 'stat--
 // ── draft ──────────────────────────────────────────────────────────────
 // Snake draft. Each turn the coach on the clock opens a tier, is offered a
 // random sample of that tier's remaining pool (S 3 / A 4 / B 5 / C 7), and
-// picks one. The server is authoritative for all of it — the UI only enables
+// picks one. The server is authoritative for all of it, the UI only enables
 // controls it expects to succeed and re-reads state after every change.
 
 const TIERS = ['S', 'A', 'B', 'C']; // index === the tier ordinal the API wants
 
 let draftId = null;
-let leagueId = null;   // the draft's league — the schedule tab hangs off this
+let leagueId = null;   // the draft's league, the schedule tab hangs off this
 let draft = null;      // last state from the server
 let myTeamId = null;   // which team (if any) this user coaches in this draft
 let deadline = null;   // wall-clock ms when the current pick expires
@@ -498,50 +498,15 @@ const teamName = (id) => {
   return t?.coachName ?? `Team ${id}`;
 };
 
-// Prefer the sheet's Showdown slug (megas/regional forms share a dex, so a bare
-// dex lookup shows the wrong sprite); fall back to a dex-based sprite.
-const spriteUrl = (mon) =>
-  !mon.sprite
-    ? `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${mon.dexNumber}.png`
-    // A full URL in the sprite field is used as-is — lets a specific mon override
-    // the default Showdown gen-5 sprite (e.g. forms with no good gen-5 art).
-    : /^https?:\/\//.test(mon.sprite)
-      ? mon.sprite
-      : `https://play.pokemonshowdown.com/sprites/gen5/${mon.sprite}.png`;
-
-// Serebii's Legends Z-A artwork URL for a mega form, keyed by national dex +
-// mega suffix (-mx / -my / -mz / -m). This is the source of the actual mega
-// art for the Champions/Z-A megas that Showdown has no gen-5 sprite for — so a
-// missing mega shows its real mega form, never the base forme.
-function serebiiMega(mon) {
-  // Tolerate both row shapes: the pool/pick rows use name/dexNumber, the stats
-  // rows use pokemon/dex.
-  const name = mon.name || mon.pokemon || '';
-  const dex = mon.dexNumber ?? mon.dex;
-  const slug = mon.sprite || '';
-  const isMega = name.startsWith('M-') || /-mega[xyz]?$/.test(slug);
-  if (!isMega || !dex) return null;
-  const suffix = /-X$/.test(name) || /-megax$/.test(slug) ? '-mx'
-    : /-Y$/.test(name) || /-megay$/.test(slug) ? '-my'
-    : /-Z$/.test(name) || /-megaz$/.test(slug) ? '-mz'
-    : '-m';
-  return `https://www.serebii.net/legendsz-a/pokemon/${String(dex).padStart(3, '0')}${suffix}.png`;
-}
-
-// Set an <img>'s sprite with graceful fallback. Old megas have a Showdown gen-5
-// pixel sprite (kept, so they match the rest of the pool). The newer Z-A megas
-// (M-Barbaracle, M-Raichu-X, M-Tatsugiri…) don't — so on a load error we fall
-// back to Serebii's real mega artwork rather than the base forme, then to a
-// PokéAPI sprite by dex number, then give up.
+// Set an <img>'s sprite, walking the shared fallback chain (spriteChain, in
+// sprite.js) on each load error so no mon ever ends up a broken icon: primary
+// sprite → real Serebii mega art → PokeAPI by dex → gen-5 base form. See sprite.js
+// for the ordering and why the chain is always non-empty.
 function applySprite(img, mon) {
-  const chain = [];
-  const serebii = serebiiMega(mon);
-  if (serebii) chain.push(serebii);
-  const dex = mon.dexNumber ?? mon.dex;
-  if (dex) chain.push(`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${dex}.png`);
-  let i = 0;
+  const chain = spriteChain(mon);
+  let i = 1; // chain[0] is the primary, set below; onerror advances through the rest
   img.onerror = () => { if (i < chain.length) img.src = chain[i++]; else img.onerror = null; };
-  img.src = spriteUrl(mon);
+  img.src = chain[0];
 }
 
 function monImg(mon) {
@@ -584,7 +549,7 @@ const showDraftError = (msg) => { el.draftError.textContent = msg || ''; el.draf
 // Resolve which draft/league we're in (a single quick fetch), setting draftId +
 // leagueId. Kept SEPARATE from the heavier hydrate below so it can finish before we
 // land on a tab: the schedule / scoreboard / draft-stats tabs read leagueId, so it
-// must be set before they render — but we don't want to wait on the draft state or
+// must be set before they render, but we don't want to wait on the draft state or
 // the realtime connection just to show a tab.
 async function resolveLeague() {
   teardownDraft();
@@ -597,11 +562,11 @@ async function resolveLeague() {
     if (!drafts.length) { showDraftError('No draft configured.'); return; }
 
     // One draft in the mock. Teams are built at Start, so a viewer needn't own
-    // a team to open it — the server tells us our team id once it exists.
+    // a team to open it, the server tells us our team id once it exists.
     draftId = drafts[0].id;
     leagueId = drafts[0].leagueId ?? null;
   } catch (e) {
-    showDraftError(`Can't load the draft — ${e.message}`);
+    showDraftError(`Can't load the draft, ${e.message}`);
   }
 }
 
@@ -621,7 +586,7 @@ async function hydrateDraft() {
     loadPlayers();
     await connect();
   } catch (e) {
-    showDraftError(`Can't load the draft — ${e.message}`);
+    showDraftError(`Can't load the draft, ${e.message}`);
   }
 }
 
@@ -639,7 +604,7 @@ function teardownDraft() {
 }
 
 // Coalesce concurrent refreshes: making a pick awaits its own refresh, and the
-// SignalR 'pickMade' broadcast fires one too — without this they'd both GET and
+// SignalR 'pickMade' broadcast fires one too, without this they'd both GET and
 // both re-render for the same change.
 let refreshInFlight = null;
 function refreshDraft() {
@@ -667,10 +632,10 @@ function render(s) {
 
   const mine = myTeamId != null && s.onClockTeamId === myTeamId;
 
-  el.onClock.textContent = s.onClockTeamId == null ? '—' : teamName(s.onClockTeamId);
+  el.onClock.textContent = s.onClockTeamId == null ? '–' : teamName(s.onClockTeamId);
   el.onClock.classList.toggle('mine', mine);
   renderTurnCountdown(s);
-  // Once the draft is done there's no one on the clock — hide that box for
+  // Once the draft is done there's no one on the clock, hide that box for
   // non-admins (admins keep it for oversight).
   el.onClockBox.hidden = s.state === 'Complete' && !s.isAdmin;
   el.pickNo.textContent = s.state === 'Complete' ? 'done' : `${s.pickNumber} / ${s.totalPicks}`;
@@ -709,7 +674,7 @@ function render(s) {
   if (s.state !== 'Running') {
     el.banner.hidden = false;
     el.banner.textContent = s.state === 'Complete'
-      ? 'Draft complete — every pick is in.'
+      ? 'Draft complete, every pick is in.'
       : s.state === 'NotStarted' ? 'Waiting for an admin to start the draft.'
       : `Draft is ${s.state.toLowerCase()}.`;
   } else {
@@ -717,7 +682,7 @@ function render(s) {
   }
 
   // Play is admin-only. Undo is for the admin or whoever made the last pick.
-  // isAdmin comes from the draft state (live DB), not the cached login token —
+  // isAdmin comes from the draft state (live DB), not the cached login token,
   // a demoted coach must not keep seeing admin controls.
   const isAdmin = !!s.isAdmin;
   const lastPick = s.picks[s.picks.length - 1];
@@ -728,7 +693,7 @@ function render(s) {
   // Abort is admin-only and only meaningful once the draft has begun.
   el.abort.hidden = !(isAdmin && s.state !== 'NotStarted');
   // Season simulator: admin-only, pre-start (same context as Start). Shown on
-  // the live site too — the server runs in Development so the endpoint exists,
+  // the live site too, the server runs in Development so the endpoint exists,
   // and it's admin-gated server-side.
   el.simSeason.hidden = !(isAdmin && s.state === 'NotStarted');
   el.simRandomSeason.hidden = !(isAdmin && s.state === 'NotStarted');
@@ -751,7 +716,7 @@ function render(s) {
 }
 
 function renderTimer() {
-  if (deadline == null) { el.timer.textContent = '—'; el.timer.classList.remove('low'); return; }
+  if (deadline == null) { el.timer.textContent = '–'; el.timer.classList.remove('low'); return; }
   const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
   const pad = (n) => String(n).padStart(2, '0');
   const h = Math.floor(left / 3600);
@@ -780,7 +745,7 @@ function renderTurnCountdown(s) {
 }
 
 // The tier buttons + offered options. Shown to the coach on the clock (who can
-// act) and to the admin (read-only) — nobody else sees the live pick controls.
+// act) and to the admin (read-only), nobody else sees the live pick controls.
 function renderTurn(mine, isAdmin, s) {
   const canAct = mine;
   if (!(mine || isAdmin) || s.state !== 'Running') { el.turn.hidden = true; el.skip.hidden = true; return; }
@@ -791,7 +756,7 @@ function renderTurn(mine, isAdmin, s) {
   const onClockName = teamName(s.onClockTeamId);
 
   // Skip is the on-clock coach's own choice, and only once they've opened a tier
-  // and are looking at options — not during tier selection. The pick still comes
+  // and are looking at options, not during tier selection. The pick still comes
   // back to them in a later cycle; they don't lose the slot.
   const mySkips = s.teams.find((t) => t.id === myTeamId)?.skipsRemaining ?? 0;
   el.skip.hidden = !(canAct && mySkips > 0 && openTier !== null);
@@ -802,8 +767,8 @@ function renderTurn(mine, isAdmin, s) {
   const used = (t) => s.picks.filter((p) => p.teamId === s.onClockTeamId && p.tier === t).length;
 
   el.turnLabel.textContent = canAct
-    ? (openTier ? `Your pick — ${openTier} tier` : 'Your pick — choose a tier')
-    : (openTier ? `${onClockName} is picking — ${openTier} tier` : `${onClockName} is on the clock`);
+    ? (openTier ? `Your pick, ${openTier} tier` : 'Your pick, choose a tier')
+    : (openTier ? `${onClockName} is picking, ${openTier} tier` : `${onClockName} is on the clock`);
 
   el.tiers.replaceChildren(...TIERS.map((key, ordinal) => {
     const remaining = rule(key).slotsPerTeam - used(key);
@@ -811,7 +776,7 @@ function renderTurn(mine, isAdmin, s) {
     b.className = `tier tier--${key}`;
     b.innerHTML = `<span class="tier-key">${key}</span><span class="tier-left">${remaining} left</span>`;
     // Only the coach on the clock can act; the admin sees the same panel but
-    // read-only. The server enforces this too — disabling avoids a doomed click.
+    // read-only. The server enforces this too, disabling avoids a doomed click.
     b.disabled = !canAct || remaining <= 0 || (openTier !== null && openTier !== key);
     b.classList.toggle('open', openTier === key);
     if (canAct) b.onclick = () => offer(ordinal);
@@ -873,7 +838,7 @@ function passedRun(json) {
 // The running feed, newest first.
 // Build one row of the pick feed. Rows never change once made (a pick is
 // immutable; a rollback removes the last one), so the feed can be rendered
-// incrementally — see renderPicks.
+// incrementally, see renderPicks.
 function pickRow(p) {
   const li = document.createElement('li');
   // The shared tier-fill standard: tier lip + wash, and a --mine highlight for
@@ -881,7 +846,7 @@ function pickRow(p) {
   const mine = myTeamId != null && p.teamId === myTeamId;
   li.className = `pick tier-fill tier--${p.tier}${mine ? ' tier-fill--mine' : ''}`;
 
-  // Column 1 — the draft pick itself: number, sprite, name, and (C-tier) its Tera
+  // Column 1, the draft pick itself: number, sprite, name, and (C-tier) its Tera
   // chip right after the name so it reads as part of the pick, not the passed run.
   const main = document.createElement('div');
   main.className = 'pick-main';
@@ -899,10 +864,10 @@ function pickRow(p) {
     main.append(tera);
   }
 
-  // Column 2 — the options offered but passed on this turn (dimmed sprites). Left.
+  // Column 2, the options offered but passed on this turn (dimmed sprites). Left.
   const passed = passedRun(p.otherOptions);
 
-  // Column 3 — who drafted it and the tier (+ auto badge). Right.
+  // Column 3, who drafted it and the tier (+ auto badge). Right.
   const end = document.createElement('div');
   end.className = 'pick-end';
   const who = document.createElement('span');
@@ -961,7 +926,7 @@ function skipRow(sk) {
 
 // The running feed, newest first. Rendered incrementally: a new pick just
 // prepends its row. The old code rebuilt the whole list every refresh, which
-// re-created and re-fetched every sprite in it — so each pick got slower as the
+// re-created and re-fetched every sprite in it, so each pick got slower as the
 // feed grew. A full rebuild only happens when the list shrinks (rollback/abort).
 // Picks and skips as one chronological feed. A skip recorded after N picks slots
 // in right after pick #N (before #N+1); ties break by id. Both kinds only ever
@@ -989,7 +954,7 @@ function renderPicks(s) {
     return;
   }
   if (feed.length < renderedPicks || renderedPicks === 0) {
-    // Fresh feed, or the list shrank — rebuild from scratch.
+    // Fresh feed, or the list shrank, rebuild from scratch.
     el.picks.replaceChildren(...[...feed].reverse().map(feedRow));
     renderedPicks = feed.length;
     sizePicks();
@@ -1004,13 +969,13 @@ function renderPicks(s) {
 
 // Grow the picks feed down to the bottom of the window, then let it scroll.
 // Recomputed on every render, on tab switches, and on resize, because what sits
-// above it — the turn panel especially — changes height.
+// above it, the turn panel especially, changes height.
 function sizePicks() {
   const view = document.getElementById('view-draft');
   if (!el.picks || !view || view.hidden) return;
   // On the stacked narrow layout the roster sits above the draft, so the pick
   // card starts low (often below the fold). Pinning its bottom to the viewport
-  // would leave ~0 height and no way to reach it — so drop the cap and let the
+  // would leave ~0 height and no way to reach it, so drop the cap and let the
   // list flow at full height and the whole page scroll to it instead.
   if (window.matchMedia('(max-width: 620px)').matches) {
     el.picks.style.maxHeight = '';
@@ -1083,7 +1048,7 @@ async function connect() {
   ['turnChanged', 'pickMade', 'optionsOffered', 'pickSkipped', 'pickRolledBack', 'draftStateChanged']
     .forEach((evt) => conn.on(evt, () => refreshDraft()));
 
-  // Picks / skips change the draft analytics — drop the cache and, if that tab is
+  // Picks / skips change the draft analytics, drop the cache and, if that tab is
   // open, refresh it live.
   ['pickMade', 'pickSkipped', 'pickRolledBack', 'draftStateChanged'].forEach((evt) =>
     conn.on(evt, () => { draftStatsData = null; if (!$('view-draftstats')?.hidden) ensureDraftStats(); }));
@@ -1091,10 +1056,10 @@ async function connect() {
   // Roster changes (someone signed in / was removed) fan out to all clients.
   conn.on('playersChanged', () => { loadPlayers(); renderImpersonation(Auth.user()); });
 
-  // Someone readied up or left before the draft — update the button + markers.
+  // Someone readied up or left before the draft, update the button + markers.
   conn.on('readyChanged', async () => { await refreshDraft(); loadPlayers(); });
 
-  // A match was scored or the schedule was regenerated — refresh the tab if it's
+  // A match was scored or the schedule was regenerated, refresh the tab if it's
   // been opened (scheduleData is set on first view) so results land live.
   conn.on('scheduleChanged', () => {
     if (scheduleData) ensureSchedule();
@@ -1140,7 +1105,7 @@ async function ensureTierList() {
       if (!res.ok) throw new Error(`Failed (${res.status})`);
       poolCache = await res.json();
     } catch (e) {
-      el.tlBody.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: `Couldn't load the pool — ${e.message}` }));
+      el.tlBody.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: `Couldn't load the pool, ${e.message}` }));
       return;
     }
   }
@@ -1211,7 +1176,7 @@ function tlCriteria() {
   };
 }
 
-// Passes every active filter except the one named — the basis for facet counts.
+// Passes every active filter except the one named, the basis for facet counts.
 const tlPasses = (m, skip) => poolMatches(m, tlCriteria(), skip);
 
 function tlTypesPresent(skip) {
@@ -1282,8 +1247,8 @@ function renderTierList() {
 function tlCard(m) {
   const card = document.createElement('div');
   card.className = `tl-mon tl-mon--${m.tier}` + (m.drafted ? ' taken' : '');
-  card.title = m.owner ? `${m.name} — drafted by ${m.owner}`
-    : m.drafted ? `${m.name} — already drafted` : m.name;
+  card.title = m.owner ? `${m.name}, drafted by ${m.owner}`
+    : m.drafted ? `${m.name}, already drafted` : m.name;
 
   const img = document.createElement('img');
   img.className = 'tl-mon-img';
@@ -1326,14 +1291,14 @@ function tlCard(m) {
 // The season's matchups. The signed-in coach's next game sits big at the top of
 // the column, this week's other games under it, then future weeks; already-played
 // games stack *above* the fold so you scroll up into history. Results aren't
-// entered by hand — a coach pastes their Showdown replay and the server reads the
+// entered by hand, a coach pastes their Showdown replay and the server reads the
 // winner and score off the battle log (see ScheduleApi / ReplayScorer).
 
 let scheduleData = null;
 
 async function ensureSchedule() {
   if (leagueId == null) {
-    el.schedScroll.replaceChildren(muted('No league yet — the schedule appears once a draft exists.'));
+    el.schedScroll.replaceChildren(muted('No league yet, the schedule appears once a draft exists.'));
     return;
   }
   el.schedScroll.replaceChildren(muted('Loading…'));
@@ -1342,7 +1307,7 @@ async function ensureSchedule() {
     if (!res.ok) throw new Error(`Failed (${res.status})`);
     scheduleData = await res.json();
   } catch (e) {
-    el.schedScroll.replaceChildren(muted(`Couldn't load the schedule — ${e.message}`));
+    el.schedScroll.replaceChildren(muted(`Couldn't load the schedule, ${e.message}`));
     return;
   }
   renderSchedule();
@@ -1368,7 +1333,7 @@ function renderSchedule() {
     // Empty either because the draft hasn't begun, or the "my battles" filter
     // matched nothing yet.
     el.schedScroll.replaceChildren(muted(
-      schedMineOnly && canFilter ? 'None of your battles to show yet.' : 'No schedule yet — it appears once the draft starts.'));
+      schedMineOnly && canFilter ? 'None of your battles to show yet.' : 'No schedule yet, it appears once the draft starts.'));
     return;
   }
 
@@ -1385,7 +1350,7 @@ function renderSchedule() {
 
   const frag = document.createDocumentFragment();
 
-  // Past — smaller cards, yours a touch bigger. Stacked above the present anchor.
+  // Past, smaller cards, yours a touch bigger. Stacked above the present anchor.
   if (played.length) {
     frag.append(schedHeading('Previous results'));
     for (const m of played) frag.append(matchCard(m, m.mine ? 'small-mine' : 'small'));
@@ -1408,7 +1373,7 @@ function renderSchedule() {
     present.append(schedHeading('Upcoming'));
     for (const m of future) present.append(matchCard(m, m.mine ? 'mine' : 'normal'));
   }
-  if (!present.childNodes.length) present.append(muted('The season is complete — every game has been played.'));
+  if (!present.childNodes.length) present.append(muted('The season is complete, every game has been played.'));
   frag.append(present);
 
   el.schedScroll.replaceChildren(frag);
@@ -1467,7 +1432,7 @@ function matchCard(m, size) {
   // Only a coach in this match, or an admin, gets the replay control.
   const canEdit = m.mine || !!draft?.isAdmin;
 
-  // home — score(+replay button) — away, with the winner emphasised once played.
+  // home, score(+replay button), away, with the winner emphasised once played.
   const homeWon = m.result === 'HomeWin';
   const awayWon = m.result === 'AwayWin';
   const row = document.createElement('div');
@@ -1510,18 +1475,34 @@ function battleStatsBlock(m) {
   const wrap = document.createElement('div');
   wrap.className = 'match-stats';
   wrap.append(
-    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.homeTeamId)),
-    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.awayTeamId)),
+    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.homeTeamId), m, 'home'),
+    battleStatsSide(m.battleStats.filter((s) => s.teamId === m.awayTeamId), m, 'away'),
   );
   return wrap;
+}
+
+// A link to one team's captured build (the actual moves/items/EVs/Tera they brought)
+// as Showdown / pokepaste text, or null when that side has no build stored. Sits
+// under that team's scoresheet table. The build is stored verbatim, not interpreted.
+function teamPasteLink(m, side) {
+  const has = side === 'home' ? m.hasHomePaste : m.hasAwayPaste;
+  if (!has) return null;
+  const a = document.createElement('a');
+  a.className = 'mstats-paste-link';
+  a.href = `/matches/${m.id}/teams?team=${side}`;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = 'pokepaste';
+  a.title = `${side === 'home' ? m.homeName : m.awayName}'s team, rendered with sprites, spread and moves (with the raw Showdown export)`;
+  return a;
 }
 
 // No team-name caption here: the match-row above already names home (left) and away
 // (right) in the same left/right positions these two stats tables sit, so a caption
 // would just repeat the coach name.
-function battleStatsSide(mons) {
-  const side = document.createElement('div');
-  side.className = 'mstats-side';
+function battleStatsSide(mons, m, side) {
+  const col = document.createElement('div');
+  col.className = 'mstats-side';
 
   const head = document.createElement('div');
   head.className = 'mstat mstat-head';
@@ -1533,8 +1514,12 @@ function battleStatsSide(mons) {
     h.title = title;
     head.append(h);
   }
-  side.append(head, ...mons.map(monStatRow));
-  return side;
+  col.append(head, ...mons.map(monStatRow));
+
+  // This team's build, linked under its own scoresheet.
+  const link = teamPasteLink(m, side);
+  if (link) col.append(link);
+  return col;
 }
 
 function monStatRow(s) {
@@ -1637,8 +1622,8 @@ function avatarBubble(url, className) {
   return span;
 }
 
-// The centre of the score/players row: the score, plus — for a played match and
-// only for the two coaches in it or an admin — a dynamic replay button that
+// The centre of the score/players row: the score, plus, for a played match and
+// only for the two coaches in it or an admin, a dynamic replay button that
 // toggles an inline watch/edit panel beneath the card.
 function matchMiddle(m, card, canEdit) {
   const wrap = document.createElement('div');
@@ -1656,23 +1641,26 @@ function matchMiddle(m, card, canEdit) {
   }
   wrap.append(mid);
 
-  // Team builds as a pokepaste, shown to everyone for a played game that has them.
-  if (m.played && m.hasPaste) {
+  // Combined both-teams paste, only as a fallback: when the game has builds but no
+  // per-mon scoresheet to hang the per-team links under. Normally each team's build
+  // links under its own stats table instead (see battleStatsSide / teamPasteLink).
+  if (m.played && m.hasPaste && !m.battleStats?.length) {
     const paste = document.createElement('a');
     paste.className = 'match-paste-link';
-    paste.href = `/api/matches/${m.id}/paste`;
+    paste.href = `/matches/${m.id}/teams`;
     paste.target = '_blank';
     paste.rel = 'noopener';
-    paste.textContent = 'Teams (paste)';
-    paste.title = 'Both teams as a Pokémon Showdown / pokepaste export';
+    paste.textContent = 'pokepastes';
+    paste.title = 'Both teams, rendered with sprites, spread and moves (with the raw Showdown export)';
     wrap.append(paste);
   }
 
-  if (m.played && canEdit) {
+  if (m.played) {
     const actions = document.createElement('div');
     actions.className = 'match-mid-actions';
 
-    // Watch: a plain link to the replay (only when one exists).
+    // Watch: a plain link to the replay, shown to EVERYONE (any trainer, not just
+    // the two coaches in the match) whenever a replay exists.
     if (m.replayUrl) {
       const watch = document.createElement('a');
       watch.className = 'match-replay-link';
@@ -1683,39 +1671,44 @@ function matchMiddle(m, card, canEdit) {
       actions.append(watch);
     }
 
-    // Edit/Add: toggles the inline link editor beneath the card.
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.className = 'match-replay-btn';
-    edit.textContent = m.replayUrl ? 'Edit replay' : 'Add replay';
-    let panel = null;
-    edit.onclick = () => {
-      if (!panel) {
-        panel = replayForm(m, { prefill: m.replayUrl, submitLabel: 'Save link' });
-        panel.hidden = true; // start hidden so this first click reveals it
-        card.append(panel);
-      }
-      panel.hidden = !panel.hidden;
-      edit.classList.toggle('open', !panel.hidden);
-    };
-    actions.append(edit);
+    // Edit/Add + Remove are only for a coach IN the match (or an admin).
+    if (canEdit) {
+      // Edit/Add: toggles the inline link editor beneath the card.
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'match-replay-btn';
+      edit.textContent = m.replayUrl ? 'Edit replay' : 'Add replay';
+      let panel = null;
+      edit.onclick = () => {
+        if (!panel) {
+          panel = replayForm(m, { prefill: m.replayUrl, submitLabel: 'Save link' });
+          panel.hidden = true; // start hidden so this first click reveals it
+          card.append(panel);
+        }
+        panel.hidden = !panel.hidden;
+        edit.classList.toggle('open', !panel.hidden);
+      };
+      actions.append(edit);
 
-    // Remove: drop the replay and return the match to Pending — the server backs
-    // its result + stats out under the hood.
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'match-replay-btn match-remove';
-    remove.textContent = 'Remove';
-    remove.onclick = async () => {
-      if (!confirm('Remove this replay? The match goes back to unplayed and its result + stats are backed out.')) return;
-      remove.disabled = true;
-      const res = await Auth.authFetch(`/api/matches/${m.id}/replay`, { method: 'DELETE' });
-      if (res.ok) { statsData = null; await ensureSchedule(); }
-      else { remove.disabled = false; showDraftError('Failed to remove the replay.'); }
-    };
-    actions.append(remove);
+      // Remove: drop the replay and return the match to Pending, the server backs
+      // its result + stats out under the hood.
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'match-replay-btn match-remove';
+      remove.textContent = 'Remove';
+      remove.onclick = async () => {
+        if (!confirm('Remove this replay? The match goes back to unplayed and its result + stats are backed out.')) return;
+        remove.disabled = true;
+        const res = await Auth.authFetch(`/api/matches/${m.id}/replay`, { method: 'DELETE' });
+        if (res.ok) { statsData = null; await ensureSchedule(); }
+        else { remove.disabled = false; showDraftError('Failed to remove the replay.'); }
+      };
+      actions.append(remove);
+    }
 
-    wrap.append(actions);
+    // Only take up space if there's actually something to show (a replay to watch
+    // and/or the edit controls).
+    if (actions.childNodes.length) wrap.append(actions);
   }
   return wrap;
 }
@@ -1811,8 +1804,8 @@ const STAT_COLS = [
   { key: 'record', label: 'W–L', num: true, text: (r) => `${r.w}–${r.l}`, tip: 'Record of games it played.' },
   { key: 'winrate', label: 'Win%', num: true, fmt: (v) => `${Math.round(v * 100)}%`,
     tip: 'Win rate over games played; ties break on games played.' },
-  { key: 'ratio', label: 'Dmg ratio', num: true, fmt: (v) => (v === Infinity ? '∞' : v.toFixed(2)),
-    tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
+  { key: 'ratio', label: 'Dmg ratio', num: true, fmt: (v) => v.toFixed(2),
+    tip: 'Damage dealt vs taken, smoothed as (dealt+1)/(taken+1) so it never divides by zero.' },
   { key: 'dealt', label: 'Dealt%', num: true, fmt: (v) => Math.round(v),
     tip: 'Damage dealt to opponents (direct + indirect), cumulative % of an HP bar.' },
   { key: 'dealtDirect', label: 'Dealt·dir%', num: true, fmt: (v) => Math.round(v),
@@ -1858,7 +1851,7 @@ async function ensureStats() {
       allyDmg: (r.dealtAllyDirect || 0) + (r.dealtAllyIndirect || 0),
       enemyHeal: r.healedEnemy || 0,
       heal: r.recovered + r.healed, // total HP restored: to itself + to allies
-      ratio: r.taken > 0 ? r.dealt / r.taken : (r.dealt > 0 ? Infinity : 0),
+      ratio: (r.dealt + 1) / (r.taken + 1), // (dealt+1)/(taken+1) smoothing, no infinity
       // Derived: +/− is KOs minus faints; win rate over games with a result.
       plusminus: r.k - r.d,
       winrate: (r.w + r.l) ? r.w / (r.w + r.l) : 0,
@@ -1871,7 +1864,7 @@ async function ensureStats() {
     renderStats();
   } catch (e) {
     body.replaceChildren(Object.assign(document.createElement('p'), {
-      className: 'muted', textContent: `Couldn't load stats — ${e.message}`,
+      className: 'muted', textContent: `Couldn't load stats, ${e.message}`,
     }));
   }
 }
@@ -1951,7 +1944,7 @@ function renderStats() {
     tr.className = `stats-row tier--${r.tier}` + (r.mine ? ' stats-row--mine' : '');
 
     const mon = document.createElement('td');
-    // Flex lives on an inner wrapper, not the <td> — display:flex on a table cell
+    // Flex lives on an inner wrapper, not the <td>, display:flex on a table cell
     // drops it out of the column layout and misaligns the whole table.
     const cell = document.createElement('div');
     cell.className = 'stats-mon';
@@ -1991,7 +1984,7 @@ syncHeaderHeight();
 window.addEventListener('resize', () => { sizePicks(); syncHeaderHeight(); });
 
 // The teambuilder lives on our own Showdown server now, not an embed. We open
-// the official Showdown client pointed at our server (the ~~host:port syntax) —
+// the official Showdown client pointed at our server (the ~~host:port syntax),
 // that's how you reach a custom server's rooms without hosting the client too.
 // The teambuilder URL for the signed-in coach (self-hosted Showdown client with
 // our league tiers baked in). buildTeambuilderUrl / openTeambuilderWith live in
@@ -2021,13 +2014,13 @@ async function warmMatchups() {
     try {
       const res = await Auth.authFetch(`/api/leagues/${leagueId}/schedule`);
       if (res.ok) scheduleData = await res.json();
-    } catch { /* best-effort — seeding is optional */ }
+    } catch { /* best-effort, seeding is optional */ }
   }
   return myMatchupsFromCache();
 }
 
-// Pre-built random teams (packed strings) from the coach's own roster — one per
-// matchup — cached so a cold teambuilder open can seed a filled team per week.
+// Pre-built random teams (packed strings) from the coach's own roster, one per
+// matchup, cached so a cold teambuilder open can seed a filled team per week.
 // A single window.open on the click gesture can't await a fetch, so these are
 // warmed in the background ahead of time (see boot + a cold open).
 // Admin "build demo teams": [{player, team}] for every player, seeded as a folder
@@ -2040,7 +2033,7 @@ let demoTeamsCache = null;
 function openTeambuilder() {
   const matchups = myMatchupsFromCache();
   // The "Week X vs <opponent>" folder is seeded with BLANK teams for the coach to
-  // fill — we never pre-fill them. Only the admin's demo teams (when built) carry
+  // fill, we never pre-fill them. Only the admin's demo teams (when built) carry
   // content; those ride along in demoTeamsCache.
   openTeambuilderWith((...a) => window.open(...a), Auth.user()?.username, matchups, null, demoTeamsCache);
   if (!matchups.length) warmMatchups().catch(() => {});
@@ -2053,7 +2046,7 @@ let navAnimTimer;
 function setNav(open) {
   // The slide transition is enabled ONLY around a deliberate open/close (via the
   // temporary `nav-animate` class). So resizing the window across the mobile
-  // breakpoint — which flips the drawer's transform from none to off-screen — can
+  // breakpoint, which flips the drawer's transform from none to off-screen, can
   // never animate it, which is what made the menu flash open then retract.
   el.tabs.classList.add('nav-animate');
   clearTimeout(navAnimTimer);
@@ -2070,10 +2063,10 @@ el.navBackdrop.onclick = () => setNav(false);
 document.querySelectorAll('.tab').forEach((t) => {
   t.onclick = () => {
     setNav(false); // picking a tab closes the mobile drawer
-    // Teambuilder isn't an in-app view — it launches the external Showdown
+    // Teambuilder isn't an in-app view, it launches the external Showdown
     // builder in a new browser tab and leaves the user on their current view.
     if (t.dataset.view === 'teambuilder') { openTeambuilder(); return; }
-    // My team isn't a view either — it opens the same team-page overlay you get
+    // My team isn't a view either, it opens the same team-page overlay you get
     // by clicking your own icon in the roster, for the signed-in user.
     if (t.dataset.view === 'myteam') { const u = Auth.user(); if (u) openTeam(u.discordId, u.username); return; }
     showView(t.dataset.view);
@@ -2108,7 +2101,7 @@ async function ensureScoreboard() {
   if (!body) return;
   if (scoreboardData) { renderScoreboard(); return; }
   if (leagueId == null) {
-    body.replaceChildren(muted('No season yet — standings appear once a draft has started.'));
+    body.replaceChildren(muted('No season yet, standings appear once a draft has started.'));
     return;
   }
   body.innerHTML = '<p class="muted">Loading…</p>';
@@ -2118,20 +2111,20 @@ async function ensureScoreboard() {
     scoreboardData = await res.json();
     renderScoreboard();
   } catch (e) {
-    body.replaceChildren(muted(`Couldn't load the scoreboard — ${e.message}`));
+    body.replaceChildren(muted(`Couldn't load the scoreboard, ${e.message}`));
   }
 }
 
 // The four leaderboards and how each mon's value is shown.
 const LEADER_CATS = [
   { key: 'presence', label: 'Season presence', fmt: (v) => `${Math.round(v * 100)}%`,
-    tip: "Field turns ÷ the team's total battle turns across the season — how much this mon was actually on the field." },
+    tip: "Field turns ÷ the team's total battle turns across the season, how much this mon was actually on the field." },
   { key: 'plusMinus', label: '+/−', fmt: (v) => (v > 0 ? `+${v}` : `${v}`),
     tip: 'KOs scored minus times fainted.' },
   { key: 'healing', label: 'Team Healing', fmt: (v) => `${Math.round(v)}%`,
     tip: 'HP restored to allies (Pollen Puff, Life Dew, ally Grassy Terrain). Excludes self-recovery like Rest/Recover.' },
-  { key: 'damageRatio', label: 'Damage ratio', fmt: (v) => (v == null ? '∞' : v.toFixed(2)),
-    tip: 'Damage dealt ÷ damage taken (∞ if it never took damage).' },
+  { key: 'damageRatio', label: 'Damage ratio', fmt: (v) => (v == null ? '–' : v.toFixed(2)),
+    tip: 'Damage dealt vs taken, smoothed as (dealt+1)/(taken+1) so it never divides by zero.' },
 ];
 
 function renderScoreboard() {
@@ -2200,7 +2193,7 @@ function standingsCard(rows, myTeamId = null) {
     // The W–L record (which already conveys the win/loss differential the sort
     // leads on) plus the KO tiebreakers.
     const record = statChip('Record', recordText(r), 'Match record: wins-losses' + (r.draws ? '-draws' : ''));
-    const koDiff = statChip('KO±', signed(r.koDiff), 'KO differential — total KOs scored minus total faints');
+    const koDiff = statChip('KO±', signed(r.koDiff), 'KO differential, total KOs scored minus total faints');
     const kos = statChip('KOs', `${r.totalKos}`, "Total KOs scored across the team's roster");
     const faints = statChip('Faints', `${r.totalFaints}`, "Total times the team's mons fainted");
 
@@ -2245,7 +2238,7 @@ function standingsMvp(mvp) {
     cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-name', textContent: mvp.pokemon }));
     cell.title = `Team MVP: ${mvp.pokemon} (${signed(mvp.kos - mvp.faints)} KO diff)`;
   } else {
-    cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-name muted', textContent: '—' }));
+    cell.append(Object.assign(document.createElement('span'), { className: 'standings-mvp-name muted', textContent: '–' }));
   }
   return cell;
 }
@@ -2281,8 +2274,8 @@ function leaderCard(cat, entries, myTeamId = null) {
   for (let i = 0; i < LEADER_SLOTS; i++) {
     const e = entries[i];
     // A mon that didn't contribute to this stat (value exactly 0) is shown as a
-    // greyed empty slot, not a real row of "0". A null value is NOT zero (it's the
-    // damage-ratio infinity: dealt damage, took none), which stays a real top entry.
+    // greyed empty slot, not a real row of "0". (The damage ratio is now smoothed
+    // to a finite value that's never exactly 0, so it always shows a real row.)
     const contributed = e && e.value !== 0;
     list.appendChild(contributed ? leaderRow(cat, e, myTeamId) : emptyLeaderSlot());
   }
@@ -2307,7 +2300,7 @@ function leaderRow(cat, e, myTeamId = null) {
   monLine.className = 'leader-mon-line';
   const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = e.pokemon;
   monLine.append(mon);
-  // C-tier mons drafted with a Tera type — show its type symbol beside the name.
+  // C-tier mons drafted with a Tera type, show its type symbol beside the name.
   if (e.tera) monLine.append(teraIcon(e.tera));
   const trainer = document.createElement('span'); trainer.className = 'leader-trainer'; trainer.textContent = e.trainer;
   who.append(monLine, trainer);
@@ -2327,9 +2320,9 @@ function emptyLeaderSlot() {
   li.className = 'leader-row leader-row--empty';
   const box = document.createElement('span'); box.className = 'leader-sprite leader-sprite--empty';
   const who = document.createElement('span'); who.className = 'leader-who';
-  const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = '—';
+  const mon = document.createElement('span'); mon.className = 'leader-mon'; mon.textContent = '–';
   who.append(mon);
-  const val = document.createElement('span'); val.className = 'leader-value'; val.textContent = '—';
+  const val = document.createElement('span'); val.className = 'leader-value'; val.textContent = '–';
   li.append(box, who, val);
   return li;
 }
@@ -2346,7 +2339,7 @@ async function ensureDraftStats() {
   if (!body) return;
   if (draftStatsData) { renderDraftStats(); return; }
   if (leagueId == null) {
-    body.replaceChildren(muted('No draft yet — analytics appear once a draft has started.'));
+    body.replaceChildren(muted('No draft yet, analytics appear once a draft has started.'));
     return;
   }
   if (!body.querySelector('.dstat-card')) body.innerHTML = '<p class="muted">Loading…</p>';
@@ -2365,7 +2358,7 @@ function renderDraftStats() {
   const d = draftStatsData;
   if (!body || !d) return;
   if (!d.totalPicks) {
-    body.replaceChildren(muted('No picks yet — analytics appear once the draft is under way.'));
+    body.replaceChildren(muted('No picks yet, analytics appear once the draft is under way.'));
     return;
   }
 
@@ -2381,7 +2374,7 @@ function renderDraftStats() {
   grid.className = 'dstat-grid';
   grid.append(
     monListCard('Instant picks', d.pokemon.instantPicks,
-      'Drafted the moment they were offered — never once passed over.', { count: false }),
+      'Drafted the moment they were offered, never once passed over.', { count: false }),
     monListCard('Most rejected', d.pokemon.mostRejected,
       'How many times each mon was offered but passed over.'),
     monListCard('Put Me In Coach!!!', d.pokemon.putMeInCoach,
@@ -2503,7 +2496,7 @@ const on = (id, handler) => { const node = $(id); if (node) node.onclick = handl
 on('play', async () => {
   // No separate save: the pre-start settings are read straight off their inputs
   // and handed to start, so the numbers the admin sees are the ones used. Only
-  // sent while the settings panel is up (i.e. NotStarted) — a Paused resume keeps
+  // sent while the settings panel is up (i.e. NotStarted), a Paused resume keeps
   // whatever was already configured.
   let body;
   if (!el.draftSettings.hidden) {
@@ -2534,7 +2527,7 @@ on('skip', () => skip());
 
 // Dev-only: replace the league with the canned, fully-played ZST 3 test season.
 on('sim-season', async () => {
-  if (!confirm('Load ZST 3 — replace this league with the canned test season (real teams, drafted rosters, played matches)? This wipes the current draft.')) return;
+  if (!confirm('Load ZST 3, replace this league with the canned test season (real teams, drafted rosters, played matches)? This wipes the current draft.')) return;
   el.simSeason.disabled = true;
   const label = el.simSeason.textContent;
   el.simSeason.textContent = 'Loading… (fetching replays)';
@@ -2548,7 +2541,7 @@ on('sim-season', async () => {
     loadPlayers();
     showDraftError(`Simulated season: ${r.teams} teams, ${r.picks} picks, ${r.matches} matches.`);
   } catch (e) {
-    showDraftError(`Sim failed — ${e.message}`);
+    showDraftError(`Sim failed, ${e.message}`);
   } finally {
     el.simSeason.disabled = false;
     el.simSeason.textContent = label;
@@ -2558,7 +2551,7 @@ on('sim-season', async () => {
 // Purely-random season: synthetic teams, a random valid draft, random stats. No
 // replays, so it returns instantly. Same wipe warning as the real one.
 // Replace the league with a random test season. teams=null uses the endpoint's
-// default; pass a number (e.g. 16) to force that many synthetic players — the
+// default; pass a number (e.g. 16) to force that many synthetic players, the
 // server clamps it to what the pool can fill. btn is the button that triggered it,
 // so its own label reflects progress.
 async function runRandomSim(teams, btn) {
@@ -2567,7 +2560,7 @@ async function runRandomSim(teams, btn) {
     ? 'real headless Showdown battles (results + stats recorded from the logs)'
     : 'no battles (the schedule stays pending)';
   const who = teams ? `${teams} synthetic players` : 'synthetic teams';
-  if (!confirm(`Replace this league with a RANDOM test season — ${who}, random draft, and ${how}? This wipes the current draft.`)) return;
+  if (!confirm(`Replace this league with a RANDOM test season, ${who}, random draft, and ${how}? This wipes the current draft.`)) return;
   btn.disabled = true;
   const label = btn.textContent;
   btn.textContent = battles ? 'Simulating battles…' : 'Simulating…';
@@ -2581,18 +2574,18 @@ async function runRandomSim(teams, btn) {
     draftStatsData = null; // and the draft-analytics cache
     await refreshDraft();
     loadPlayers();
-    let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.skips ? `${r.skips} skips, ` : ''}${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles — schedule left pending'}).`;
+    let msg = `Random season: ${r.teams} teams, ${r.picks} picks, ${r.skips ? `${r.skips} skips, ` : ''}${r.matches} matches (${r.realBattles ? 'real battles, results + stats recorded from the logs' : 'no battles, schedule left pending'}).`;
 
     // Build demo teams: an example team for every player, cached to seed onto THIS
     // (the admin's) device as a folder per player the next time the Teambuilder opens.
     if (el.demoTeams.checked) {
       btn.textContent = 'Building demo teams…';
       const n = await prepareDemoTeams();
-      if (n != null) msg += ` Demo teams for ${n} players ready — open Teambuilder to see them.`;
+      if (n != null) msg += ` Demo teams for ${n} players ready, open Teambuilder to see them.`;
     }
     showDraftError(msg);
   } catch (e) {
-    showDraftError(`Sim failed — ${e.message}`);
+    showDraftError(`Sim failed, ${e.message}`);
   } finally {
     btn.disabled = false;
     btn.textContent = label;
@@ -2693,7 +2686,7 @@ async function prepareDemoTeams() {
   } catch { return null; }
 }
 
-// Checking "Build demo teams" prepares them immediately — no sim required — so a
+// Checking "Build demo teams" prepares them immediately, no sim required, so a
 // real league with readied-up players can seed example teams. Unchecking clears.
 el.demoTeams?.addEventListener('change', async () => {
   if (!el.demoTeams.checked) { demoTeamsCache = null; return; }
@@ -2701,7 +2694,7 @@ el.demoTeams?.addEventListener('change', async () => {
   if (label) label.style.opacity = '0.6';
   const n = await prepareDemoTeams();
   if (label) label.style.opacity = '';
-  if (n != null) showDraftError(`Demo teams for ${n} players ready — open Teambuilder to see them.`);
+  if (n != null) showDraftError(`Demo teams for ${n} players ready, open Teambuilder to see them.`);
   else { el.demoTeams.checked = false; showDraftError('Could not build demo teams (no readied players yet?).'); }
 });
 
@@ -2725,7 +2718,7 @@ on('add-dummy', async () => {
     loadPlayers();
     renderImpersonation(Auth.user()); // the new dummy joins the "View as" list
   } catch (e) {
-    showDraftError(`Could not add dummy — ${e.message}`);
+    showDraftError(`Could not add dummy, ${e.message}`);
   } finally {
     if (el.addDummy) el.addDummy.disabled = false;
   }
@@ -2784,7 +2777,7 @@ async function loadDevSignin() {
   if (!isLocalhost || !el.devSignin || !el.devSigninSelect) return;
   let accounts;
   try { accounts = await Auth.devAccounts(); }
-  catch { return; } // not in Development — leave it hidden
+  catch { return; } // not in Development, leave it hidden
   el.devSigninSelect.replaceChildren(
     new Option('Choose an account…', ''),
     ...accounts.map((a) => {
@@ -2809,7 +2802,7 @@ on('logout', async () => {
 });
 
 // Admin: pick a dummy coach to view as, or pop back to your own account. Guarded
-// like the on() handlers — a missing #view-as (cached HTML/JS mismatch) must not
+// like the on() handlers, a missing #view-as (cached HTML/JS mismatch) must not
 // throw here at module load, which would stop boot() and kill the whole app.
 if (el.viewAs) el.viewAs.onchange = async (e) => {
   const id = e.target.value;
@@ -2820,7 +2813,7 @@ if (el.viewAs) el.viewAs.onchange = async (e) => {
 on('stop-view-as', () => { Auth.stopImpersonating(); location.reload(); });
 
 // The signed-in session lives in localStorage, so a normal reload stays logged
-// in. A hard reload — Ctrl+F5, or Ctrl/Cmd+Shift+R — is the deliberate "start
+// in. A hard reload, Ctrl+F5, or Ctrl/Cmd+Shift+R, is the deliberate "start
 // clean" gesture, so wipe the session synchronously first. keydown reaches this
 // handler before the browser navigates; plain F5 is left alone.
 window.addEventListener('keydown', (e) => {

@@ -30,6 +30,14 @@ internal static class SeasonSeed
         db.Drafts.Add(draft);
         await db.SaveChangesAsync();
 
+        // Real national-dex numbers for the mons the tests seed, so icon-fallback
+        // projections (which key their Serebii/PokeAPI fallback off DexNumber) carry
+        // a meaningful dex; anything else gets a nonzero placeholder.
+        var dexOf = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Pikachu"] = 25, ["Snorlax"] = 143, ["Gengar"] = 94, ["Blissey"] = 242,
+        };
+
         var picks = new Dictionary<string, Pick>();
         var n = 0;
         void Roster(Team team, string[] mons)
@@ -40,6 +48,7 @@ internal static class SeasonSeed
                 {
                     LeagueId = league.Id, Name = mon, Tier = Tier.C,
                     Sprite = mon.ToLowerInvariant(), DraftedByTeamId = team.Id,
+                    DexNumber = dexOf.GetValueOrDefault(mon, 1),
                 };
                 db.Pokemon.Add(entry);
                 var pick = new Pick { DraftId = draft.Id, PickNumber = ++n, TeamId = team.Id, PokemonEntry = entry, Tier = Tier.C };
