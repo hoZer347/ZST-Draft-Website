@@ -224,6 +224,22 @@ public static class PlayersApi
             return Results.Ok(new { found = true, showdownName = coach.ShowdownName ?? coach.Username, mons });
         });
         if (corsPolicy is not null) roster.RequireCors(corsPolicy);
+
+        // Every mon owned by ANY coach this season, for the Scrims teambuilder picker
+        // (scrims let you bring any drafted mon, not just your own). Anonymous + CORS
+        // like the per-coach roster: only public draft data, no secret. Scoped to the
+        // current draft's league so a past season's pool doesn't leak in.
+        var seasonRoster = app.MapGet("/api/showdown/season-roster", async (AppDbContext db, CancellationToken ct) =>
+        {
+            var draft = await db.Drafts.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+            if (draft is null) return Results.Ok(new { mons = Array.Empty<object>() });
+            var mons = await db.Pokemon
+                .Where(p => p.LeagueId == draft.LeagueId && p.DraftedByTeamId != null)
+                .Select(p => new { tier = p.Tier.ToString(), name = p.Name, slug = p.Sprite })
+                .ToListAsync(ct);
+            return Results.Ok(new { mons });
+        });
+        if (corsPolicy is not null) seasonRoster.RequireCors(corsPolicy);
     }
 
     /// <summary>Showdown's user/species id form: lowercase, alphanumerics only.</summary>

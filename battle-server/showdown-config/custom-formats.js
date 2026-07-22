@@ -130,6 +130,57 @@ function checkRoster(team, roster, dex) {
   return problems;
 }
 
+// Base ids of the mons a coach may TERASTALLIZE: only C-tier picks that were drafted
+// with a Tera type. Megas / primals / Shedinja are Tera-barred at draft time, so their
+// roster `tera` is null and they fall out here automatically, no special-casing. Keyed
+// by base id (mega base) so it matches a battle mon built as base + stone.
+function teraAllowedBaseIds(roster, dex) {
+  const ids = new Set();
+  for (const m of (roster.mons || [])) {
+    if (String(m.tier).toUpperCase() !== 'C' || !m.tera) continue;
+    const sp = dex.species.get(m.slug || m.name);
+    const baseId = sp && sp.exists && typeof sp.battleOnly === 'string' ? toId(sp.battleOnly)
+      : (sp && sp.exists ? sp.id : toId(m.slug || m.name));
+    ids.add(baseId);
+  }
+  return ids;
+}
+
+// Null out canTerastallize on every battle mon that isn't a tera-allowed C-tier pick,
+// so it can't Terastallize; allowed mons keep it and choose freely. Factored out of the
+// format's onBegin so it's unit-testable with stub sides + a stub roster fetcher. Fails
+// open per side if its roster fetch throws (the team already validated to reach here).
+function applyTeraRestriction(sides, dex, fetchRoster) {
+  for (const side of sides || []) {
+    const userid = toId(side && side.name);
+    if (!userid) continue;
+    let roster;
+    try { roster = fetchRoster(userid); } catch (e) { continue; }
+    if (!roster || !roster.found) continue;
+    const canTera = teraAllowedBaseIds(roster, dex);
+    for (const pokemon of side.pokemon || []) {
+      if (!canTera.has(baseFormeId(dex, pokemon.species.name))) pokemon.canTerastallize = null;
+    }
+  }
+}
+
+// Rewrite a set built AS a battle-only forme (Floette-Mega @ Floettite, or any mega /
+// primal / crowned forme picked directly) back to its base species holding the required
+// item. The teambuilder lists megas as their FORME (nicer to pick), so this is the
+// "matchmaking reverts it to base form at battle start" step: base validation then
+// accepts a legal base + stone set, and the mon mega-evolves in battle as usual.
+// Standard megas already build as base + stone, so those sets are left untouched.
+function revertBattleFormes(team, dex) {
+  for (const set of (team || [])) {
+    if (!set || !set.species) continue;
+    const sp = dex.species.get(set.species);
+    if (sp && sp.exists && typeof sp.battleOnly === 'string' && sp.requiredItem) {
+      if (!set.item) set.item = sp.requiredItem;
+      set.species = sp.battleOnly;
+    }
+  }
+}
+
 exports.Formats = [
   {
     section: "Draft League",
@@ -148,6 +199,9 @@ exports.Formats = [
     // the TeamValidator (it has .dex and .baseValidateTeam); options.user is the
     // logged-in Showdown id, passed on the challenge / search path (ladders.js).
     validateTeam(team, options) {
+      // Revert mega/etc. formes (Floette-Mega @ stone) to base + stone FIRST, so the
+      // base validation below sees a legal team and the mon mega-evolves in battle.
+      revertBattleFormes(team, this.dex);
       const problems = this.baseValidateTeam(team, options) || [];
 
       const userid = toId(options && options.user);
@@ -169,6 +223,15 @@ exports.Formats = [
 
       for (const p of checkRoster(team, roster, this.dex)) problems.push(p);
       return problems.length ? problems : null;
+    },
+    // Live tera rule: only C-tier picks with a drafted Tera type may Terastallize (so
+    // never megas or Shedinja). We DISABLE tera on every other mon by nulling its
+    // canTerastallize at battle start; allowed mons keep it, so a coach still CHOOSES
+    // when to tera (nothing is forced, unlike the simulated-season AI). `this` is the
+    // Battle here. Fails open (leaves tera as-is) if a roster fetch hiccups, since the
+    // team already validated against that same roster to reach the battle.
+    onBegin() {
+      applyTeraRestriction(this.sides, this.dex, fetchRosterSync);
     },
     ruleset: [
       'Standard NatDex',
@@ -219,4 +282,7 @@ exports.Formats = [
 // so these extra exports are inert on the live server.
 exports.checkRoster = checkRoster;
 exports.baseFormeId = baseFormeId;
+exports.teraAllowedBaseIds = teraAllowedBaseIds;
+exports.applyTeraRestriction = applyTeraRestriction;
+exports.revertBattleFormes = revertBattleFormes;
 exports.toId = toId;

@@ -103,6 +103,20 @@ public static class BuildPageRenderer
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Serebii's Legends Z-A mega artwork URL for a "-mega[x/y/z]" slug (3-digit national
+    /// dex + a mega suffix), or null for a non-mega / a slug with no dex. Mirrors
+    /// web/sprite.js serebiiMega so every surface shows the same mega image.
+    /// </summary>
+    private static string? SerebiiMega(string? slug, int? dex)
+    {
+        if (slug is null || dex is not int d) return null;
+        var m = Regex.Match(slug, @"-mega([xyz]?)$", RegexOptions.IgnoreCase);
+        if (!m.Success) return null;
+        var suffix = m.Groups[1].Value.ToLowerInvariant() switch { "x" => "-mx", "y" => "-my", "z" => "-mz", _ => "-m" };
+        return $"https://www.serebii.net/legendsz-a/pokemon/{d:D3}{suffix}.png";
+    }
+
     /// <summary>The sprite URL for a mon, mirroring the web client's spriteUrl().</summary>
     private static string SpriteUrl(string? slug, int? dex) =>
         string.IsNullOrEmpty(slug)
@@ -179,8 +193,15 @@ public static class BuildPageRenderer
             }
             else r = spriteOf(ToId(species));
             var (slug, dex, tier) = r;
-            var url = SpriteUrl(slug, dex);
-            var fallback = dex is int dd ? $"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{dd}.png" : null;
+            // A mega (base + stone) → Serebii's Legends Z-A mega artwork as the primary
+            // sprite (the SAME image the web app and battle client use), since Showdown
+            // has no gen-5 sprite for the newer megas and would otherwise fall to the
+            // base-form dex sprite. Non-megas keep the normal sprite + PokeAPI base net.
+            var serebiiMega = SerebiiMega(slug, dex);
+            var url = serebiiMega ?? SpriteUrl(slug, dex);
+            var fallback = serebiiMega is not null
+                ? SpriteUrl(slug, dex)
+                : (dex is int dd ? $"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{dd}.png" : null);
             sets.Add(new MonSet(display, item, ability, tera, level, nature, evs, ivs, shiny,
                 moves, ParseSpread(evs), url, fallback, tier, block));
         }

@@ -76,11 +76,17 @@ function patchTable(tbl) {
   }
   tbl.tiers = newTiers;
   tbl.overrideTier = override;
-  // formatSlices map standard tier boundaries (Uber/OU/…) onto the ORIGINAL tier
-  // order; after we reorder, they'd slice off the top of our list (S/A, which are
-  // all megas). Clear them so `tierSet.slice(slices.X)` becomes slice(undefined) =
-  // the whole set, nothing gets cut. Safe: only our format uses these tables now.
-  tbl.formatSlices = {};
+  // getBaseResults (battle-dex-search.js) REORDERS the browse list by concatenating
+  // tierSet slices at these boundaries: for singles
+  //   slice(OU,UU) + slice(AG,Uber) + slice(Uber,OU) + slice(UU)
+  // and for doubles slice(DOU,DUU) + slice(DUber,DOU) + slice(DUU). Clearing them to
+  // {} made every boundary `undefined`, so EACH slice(undefined,undefined) returned
+  // the whole set and the concat repeated our S/A/B/C list 3-4 times (the "SABC list
+  // twice" bug). Instead pin every "top" boundary at 0 and the two "end" ones (UU /
+  // DUU) past the end: then exactly the first slice is the whole set and the rest are
+  // empty, so the reorder yields our list ONCE, in order, in both branches.
+  const END = 1e9;
+  tbl.formatSlices = { AG: 0, Uber: 0, OU: 0, UU: END, DUber: 0, DOU: 0, DUU: END };
 
   return { ...Object.fromEntries(ORDER.map((t) => [t, groups[t].length])), Illegal: illegal, Added: added };
 }

@@ -20,7 +20,7 @@
 
 const { BattleStream, getPlayerStreams, Teams } = require('pokemon-showdown');
 const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
-const { buildTeamWithTera } = require('../lib/random-team');
+const { buildTeamWithTera, validateTeam } = require('../lib/random-team');
 
 // A RandomPlayerAI that takes the league's two gimmicks: it MEGA-EVOLVES a mon
 // holding a mega stone, and TERASTALLIZES a marked C-tier mon to its drafted type.
@@ -28,23 +28,23 @@ const { buildTeamWithTera } = require('../lib/random-team');
 // `terastallize` to that move. Each is once per SIDE per battle (not once per mon).
 // A mon can't do both, so megas take mega and C-tier non-mega mons take tera.
 //
-// Mega TIMING varies per side, matching how coaches actually play: sometimes the
-// mon holds its stone a few turns (taking damage / healing as its BASE form) before
-// evolving, and sometimes the side never megas at all. This exercises the stat
-// pipeline's requirement that pre-mega damage/healing still lands on the mega form
-// (both forms resolve to the same drafted pick, see ReplayStatsScraper.BaseId).
+// Mega TIMING varies per side, matching how coaches actually play: a drafted mega
+// ALWAYS evolves (coaches never sit on a mega stone all game), but the mon holds it
+// for a random 0..3 eligible turns first, so damage / healing often accrues on the
+// BASE form before it transforms. That delay exercises the stat pipeline's requirement
+// that pre-mega damage/healing still lands on the mega form (both forms resolve to the
+// same drafted pick, see ReplayStatsScraper.BaseId). It only fails to evolve if the mon
+// faints during that short window, exactly as a real too-slow mega would.
 class TeraPlayerAI extends RandomPlayerAI {
   constructor(playerStream, teraNames, megaImmediate) {
     super(playerStream);
     this.teraNames = teraNames instanceof Set ? teraNames : new Set(teraNames || []);
     this.teraUsed = false;
     this.megaUsed = false;
-    // Per-side mega policy: ~30% of sides never mega (null); the rest hold it for
-    // 0..3 eligible turns first, so damage often accrues on the base form. With
+    // Per-side mega timing: hold the stone 0..3 eligible turns, then evolve. With
     // megaImmediate (set by the spec, used by deterministic tests) always mega the
     // first turn it can, so a single battle reliably shows the mega evolving.
-    this.megaDelay = megaImmediate ? 0 : (Math.random() < 0.3 ? null : Math.floor(Math.random() * 4));
-    this.megaCountdown = this.megaDelay;
+    this.megaCountdown = megaImmediate ? 0 : Math.floor(Math.random() * 4);
   }
 
   receiveRequest(request) {
@@ -57,20 +57,17 @@ class TeraPlayerAI extends RandomPlayerAI {
     if (req && req.active) {
       const pokemon = req.side && req.side.pokemon || [];
       const parts = choice.split(', ');
-      // Mega-evolve the first eligible mon (once per side), but only after this
-      // side's chosen delay, and not at all when the policy is "never" (null).
-      // `canMegaEvo` is set on the request when the mon holds its stone and hasn't
+      // Mega-evolve the first eligible mon (once per side), after this side's chosen
+      // hold. `canMegaEvo` is set on the request when the mon holds its stone and hasn't
       // evolved yet; each turn it's still eligible and attacking counts down the delay.
-      if (this.megaDelay !== null) {
-        for (let i = 0; i < parts.length && !this.megaUsed; i++) {
-          const act = req.active[i];
-          const part = parts[i];
-          if (!act || !act.canMegaEvo) continue;
-          if (!/^move /.test(part)) continue;
-          if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue;
-          if (this.megaCountdown > 0) this.megaCountdown--; // hold the stone a few turns
-          else { parts[i] = `${part} mega`; this.megaUsed = true; }
-        }
+      for (let i = 0; i < parts.length && !this.megaUsed; i++) {
+        const act = req.active[i];
+        const part = parts[i];
+        if (!act || !act.canMegaEvo) continue;
+        if (!/^move /.test(part)) continue;
+        if (/\b(terastallize|mega|zmove|dynamax|ultra|max)\b/.test(part)) continue;
+        if (this.megaCountdown > 0) this.megaCountdown--; // hold the stone a few turns
+        else { parts[i] = `${part} mega`; this.megaUsed = true; }
       }
       // Terastallize a marked C-tier mon (once per side).
       if (this.teraNames.size && !this.teraUsed) {
@@ -119,6 +116,19 @@ async function runBattle(match, megaImmediate) {
   // and replay show who actually played, not "Home"/"Away".
   const home = buildTeamWithTera(match.homeTeam || [], BRING);
   const away = buildTeamWithTera(match.awayTeam || [], BRING);
+
+  // Gate: every team we're about to battle must be a legal Nat Dex Doubles team (the
+  // build already legalises each set; this is the final "Validate button" check before
+  // the game). A residual problem is a build-time bug we want surfaced, not silently
+  // battled, so warn to stderr (the .NET runner logs it) but still play, since the
+  // battle itself runs under a custom game that won't reject the team.
+  for (const [who, side] of [['home', home], ['away', away]]) {
+    const problems = validateTeam(side.team);
+    if (problems.length) {
+      console.error(`[simulate-season] ${who} team failed Nat Dex Doubles validation: ${problems.join(' | ')}`);
+    }
+  }
+
   const p1 = { name: match.homeName || 'Home', team: home.team };
   const p2 = { name: match.awayName || 'Away', team: away.team };
 

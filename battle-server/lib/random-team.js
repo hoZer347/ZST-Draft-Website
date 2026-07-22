@@ -1,17 +1,21 @@
 'use strict';
 
-// Builds fully-random-but-legal battle teams from a drafted roster, for the
-// headless test-season simulator. Every choice that can be made is made
-// randomly, within the constraints the league wants for these synthetic games:
+// Builds fully-random-but-LEGAL battle teams from a drafted roster, for the headless
+// test-season simulator. Every choice that can be made is made randomly:
 //   • a random nature (any of the 25),
 //   • a random legal EV spread (4-point blocks, each stat ≤ 252, total ≤ 510),
 //   • a random legal IV spread (each stat 0–31),
 //   • a random ability from the species' legal set,
-//   • a random 4 moves from the species' full movepool (base + prevo forms),
+//   • a random 4 moves from the species' movepool (own learnset + prevo chain),
 //   • a random held item, EXCEPT megas (which carry their form, not an item).
-// The result is a packed team string, the format the sim accepts.
+// Then every set is run through Showdown's own TeamValidator against National Dex
+// Doubles, the exact engine behind the Teambuilder's "Validate" button, and anything
+// it rejects (an unlearnable move, an incompatible move pair, a Gen 1-2 VC move that
+// needs perfect IVs) is repaired until it passes (see the "Legality gate" below). So a
+// synthetic team is a legal Nat Dex Doubles team, restricted just like a coach's real
+// one, not merely a random one. The result is a packed team string, what the sim accepts.
 
-const { Teams, Dex, toID } = require('pokemon-showdown');
+const { Teams, Dex, toID, TeamValidator } = require('pokemon-showdown');
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -82,28 +86,48 @@ const RESTRICTIONS = (() => {
 
 // Held items a mon can plausibly carry in gen 9 (drop past-gen / nonstandard), minus
 // anything the format bans (e.g. Bright Powder, Lax Incense, the type gems) and any
-// form-locked gimmick item, which does nothing on a random mon: mega stones (also,
-// via isMegaStone, they'd wrongly float their non-mega holder to the lead), primal
-// orbs, Z-crystals, and forme-forcing items (Griseous Orb, Rusted Sword/Shield…).
+// form-locked / species-locked item, which does nothing on a random mon and, worse,
+// fails the ZST validator on the wrong holder: mega stones (also, via isMegaStone,
+// they'd float their non-mega holder to the lead), primal orbs, Z-crystals, forme
+// forcers, Poke Balls (not real held items), and itemUser items (Rusted Sword/Shield,
+// origin orbs, memories, Light Ball/Thick Club…).
 const USABLE_ITEMS = Dex.items.all()
   .filter((i) => i.name && !i.isNonstandard && i.gen <= 9 && !RESTRICTIONS.items.has(i.id) &&
-    !i.megaStone && !i.onPrimal && !i.zMove && !i.forcedForme)
+    !i.megaStone && !i.onPrimal && !i.zMove && !i.forcedForme && !i.isPokeball && !i.itemUser)
   .map((i) => i.name);
 
-// Every move the species can learn, walking its prevo chain and base forme so a
-// fully-evolved mon (or a mega/regional form) draws on the whole line's pool.
-// Filtered to moves usable in gen 9.
+// A forme's learnset: its OWN if it has one, otherwise the base forme's. A regional
+// / alternate forme (Arcanine-Hisui, Tauros-Paldea-*, Zapdos-Galar, Ursaluna-Bloodmoon)
+// carries a complete own learnset and must NOT inherit the Kanto base's moves, doing so
+// used to hand it moves it can't legally learn (Arcanine-Hisui "learning" Dragon Breath),
+// which National Dex validation rightly rejects. Only formes with NO own learnset
+// (cosmetics, mega formes, Rotom appliances) fall through to the base's.
+function learnsetFor(species) {
+  let s = species;
+  const seen = new Set();
+  while (s && s.exists && !seen.has(s.id)) {
+    seen.add(s.id);
+    const ls = Dex.data.Learnsets[s.id];
+    if (ls && ls.learnset) return ls.learnset;
+    if (s.baseSpecies && s.baseSpecies !== s.name) s = Dex.species.get(s.baseSpecies);
+    else return null;
+  }
+  return null;
+}
+
+// Every move the species can learn, walking its prevo chain (regional prevos included)
+// and applying the own-else-base rule per link, so a fully-evolved mon draws on its
+// whole line's pool without borrowing a sibling forme's moves. Filtered to moves usable
+// in gen 9 and not format-restricted.
 function movePool(species) {
   const moves = new Set();
   const seen = new Set();
   let cur = species;
   while (cur && cur.exists && !seen.has(cur.id)) {
     seen.add(cur.id);
-    const ls = Dex.data.Learnsets[cur.id];
-    if (ls && ls.learnset) for (const m in ls.learnset) moves.add(m);
-    if (cur.prevo) cur = Dex.species.get(cur.prevo);
-    else if (cur.baseSpecies && cur.baseSpecies !== cur.name) cur = Dex.species.get(cur.baseSpecies);
-    else break;
+    const ls = learnsetFor(cur);
+    if (ls) for (const m in ls) moves.add(m);
+    cur = cur.prevo ? Dex.species.get(cur.prevo) : null;
   }
   return [...moves].filter((m) => {
     const mv = Dex.moves.get(m);
@@ -166,6 +190,83 @@ function randomSet(mon) {
   return set;
 }
 
+// ── Legality gate ────────────────────────────────────────────────────────────
+// The sim battles under a custom game (no learnset checks), but the league plays
+// National Dex Doubles, so a synthetic team should be a LEGAL Nat Dex Doubles team,
+// not merely a random one. We validate every generated set with Showdown's own
+// TeamValidator, the exact engine behind the Teambuilder's "Validate" button, and
+// repair anything it rejects before the battle runs.
+//
+// The gate governs moves and builds/IVs only, NOT species membership: the DRAFT
+// decides which species are legal (the pool is hand-picked), so a drafted mon that
+// Standard NatDex would ban for being unreleased (Floette-Eternal) is unbanned per
+// roster below. The league's evasion/OHKO/gem/etc. option bans are already stripped
+// at build time (RESTRICTIONS), so they need no repeating here.
+const VALIDATION_FORMAT = 'gen9doublescustomgame@@@Standard NatDex';
+
+// One TeamValidator per distinct unban set (usually the empty one). Built lazily and
+// cached, since a validator's rule table is a bit expensive to construct.
+const _validatorCache = new Map();
+function validatorForSets(sets) {
+  const unbans = new Set();
+  for (const set of sets) {
+    const sp = Dex.species.get(set.species);
+    if (sp.exists && sp.isNonstandard) unbans.add('+' + sp.id);
+    const it = Dex.items.get(set.item);
+    if (it && it.exists && it.isNonstandard) { unbans.add('+pokemontag:custom'); unbans.add('+' + it.id); }
+  }
+  const key = [...unbans].sort().join(',');
+  if (!_validatorCache.has(key)) {
+    _validatorCache.set(key, new TeamValidator(key ? `${VALIDATION_FORMAT},${key}` : VALIDATION_FORMAT));
+  }
+  return _validatorCache.get(key);
+}
+
+// Reshuffle a set's moves (and, when needed, perfect its IVs) until the validator
+// accepts it, driven by the validator's own complaints:
+//   • "<Mon> can't learn <Move>." (or a gen-legality reject) → ban that move from the
+//     resample pool, so it can't be redrawn,
+//   • "…must have at least N perfect IVs…" (a Gen 1-2 VC move) → max the IVs,
+//   • an incompatible move pair → just draw a fresh random 4.
+// A forme that transforms via a move (Mega Rayquaza + Dragon Ascent, species.requiredMove)
+// always keeps that move. Returns true if the set ends up legal, false if it couldn't be
+// legalised in `rounds` tries (the caller logs and proceeds; the battle still runs).
+function legalizeSet(set, validator, rounds = 14) {
+  const species = Dex.species.get(set.species);
+  const requiredMove = species.requiredMove || null;
+  const requiredId = requiredMove ? toID(requiredMove) : null;
+  const banned = new Set();
+  const draw = () => {
+    const pool = movePool(species).filter((m) => !banned.has(toID(m)) && toID(m) !== requiredId);
+    const picks = requiredMove ? [requiredMove] : [];
+    for (const m of sampleN(pool, pool.length)) {
+      if (picks.length >= 4) break;
+      picks.push(m);
+    }
+    set.moves = picks.length ? picks : ['tackle'];
+  };
+  for (let r = 0; r < rounds; r++) {
+    const problems = validator.validateSet(set, {}) || [];
+    if (!problems.length) return true;
+    for (const p of problems) {
+      const m = /can't learn ([^.]+?)\.?$/.exec(p);
+      if (m && toID(m[1]) !== requiredId) banned.add(toID(m[1]));
+      if (/perfect IVs?/i.test(p)) for (const s of STATS) set.ivs[s] = 31;
+    }
+    if (r >= Math.floor(rounds / 2)) for (const s of STATS) set.ivs[s] = 31; // escalate
+    draw();
+  }
+  return (validator.validateSet(set, {}) || []).length === 0;
+}
+
+// Validate a whole packed team (or set array) against the Nat Dex Doubles gate. Returns
+// an array of problem strings, empty means legal. Used by the sim as the final check
+// before a battle (see simulate-season.js).
+function validateTeam(team) {
+  const sets = typeof team === 'string' ? Teams.unpack(team) : team;
+  return validatorForSets(sets).validateTeam(sets) || [];
+}
+
 // A random `count` of the roster's mons, each a random set. count defaults to 6 (a
 // singles "bring"), so a 10-mon roster fields a different six most games. Species
 // Showdown doesn't know (e.g. the league's custom Champions megas) are skipped,
@@ -186,6 +287,18 @@ function chooseSets(mons, count) {
   const chosen = sampleN(valid, Math.min(count, valid.length));
   if (!chosen.length) throw new Error('roster has no Showdown-known species');
   const sets = chosen.map(randomSet);
+  // Legalise each set against Nat Dex Doubles rules (the Validate button's engine)
+  // before it ever reaches a battle, so the sim plays legal teams, not just random
+  // ones. Most sets already pass; legalizeSet repairs the rest (see the gate above).
+  // validateSet defaults a missing teraType to the species' primary type, which would
+  // wrongly mark a non-C mon as tera-able, so snapshot the intended teraType (set only
+  // on C-tier picks) and restore it afterwards.
+  const validator = validatorForSets(sets);
+  for (const set of sets) {
+    const tera = set.teraType;
+    legalizeSet(set, validator);
+    if (tera) set.teraType = tera; else delete set.teraType;
+  }
   // Lead the mega. Team preview brings the packed team "default" (the first slots
   // are the leads), and the AI only mega-evolves a mon that is ACTUALLY on the
   // field; a mega stuck in the back that the random AI never switches in just sits
@@ -208,4 +321,8 @@ function buildTeamWithTera(mons, count = 6) {
   return { team: Teams.pack(sets), teraNames: sets.filter((s) => s.teraType).map((s) => s.name) };
 }
 
-module.exports = { buildRandomTeam, buildTeamWithTera, randomSet, movePool, USABLE_ITEMS, RESTRICTIONS, RESTRICTION_FORMAT };
+module.exports = {
+  buildRandomTeam, buildTeamWithTera, randomSet, movePool, learnsetFor,
+  legalizeSet, validateTeam, validatorForSets, VALIDATION_FORMAT,
+  USABLE_ITEMS, RESTRICTIONS, RESTRICTION_FORMAT,
+};

@@ -256,9 +256,13 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
 (function () {
   var TAG = '[zst-roster]';
   function dbg(msg) { try { console.log(TAG, msg); } catch (e) {} } // console breadcrumbs
-  var ALLOWED = null;   // { speciesid: true } once roster + Dex are both ready, else null
-  var MONS = null;      // fetched roster mons, held until window.Dex loads (CDN, async)
-  var tried = {};       // name -> 1, so each candidate is fetched at most once
+  // Two allow-sets, chosen by the team's format in the search hook below:
+  //  ALLOWED_OWN    - the coach's OWN drafted mons (ZST Season 4, a league team).
+  //  ALLOWED_SEASON - every mon owned by ANY coach (Scrims, free practice).
+  var ALLOWED_OWN = null, ALLOWED_SEASON = null;
+  var MONS = null;        // coach's own roster mons, held until window.Dex loads (CDN, async)
+  var MONS_SEASON = null; // season-wide owned mons
+  var tried = {};         // name -> 1, so each candidate is fetched at most once
   function isGuest(x) { x = ('' + x).toLowerCase(); return !x || x === 'guest' || /^guest[0-9]/.test(x); }
   function nameCandidates() {
     // Try EVERY name we can see, because Showdown sanitises the login (drops '.', etc.)
@@ -270,27 +274,37 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
     try { var s = sessionStorage.getItem('zst_name'); if (s) c.push(s); } catch (e) {}
     return c.filter(function (x, i) { return x && !isGuest(x) && c.indexOf(x) === i; });
   }
-  function fetchRoster() {
-    if (MONS) return; // already have a roster
-    var cands = nameCandidates();
-    if (!fetchRoster._logged) { fetchRoster._logged = 1; if (cands.length) dbg('name candidates: ' + JSON.stringify(cands)); }
-    cands.forEach(function (name) {
-      if (tried[name]) return;
-      tried[name] = 1;
-      fetch('/zst-roster?name=' + encodeURIComponent(name), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
-        dbg('roster for "' + name + '" -> found=' + (d && d.found) + ' mons=' + (d && d.mons ? d.mons.length : 0));
-        if (!MONS && d && d.found && d.mons && d.mons.length) MONS = d.mons; // first match wins
-      }).catch(function (e) { delete tried[name]; dbg('fetch failed for "' + name + '" ' + e); });
-    });
-  }
-  function computeAllowed() {
-    if (ALLOWED || !MONS || !window.Dex || !window.Dex.species || !window.rosterSpeciesIds) return;
-    var ids = window.rosterSpeciesIds(MONS, function (slug) { return window.Dex.species.get(slug); });
-    if (ids && Object.keys(ids).length) {
-      ALLOWED = ids; window.__zstAllowed = ids;
-      dbg('restriction ACTIVE, allowed: ' + Object.keys(ids).join(','));
+  function fetchRosters() {
+    if (!MONS) {
+      var cands = nameCandidates();
+      if (!fetchRosters._logged) { fetchRosters._logged = 1; if (cands.length) dbg('name candidates: ' + JSON.stringify(cands)); }
+      cands.forEach(function (name) {
+        if (tried[name]) return;
+        tried[name] = 1;
+        fetch('/zst-roster?name=' + encodeURIComponent(name), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+          dbg('roster for "' + name + '" -> found=' + (d && d.found) + ' mons=' + (d && d.mons ? d.mons.length : 0));
+          if (!MONS && d && d.found && d.mons && d.mons.length) MONS = d.mons; // first match wins
+        }).catch(function (e) { delete tried[name]; dbg('fetch failed for "' + name + '" ' + e); });
+      });
+    }
+    if (!MONS_SEASON && !fetchRosters._season) {
+      fetchRosters._season = 1; // season roster needs no name; fetch once
+      fetch('/zst-season-roster', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+        dbg('season roster -> mons=' + (d && d.mons ? d.mons.length : 0));
+        if (d && d.mons && d.mons.length) MONS_SEASON = d.mons;
+      }).catch(function (e) { fetchRosters._season = 0; dbg('season fetch failed ' + e); });
     }
   }
+  function build(mons) {
+    if (!mons || !window.Dex || !window.Dex.species || !window.rosterSpeciesIds) return null;
+    var ids = window.rosterSpeciesIds(mons, function (slug) { return window.Dex.species.get(slug); });
+    return (ids && Object.keys(ids).length) ? ids : null;
+  }
+  function computeAllowed() {
+    if (!ALLOWED_OWN && MONS) { var a = build(MONS); if (a) { ALLOWED_OWN = a; window.__zstAllowed = a; dbg('own restriction ACTIVE (' + Object.keys(a).length + ' mons)'); } }
+    if (!ALLOWED_SEASON && MONS_SEASON) { var b = build(MONS_SEASON); if (b) { ALLOWED_SEASON = b; window.__zstAllowedSeason = b; dbg('season restriction ACTIVE (' + Object.keys(b).length + ' mons)'); } }
+  }
+  function isScrims(fmt) { return ('' + (fmt || '')).toLowerCase().indexOf('scrims') >= 0; }
   function installHook() {
     var D = window.DexSearch;
     if (!D || !D.prototype || typeof D.prototype.find !== 'function') return false;
@@ -303,13 +317,16 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
         var ts = this.typedSearch;
         if (ts && ts.searchType === 'pokemon') {
           window.__zstFmt = ts.format;
+          // Scrims picks from the season-wide owned pool; every other league format
+          // (ZST) is limited to the coach's own team. Filtering the OUTPUT each call
+          // sidesteps the per-search result cache.
+          var scrims = isScrims(ts.format);
+          var allowed = scrims ? ALLOWED_SEASON : ALLOWED_OWN;
           var before = Array.isArray(this.results) ? this.results.length : -1;
-          // Restrict EVERY pokemon search once the roster is loaded (the coach's client
-          // is league-only). Filtering the output each call sidesteps the result cache.
-          if (ALLOWED && Array.isArray(this.results)) {
-            this.results = window.filterPokemonResults(this.results, ALLOWED);
+          if (allowed && Array.isArray(this.results)) {
+            this.results = window.filterPokemonResults(this.results, allowed);
           }
-          if (!logged[ts.format || '']) { logged[ts.format || ''] = 1; dbg('pokemon search: format=' + JSON.stringify(ts.format) + ' restricting=' + !!ALLOWED + ' rows ' + before + '->' + (Array.isArray(this.results) ? this.results.length : -1)); }
+          if (!logged[ts.format || '']) { logged[ts.format || ''] = 1; dbg('pokemon search: format=' + JSON.stringify(ts.format) + ' scrims=' + scrims + ' restricting=' + !!allowed + ' rows ' + before + '->' + (Array.isArray(this.results) ? this.results.length : -1)); }
         }
       } catch (e) { dbg('filter error ' + e); }
       return ret;
@@ -319,24 +336,60 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
     return true;
   }
   // Poll: (re)fetch as the live login name resolves (auto-login runs async, esp. after
-  // a hard refresh), build ALLOWED once roster + Dex are ready, and install the hook.
+  // a hard refresh), build the allow-sets once rosters + Dex are ready, install the hook.
   var iv = setInterval(function () {
-    fetchRoster();
+    fetchRosters();
     computeAllowed();
     var hooked = installHook();
-    if (hooked && ALLOWED) clearInterval(iv);
+    if (hooked && ALLOWED_OWN && ALLOWED_SEASON) clearInterval(iv);
   }, 300);
   setTimeout(function () { clearInterval(iv); }, 120000);
 })();
 </script>`;
 
-// Some of the league's custom megas (see showdown-config/custom-megas.js) only have
-// a FRONT sprite on the CDN and no back sprite, so they'd render blank from the
-// player's own side. As a fallback, we inject a small client patch: for those mons
-// only, a request for the BACK sprite returns the FRONT sprite instead (their own
-// mega art, just facing the camera, never the base form). Which mons lack a back
-// sprite is computed against the CDN at startup, so this self-heals as the CDN adds
-// the real back sprites (a mon that gains one drops off the list on the next start).
+// Land a coach in the TEAMBUILDER, not the text lobby, when the draft app's
+// Teambuilder tab opens this client at /teambuilder. On desktop the teambuilder is a
+// SIDE room shown alongside the main menu, so you always see it. On a narrow (mobile)
+// screen only ONE room is visible at a time, and the classic client (on a self-hosted
+// host) adds a background `lobby` chat room at boot; a focus that lands there just
+// after the route is dispatched leaves the coach staring at an empty lobby instead of
+// the builder they tapped. So: capture that we were opened FOR the teambuilder, force
+// it focused once it exists, and hold that focus through the brief boot window against
+// any non-user steal, then stop the moment the coach navigates themselves (e.g. tapping
+// Home to queue a battle), so we never trap them. Keyed off the initial pathname since
+// later navigation rewrites it.
+const FOCUS_TEAMBUILDER = `<script>
+/* [zst-focus-teambuilder] */
+(function () {
+  var openedForTeambuilder;
+  try { openedForTeambuilder = /(^|\\/)teambuilder(\\/|$)/.test(location.pathname); } catch (e) { return; }
+  if (!openedForTeambuilder) return; // opened for something else (a battle) — leave routing alone
+  var focused = false, interacted = false;
+  // Any deliberate tap/keypress inside the client means the coach is driving now; stop
+  // re-asserting so we don't yank them back off the main menu when they want to battle.
+  ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+    try { document.addEventListener(ev, function () { interacted = true; }, { capture: true, once: true }); } catch (e) {}
+  });
+  var iv = setInterval(function () {
+    if (!window.app || !app.rooms || !app.rooms['teambuilder']) return;
+    var tb = app.rooms['teambuilder'];
+    var visible = (app.curRoom === tb || app.curSideRoom === tb);
+    if (!focused) { if (!visible) app.focusRoom('teambuilder'); focused = true; return; } // initial landing
+    if (interacted) { clearInterval(iv); return; }        // respect the coach's own navigation
+    if (!visible) app.focusRoom('teambuilder');           // undo a boot autojoin steal (mobile)
+  }, 150);
+  setTimeout(function () { clearInterval(iv); }, 8000);
+})();
+</script>`;
+
+// The league's custom megas (see showdown-config/custom-megas.js) are the Pokémon
+// Legends: Z-A mega evolutions. Showdown's CDN has no usable battle sprite for most of
+// them (the classic client falls to gen5/<id>.png, which 404s → a broken-image icon the
+// moment the mega evolves). Serebii hosts the official Z-A mega ARTWORK for every one,
+// keyed by national dex + a mega suffix, the SAME image the league web app already shows
+// (web/sprite.js serebiiMega). So we inject a getSpriteData override that renders each
+// custom mega as its real Z-A mega art, front and back, never a broken icon and never
+// the base form. See computeMegaSprites.
 const CUSTOM_MEGAS = (() => { try { return require('../showdown-config/custom-megas.js'); } catch { return { Pokedex: {} }; } })();
 const spriteToID = (s) => ('' + (s || '')).toLowerCase().replace(/[^a-z0-9]+/g, '');
 
@@ -369,23 +422,46 @@ const CUSTOM_DEX = (() => {
 })();
 </script>`;
 })();
-let MEGA_BACK_FALLBACK = '';
-async function computeMegaBackFallback() {
-  const CDN = 'https://play.pokemonshowdown.com/sprites/';
-  const has = async (p) => { try { return (await fetch(CDN + p, { method: 'HEAD' })).ok; } catch { return false; } };
-  const noBack = {};
+let MEGA_SPRITE_FIX = '';
+async function computeMegaSprites() {
+  // The Legends: Z-A mega artwork on Serebii, keyed by 3-digit national dex + a mega
+  // suffix (matches web/sprite.js serebiiMega, so the battle shows the SAME image the
+  // rest of the league app does). 250x250 art, rendered at a battle-field size below.
+  const SUFFIX = { 'Mega-X': '-mx', 'Mega-Y': '-my', 'Mega-Z': '-mz', 'Mega': '-m' };
+  const serebii = (dex, forme) =>
+    `https://www.serebii.net/legendsz-a/pokemon/${String(dex).padStart(3, '0')}${SUFFIX[forme] || '-m'}.png`;
+  const head = async (u) => { try { return (await fetch(u, { method: 'HEAD' })).ok; } catch { return false; } };
+
+  const map = {};
   await Promise.all(Object.values(CUSTOM_MEGAS.Pokedex || {}).map(async (sp) => {
-    const id = spriteToID(sp.baseSpecies) + '-' + spriteToID(sp.forme); // Showdown sprite id, e.g. malamar-mega
-    if (!(await has(`ani-back/${id}.gif`)) && !(await has(`gen5-back/${id}.png`))) noBack[id] = 1;
+    // Key by the mega's toID (lowercase, punctuation stripped: "raichumegay"), NOT the
+    // dashed spriteid. The client's computed spriteid is "raichu-megay" only when the
+    // custom species is already merged into its dex; if the sprite is resolved before
+    // that merge lands it collapses to "raichumegay". Keying (and looking up) by toID
+    // matches both, so the override can never silently miss on a timing race.
+    const key = spriteToID(sp.name);                                 // e.g. raichumegay
+    const slug = spriteToID(sp.baseSpecies) + '-' + spriteToID(sp.forme); // Showdown sprite slug
+    // The Z-A mega art first (the correct mega image); then a Showdown mega sprite if one
+    // exists. NEVER the base form: a mega must render as its mega, not its base.
+    const candidates = [
+      serebii(sp.num, sp.forme),
+      `https://play.pokemonshowdown.com/sprites/ani/${slug}.gif`,
+      `https://play.pokemonshowdown.com/sprites/gen5/${slug}.png`,
+    ];
+    for (const url of candidates) { if (await head(url)) { map[key] = { url }; return; } }
   }));
-  const n = Object.keys(noBack).length;
+
+  const n = Object.keys(map).length;
   // Patch the ModdedDex PROTOTYPE once (covers Dex and every modded dex, incl. the
-  // champions mod battles use). getSpriteData is a prototype method; wrapping it so a
-  // back request for a no-back mon re-calls for the front sprite.
-  MEGA_BACK_FALLBACK = n === 0 ? '' : `<script>
-(function(){var NB=${JSON.stringify(noBack)};function patch(){var D=window.Dex;if(!D)return false;var pr=Object.getPrototypeOf(D);if(!pr||typeof pr.getSpriteData!=='function')return false;if(pr.__megaBackFallback)return true;var orig=pr.getSpriteData;pr.getSpriteData=function(pokemon,isFront,options){if(!isFront){try{var forme=(window.Pokemon&&pokemon instanceof window.Pokemon)?pokemon.getSpeciesForme():pokemon;var sid=this.species.get(forme).spriteid;if(NB[sid])return orig.call(this,pokemon,true,options);}catch(e){}}return orig.call(this,pokemon,isFront,options);};pr.__megaBackFallback=true;return true;}var iv=setInterval(function(){if(patch())clearInterval(iv);},150);setTimeout(function(){clearInterval(iv);},30000);})();
+  // champions mod battles use). getSpriteData is a prototype method; wrap it so a custom
+  // mega's sprite (either facing) is the Z-A mega artwork, keeping the gen/cry/shiny
+  // fields the original computed and just overriding the image. 120x120 scales the 250px
+  // art down to a battle-field sprite; the <img> the scene builds scales it for us. The
+  // lookup keys off toID(speciesForme), so it matches whether or not the merge has landed.
+  MEGA_SPRITE_FIX = n === 0 ? '' : `<script>
+(function(){var MS=${JSON.stringify(map)};function ID(s){return(''+(s||'')).toLowerCase().replace(/[^a-z0-9]/g,'');}function patch(){var D=window.Dex;if(!D)return false;var pr=Object.getPrototypeOf(D);if(!pr||typeof pr.getSpriteData!=='function')return false;if(pr.__megaSpriteFix)return true;var orig=pr.getSpriteData;pr.getSpriteData=function(pokemon,isFront,options){try{var forme=(window.Pokemon&&pokemon instanceof window.Pokemon)?pokemon.getSpeciesForme():pokemon;var m=MS[ID(forme)];if(m){var data=orig.call(this,pokemon,isFront,options);data.url=m.url;data.w=120;data.h=120;data.pixelated=false;data.isFrontSprite=!!isFront;return data;}}catch(e){}return orig.call(this,pokemon,isFront,options);};pr.__megaSpriteFix=true;return true;}var iv=setInterval(function(){if(patch())clearInterval(iv);},150);setTimeout(function(){clearInterval(iv);},30000);})();
 </script>`;
-  console.log(`[serve-client] custom-mega back-sprite fallback: ${n} mon(s) will use their front sprite`);
+  console.log(`[serve-client] custom-mega sprite fix: ${n} mega(s) using Legends Z-A mega artwork`);
 }
 
 // path -> { mtimeMs, raw, gz }, files don't change at runtime, so cache the
@@ -410,7 +486,7 @@ function load(file) {
     // comment, so a naive `<script` match would bury CAPTURE_HEAD in a block
     // modern browsers never run. The first external script is the earliest real
     // client JS, so running just before it still beats the query-string strip.
-    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + CUSTOM_DEX + '\n' + MEGA_BACK_FALLBACK + '\n' + AUTO_TERA + '\n' + FORMAT_FILTER + '\n' + ROSTER_RESTRICT + '\n';
+    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + CUSTOM_DEX + '\n' + MEGA_SPRITE_FIX + '\n' + AUTO_TERA + '\n' + FORMAT_FILTER + '\n' + ROSTER_RESTRICT + '\n' + FOCUS_TEAMBUILDER + '\n';
     // Cache-bust our LOCAL patched data files by their mtime. Their ?v= in the shell
     // is a hardcoded constant that never moves when patch-client-tiers.js rewrites the
     // file, so browsers (and Cloudflare) would serve the stale bytes forever. Stamping
@@ -428,11 +504,11 @@ function load(file) {
   return entry;
 }
 
-// Probe the CDN for missing back sprites, then drop the cached shell so the next
-// request re-injects the patch with the populated list. Best-effort and off the
-// hot path, the server starts serving immediately.
-computeMegaBackFallback()
-  .catch((e) => console.warn('[serve-client] mega back-sprite fallback failed:', e.message))
+// Probe the CDN for each custom mega's best sprite, then drop the cached shell so the
+// next request re-injects the patch with the resolved map. Best-effort and off the hot
+// path, the server starts serving immediately.
+computeMegaSprites()
+  .catch((e) => console.warn('[serve-client] mega sprite fix failed:', e.message))
   .finally(() => cache.delete(path.join(ROOT, 'index-old.html')));
 
 http.createServer((req, res) => {
@@ -473,6 +549,19 @@ http.createServer((req, res) => {
         res.end(body);
       })
       .catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"found":false}'); });
+    return;
+  }
+
+  // Same-origin proxy for the SEASON roster (every mon owned by any coach), for the
+  // Scrims picker restriction. Same public data, server-to-server here.
+  if (url === '/zst-season-roster') {
+    fetch(`${API_BASE}/api/showdown/season-roster`)
+      .then((r) => r.text())
+      .then((body) => {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        res.end(body);
+      })
+      .catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"mons":[]}'); });
     return;
   }
 

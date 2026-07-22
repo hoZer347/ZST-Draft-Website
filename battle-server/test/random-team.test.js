@@ -5,7 +5,8 @@ const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const { Teams, Dex, TeamValidator, toID } = require('pokemon-showdown');
-const { buildRandomTeam, buildTeamWithTera, randomSet, movePool, RESTRICTIONS, RESTRICTION_FORMAT } = require('../lib/random-team');
+const { buildRandomTeam, buildTeamWithTera, randomSet, movePool, legalizeSet,
+  validateTeam, validatorForSets, RESTRICTIONS, RESTRICTION_FORMAT } = require('../lib/random-team');
 
 // randomSet builds the fully-random-but-legal sets the demo/sim teams are made of.
 // The load-bearing rule these guard: a MEGA is fielded as its BASE form holding
@@ -183,6 +184,47 @@ test('a generated set passes the format\'s evasion / OHKO / swagger clauses', ()
   const team = ['garchomp', 'dragonite', 'tyranitar'].map(randomSet);
   const errors = validator.validateTeam(team) || [];
   assert.ok(!errors.some((e) => /evasion|OHKO|swagger/i.test(e)), `unexpected clause error: ${errors}`);
+});
+
+// ── Nat Dex Doubles legality gate: generated sets are validated with Showdown's own
+// TeamValidator (the Validate button's engine) and repaired until legal, so the sim
+// battles legal teams. See lib/random-team.js "Legality gate". ───────────────────
+
+test('movePool does not borrow a regional forme its base forme\'s moves', () => {
+  // The bug this guards: Arcanine-Hisui used to inherit Kanto Arcanine's learnset and
+  // "learn" Dragon Breath (which the Hisuian forme can't), an illegal move Nat Dex
+  // validation rejects. Its OWN learnset must be used; the base's must NOT leak in.
+  assert.ok(movePool(Dex.species.get('arcanine')).includes('dragonbreath'),
+    'Kanto Arcanine really does learn Dragon Breath (guard is not vacuous)');
+  assert.ok(!movePool(Dex.species.get('arcanine-hisui')).includes('dragonbreath'),
+    'Arcanine-Hisui must NOT inherit its base forme\'s Dragon Breath');
+});
+
+test('legalizeSet repairs an illegal set until the validator accepts it', () => {
+  // Celebrate + Dragon Breath are incompatible, Zap Cannon needs perfect IVs; a mash
+  // of them fails validation. legalizeSet bans the unlearnable move, maxes IVs and
+  // resamples until the set is legal.
+  const bad = randomSet('gyarados');
+  bad.moves = ['dragonbreath', 'celebrate', 'zapcannon', 'splash'];
+  for (const s of ['hp', 'atk', 'def', 'spa', 'spd', 'spe']) bad.ivs[s] = 0;
+  const validator = validatorForSets([bad]);
+  assert.ok((validator.validateSet(bad, {}) || []).length, 'starts illegal');
+  assert.ok(legalizeSet(bad, validator), 'legalizeSet reports success');
+  assert.equal((validator.validateSet(bad, {}) || []).length, 0, 'and the set now validates');
+});
+
+test('every generated team passes Nat Dex Doubles validation', () => {
+  // Includes the awkward cases: official + custom megas (base + stone), regional formes
+  // whose old learnset crossing produced illegal moves, and Floette-Eternal, an
+  // unreleased mon Standard NatDex bans as a species but the DRAFT allows (unbanned
+  // per roster, so its build is still checked for legal moves/IVs).
+  const roster = ['charizard-megay', 'malamar-mega', 'floette-eternal', 'arcanine-hisui',
+    'zapdos-galar', 'ursaluna-bloodmoon', 'tauros-paldeablaze', 'perrserker', 'azumarill',
+    'baxcalibur', 'garchomp', 'annihilape'];
+  for (let i = 0; i < 15; i++) { // sweep, sets are random
+    const problems = validateTeam(buildRandomTeam(roster, 6));
+    assert.deepEqual(problems, [], `team ${i} had validation problems: ${problems.join(' | ')}`);
+  }
 });
 
 test('buildRandomTeam samples `count` from a larger roster and skips unknowns', () => {

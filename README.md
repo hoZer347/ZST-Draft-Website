@@ -151,10 +151,13 @@ as plain gen-9 mega data (see `battle-server/showdown-config/custom-megas.js` an
 evolves them with no ruleset fork. Icons for megas without a Showdown sprite fall
 back through Serebii's Z-A artwork and PokeAPI (see [web/sprite.js](web/sprite.js)).
 
-**Season simulation.** The dev "Simulate season" flow builds fully random-but-legal
-teams (random natures, EVs, IVs, abilities, moves, items; see
-[battle-server/lib/random-team.js](battle-server/lib/random-team.js)), plays a
-whole season of real Showdown battles headlessly, and scrapes the results, so the
+**Season simulation.** The dev "Simulate season" flow builds fully random teams
+(random natures, EVs, IVs, abilities, moves, items; see
+[battle-server/lib/random-team.js](battle-server/lib/random-team.js)), then runs each
+one through Showdown's own TeamValidator against National Dex Doubles (the engine
+behind the Teambuilder's "Validate" button) and repairs anything illegal, so a
+synthetic team is a legal Nat Dex Doubles team just like a coach's. It then plays a
+whole season of real Showdown battles headlessly and scrapes the results, so the
 schedule/scoreboard/stats tabs can be exercised without waiting on live games.
 
 ## Auth

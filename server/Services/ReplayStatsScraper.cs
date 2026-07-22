@@ -104,7 +104,9 @@ public static class ReplayStatsScraper
         Pick? bondKiller = null;                            // a Destiny Bond just fired → credit the NEXT faint (its killer, dragged down) to this mon
         var bindOwner = new Dictionary<string, Pick>();     // partially-trapped slot → who trapped it (their bind chip carries no [of])
         var residualSource = new Dictionary<string, Pick>(); // cursed/salt-cured/nightmared slot → who applied it (their per-turn chip carries no [of])
-        var itemGiver = new Dictionary<Pick, Pick>();       // mon holding a GIVEN damaging item → who handed it over (Trick/Switcheroo/Bestow/Symbiosis); mon-keyed so it survives switches
+        var itemGiver = new Dictionary<Pick, (Pick pick, string side)>(); // mon holding a GIVEN damaging item → who handed it over via Trick/Switcheroo/Bestow (and their side); so a tricked Life Orb / Sticky Barb chip is credited to the giver, not the holder. Mon-keyed so it survives switches
+        var confusionSource = new Dictionary<Pick, (Pick pick, string side)>(); // confused mon → who confused it (and their side); ABSENT = self-inflicted (Thrash/Outrage/Petal Dance fatigue), so its self-hit stays self-damage
+        var enteredThisTurn = new HashSet<string>();        // slots whose occupant just switched in and hasn't acted; a bare tox here is Toxic Spikes poisoning it, not a Toxic move
         var statusSource = new Dictionary<Pick, Pick>();    // afflicted mon → who inflicted its major status (mon-keyed: burn/poison persists across switches, unlike a slot)
         var statusSelf = new HashSet<Pick>();               // mons whose status is self-inflicted (Toxic/Flame Orb)
         var hazardOwner = new Dictionary<string, Pick>();   // "side:hazardid" → who set the hazard
@@ -141,6 +143,7 @@ public static class ReplayStatsScraper
                         if (cmd == "switch" && turns == 0) Stat(slot.Pick).Started = true;
                     }
                     lastKiller.Remove(sid);
+                    enteredThisTurn.Add(sid); // a bare tox on this mon before it acts is Toxic Spikes, not a move
                     // statusSource/statusSelf are mon-keyed and intentionally NOT cleared here:
                     // a major status rides along to the bench and resumes on switch-in.
                     bindOwner.Remove(sid); // the trap breaks when the mon leaves
@@ -179,10 +182,13 @@ public static class ReplayStatsScraper
                 case "turn":
                     // One turn elapsed; whoever is on the field this turn is
                     // "present" for it. Two slots per side, so a mon that never
-                    // leaves gets one presence-turn per game turn.
+                    // leaves gets one presence-turn per game turn. A fainted mon
+                    // whose slot has no replacement (Hp 0) is NOT present: without the
+                    // Hp guard it would keep counting to the end of the game.
                     turns++;
+                    enteredThisTurn.Clear(); // switch-in state only spans a switch → its immediate hazard chip
                     foreach (var sid in ActiveSlots)
-                        if (slots.TryGetValue(sid, out var occ) && occ.Pick is not null)
+                        if (slots.TryGetValue(sid, out var occ) && occ.Pick is not null && occ.Hp > 0)
                             Stat(occ.Pick).ActiveTurns++;
                     break;
 
@@ -212,9 +218,20 @@ public static class ReplayStatsScraper
                     var victim = Slot(victimSlot).Pick;
                     if (victim is null) break;
                     var (skind, sname, sof) = Tags(parts);
+                    var statusId = parts.Length > 3 ? ToId(parts[3]) : "";
                     statusSource.Remove(victim);
                     statusSelf.Remove(victim);
-                    if (sname is null && attacker is not null)
+                    if (sname is null && sof is null && statusId is "psn" or "tox"
+                        && enteredThisTurn.Contains(victimSlot)
+                        && hazardOwner.GetValueOrDefault(HazardKey(SideOf(victimSlot), "Toxic Spikes")) is { } tsOwner)
+                    {
+                        // Poisoned on switch-in by Toxic Spikes. Real logs emit a BARE tox
+                        // here (no [from]), which looks identical to a Toxic move, so tell
+                        // them apart by "did this mon just switch in": on switch-in with
+                        // Toxic Spikes down, credit the layer, not the last mon that moved.
+                        statusSource[victim] = tsOwner;
+                    }
+                    else if (sname is null && attacker is not null)
                     {
                         // Bare -status → the mon that just moved inflicted it.
                         var inflictor = PickAt(attacker);
@@ -222,7 +239,8 @@ public static class ReplayStatsScraper
                     }
                     else if (sname is not null && ToId(sname) == "toxicspikes")
                     {
-                        // Poisoned on switch-in by Toxic Spikes, credit its setter.
+                        // Older/synthetic logs tag the switch-in poison |[from] move: Toxic
+                        // Spikes; credit its setter the same way.
                         var owner = hazardOwner.GetValueOrDefault(HazardKey(SideOf(victimSlot), "Toxic Spikes"));
                         if (owner is not null) statusSource[victim] = owner;
                     }
@@ -239,6 +257,23 @@ public static class ReplayStatsScraper
                         // chip is the mon's own doing.
                         statusSelf.Add(victim);
                     }
+                    break;
+                }
+
+                case "-item":
+                {
+                    // A mon received an item via Trick / Switcheroo / Bestow. If it's a
+                    // damaging item (Life Orb, Sticky Barb), the giver, not the holder,
+                    // owns its self-chip: remember who handed it over so that chip (and any
+                    // KO) is credited to them. Frisk/other reveals carry an ability [from]
+                    // and are ignored. (Other |-item| reveals without a transfer move do
+                    // not set a giver.)
+                    if (parts.Length < 4) break;
+                    var (ikind, iname, iof) = Tags(parts);
+                    if (ikind == "move" && ToId(iname ?? "") is "trick" or "switcheroo" or "bestow"
+                        && iof is { } giverSlot && Slot(SlotId(parts[2])).Pick is { } receiver
+                        && PickAt(giverSlot) is { } giver && !ReferenceEquals(giver, receiver))
+                        itemGiver[receiver] = (giver, SideOf(giverSlot));
                     break;
                 }
 
@@ -331,6 +366,21 @@ public static class ReplayStatsScraper
                         var src = Tags(parts).ofSlot is { } os ? PickAt(os) : PickAt(attacker);
                         if (src is not null) residualSource[pslot] = src;
                     }
+                    else if (pname == "confusion" && PickAt(pslot) is { } confused)
+                    {
+                        // Who confused this mon decides where its self-hit lands. Fatigue
+                        // confusion (Thrash/Outrage/Petal Dance ending) is self-inflicted,
+                        // so leave no source and the hit stays self-damage. Otherwise the
+                        // mon that just moved (Confuse Ray, or Teeter Dance from an ally,
+                        // named in [of] when present) owns the hit and any KO it leads to.
+                        confusionSource.Remove(confused);
+                        var fatigue = false;
+                        for (var i = 4; i < parts.Length; i++)
+                            if (parts[i].Trim() == "[fatigue]") { fatigue = true; break; }
+                        var cof = Tags(parts).ofSlot ?? attacker;
+                        if (!fatigue && cof is not null && PickAt(cof) is { } confuser)
+                            confusionSource[confused] = (confuser, SideOf(cof));
+                    }
                     break;
                 }
 
@@ -359,7 +409,22 @@ public static class ReplayStatsScraper
                         dealer = PickAt(attacker); dealerSlot = attacker;
                         self = ReferenceEquals(dealer, slot.Pick); // a move's HP cost / crash on the user
                     }
-                    else if (IsSelfSource(from!)) { dealer = null; dealerSlot = null; self = true; }
+                    else if (IsSelfSource(from!))
+                    {
+                        // Recoil / Struggle / crash / own damaging item / confusion are
+                        // self-damage by default. Two exceptions the game pins on another
+                        // mon: confusion inflicted by an opponent or ally (tracked at
+                        // |-start|confusion), and a damaging item TRICKED on by another mon
+                        // (tracked at |-item|). Those book to that mon, ally or enemy.
+                        (Pick pick, string side)? ext = null;
+                        if (slot.Pick is not null)
+                        {
+                            if (ToId(from!) == "confusion" && confusionSource.TryGetValue(slot.Pick, out var cs)) ext = cs;
+                            else if (kind == "item" && itemGiver.TryGetValue(slot.Pick, out var ig)) ext = ig;
+                        }
+                        if (ext is { } e) { dealer = e.pick; dealerSlot = e.side + "a"; self = false; }
+                        else { dealer = null; dealerSlot = null; self = true; }
+                    }
                     // The holder's own item / ability / form hurting itself carries no
                     // [of] (Solar Power, Dry Skin in sun, Mimikyu's disguise break, and
                     // any self-item chip): an [of] would name an OPPONENT'S effect. So an
@@ -397,7 +462,15 @@ public static class ReplayStatsScraper
                     if (slot.Pick is not null)
                     {
                         var v = Stat(slot.Pick);
-                        if (self) v.TakenSelf += delta;
+                        if (self)
+                        {
+                            v.TakenSelf += delta;
+                            // The mon's own damage is now the most recent hit to its slot,
+                            // so a faint with no new attacker is a self-KO, not a kill for
+                            // whatever enemy last touched it (recoil/Struggle/confusion/own
+                            // orb). A real later enemy hit re-arms lastKiller below.
+                            lastKiller.Remove(sid);
+                        }
                         else if (direct) v.TakenDirect += delta;
                         else v.TakenIndirect += delta;
                     }

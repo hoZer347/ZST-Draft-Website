@@ -977,6 +977,7 @@ exports.Pokedex = {
     "num": 670,
     "name": "Floette-Mega",
     "baseSpecies": "Floette",
+    "battleOnly": "Floette",
     "forme": "Mega",
     "types": [
       "Fairy"

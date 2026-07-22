@@ -1793,4 +1793,318 @@ public class ScraperAttributionTests
         Assert.Equal(50, run.Of("Snorlax").TakenDirect, 2);  // the real Snorlax
         Assert.Equal(35, run.Of("Snorlax").DealtDirect, 2);
     }
+
+    // ── Self-KO must not be credited to the last enemy that touched the mon ───
+
+    [Fact]
+    public void Recoil_that_KOs_its_own_user_is_a_self_ko_not_the_last_enemys_kill()
+    {
+        // The m3 bug: a mon whittled by the foe, then felled by its OWN Take Down recoil.
+        // The recoil is the most recent hit, so the faint is a self-KO; the foe that
+        // landed the earlier chip must NOT be credited the kill.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Buzzwole, M|item
+            |poke|p2|Enamorus, F|item
+            |start
+            |switch|p1a: Buzzwole|Buzzwole, M|100/100
+            |switch|p2a: Enamorus|Enamorus, F|100/100
+            |turn|1
+            |move|p1a: Buzzwole|Ice Punch|p2a: Enamorus
+            |-damage|p2a: Enamorus|40/100
+            |move|p2a: Enamorus|Take Down|p1a: Buzzwole
+            |-damage|p1a: Buzzwole|80/100
+            |-damage|p2a: Enamorus|0 fnt|[from] Recoil
+            |faint|p2a: Enamorus
+            |win|A
+            """);
+        Assert.Equal(60, run.Of("Enamorus").TakenDirect, 2);  // Ice Punch
+        Assert.Equal(40, run.Of("Enamorus").TakenSelf, 2);    // the recoil that felled it
+        Assert.Equal(1, run.Of("Enamorus").SelfKos);
+        Assert.Equal(1, run.Of("Enamorus").Deaths);
+        Assert.Equal(0, run.Of("Buzzwole").Kills);            // NOT the foe's kill
+    }
+
+    [Fact]
+    public void Struggle_recoil_that_KOs_its_user_is_a_self_ko()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ursaring, M|item
+            |poke|p2|Sinistcha, F|item
+            |start
+            |switch|p1a: Ursaring|Ursaring, M|100/100
+            |switch|p2a: Sinistcha|Sinistcha, F|100/100
+            |turn|1
+            |move|p1a: Ursaring|Facade|p2a: Sinistcha
+            |-damage|p2a: Sinistcha|30/100
+            |move|p2a: Sinistcha|Struggle|p1a: Ursaring
+            |-damage|p1a: Ursaring|85/100
+            |-damage|p2a: Sinistcha|0 fnt|[from] recoil
+            |faint|p2a: Sinistcha
+            |win|A
+            """);
+        Assert.Equal(1, run.Of("Sinistcha").SelfKos);
+        Assert.Equal(0, run.Of("Ursaring").Kills); // only earlier chip, not the lethal blow
+    }
+
+    [Fact]
+    public void Life_orb_that_KOs_its_holder_is_a_self_ko_not_the_last_enemys_kill()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p2a: Snorlax|Body Slam|p1a: Garchomp
+            |-damage|p1a: Garchomp|40/100
+            |move|p1a: Garchomp|Earthquake|p2a: Snorlax
+            |-damage|p2a: Snorlax|60/100
+            |-damage|p1a: Garchomp|0 fnt|[from] item: Life Orb
+            |faint|p1a: Garchomp
+            |win|B
+            """);
+        Assert.Equal(60, run.Of("Garchomp").TakenDirect, 2);  // Body Slam
+        Assert.Equal(40, run.Of("Garchomp").TakenSelf, 2);    // Life Orb finished it
+        Assert.Equal(1, run.Of("Garchomp").SelfKos);
+        Assert.Equal(0, run.Of("Snorlax").Kills);
+    }
+
+    [Fact]
+    public void Fatigue_confusion_self_hit_KO_is_a_self_ko()
+    {
+        // Thrash/Outrage/Petal Dance end in [fatigue] confusion; hitting yourself in that
+        // confusion is self-damage even if a foe chipped you earlier this game.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Rillaboom, M|item
+            |poke|p2|Dragonite, M|item
+            |start
+            |switch|p1a: Rillaboom|Rillaboom, M|100/100
+            |switch|p2a: Dragonite|Dragonite, M|100/100
+            |turn|1
+            |move|p2a: Dragonite|Ice Beam|p1a: Rillaboom
+            |-damage|p1a: Rillaboom|30/100
+            |-start|p1a: Rillaboom|confusion|[fatigue]
+            |turn|2
+            |-activate|p1a: Rillaboom|confusion
+            |-damage|p1a: Rillaboom|0 fnt|[from] confusion
+            |faint|p1a: Rillaboom
+            |win|B
+            """);
+        Assert.Equal(70, run.Of("Rillaboom").TakenDirect, 2); // Ice Beam
+        Assert.Equal(30, run.Of("Rillaboom").TakenSelf, 2);   // the confusion hit
+        Assert.Equal(1, run.Of("Rillaboom").SelfKos);
+        Assert.Equal(0, run.Of("Dragonite").Kills);
+    }
+
+    [Fact]
+    public void Confusion_from_an_enemy_move_is_that_enemys_damage_and_KO()
+    {
+        // Confuse Ray (not fatigue): the confused mon's self-hit belongs to the foe that
+        // confused it, and a faint from it is the foe's kill.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gyarados, M|item
+            |poke|p2|Alakazam, M|item
+            |start
+            |switch|p1a: Gyarados|Gyarados, M|100/100
+            |switch|p2a: Alakazam|Alakazam, M|100/100
+            |turn|1
+            |move|p2a: Alakazam|Confuse Ray|p1a: Gyarados
+            |-start|p1a: Gyarados|confusion
+            |turn|2
+            |-activate|p1a: Gyarados|confusion
+            |-damage|p1a: Gyarados|0 fnt|[from] confusion
+            |faint|p1a: Gyarados
+            |win|B
+            """);
+        Assert.Equal(100, run.Of("Gyarados").TakenIndirect, 2); // credited to the confuser, not self
+        Assert.Equal(0, run.Of("Gyarados").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Gyarados").SelfKos);
+        Assert.Equal(100, run.Of("Alakazam").DealtIndirect, 2);
+        Assert.Equal(1, run.Of("Alakazam").Kills);
+    }
+
+    [Fact]
+    public void Confusion_from_an_ally_teeter_dance_is_an_ally_ko_not_a_kill()
+    {
+        // Teeter Dance confuses adjacent mons including your own ally. That ally's
+        // confusion self-hit is friendly fire: the caster's ally damage and an AlliesKoed.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gyarados, M|item
+            |poke|p1|Dragonite, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Gyarados|Gyarados, M|100/100
+            |switch|p1b: Dragonite|Dragonite, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1b: Dragonite|Teeter Dance|p1a: Gyarados
+            |-start|p1a: Gyarados|confusion
+            |turn|2
+            |-activate|p1a: Gyarados|confusion
+            |-damage|p1a: Gyarados|0 fnt|[from] confusion
+            |faint|p1a: Gyarados
+            |win|B
+            """);
+        Assert.Equal(100, run.Of("Gyarados").TakenIndirect, 2);
+        Assert.Equal(1, run.Of("Gyarados").Deaths);
+        Assert.Equal(100, run.Of("Dragonite").DealtAllyIndirect, 2);
+        Assert.Equal(1, run.Of("Dragonite").AlliesKoed);
+        Assert.Equal(0, run.Of("Dragonite").Kills);
+    }
+
+    [Fact]
+    public void Life_orb_tricked_on_by_a_foe_is_that_foes_damage_and_KO()
+    {
+        // A Life Orb Tricked onto a mon by the opponent: its recoil (and any KO) is the
+        // trickster's, since they forced the item on. The holder never dealt it to itself.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Rotom, M|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p2a: Rotom|Rotom, M|100/100
+            |turn|1
+            |move|p2a: Rotom|Trick|p1a: Garchomp
+            |-item|p1a: Garchomp|Life Orb|[from] move: Trick|[of] p2a: Rotom
+            |-item|p2a: Rotom|Leftovers|[from] move: Trick|[of] p1a: Garchomp
+            |turn|2
+            |move|p1a: Garchomp|Earthquake|p2a: Rotom
+            |-damage|p2a: Rotom|60/100
+            |-damage|p1a: Garchomp|0 fnt|[from] item: Life Orb
+            |faint|p1a: Garchomp
+            |win|B
+            """);
+        Assert.Equal(100, run.Of("Garchomp").TakenIndirect, 2); // the tricked Life Orb, credited to Rotom
+        Assert.Equal(0, run.Of("Garchomp").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Garchomp").SelfKos);
+        Assert.Equal(100, run.Of("Rotom").DealtIndirect, 2);
+        Assert.Equal(1, run.Of("Rotom").Kills);
+    }
+
+    // ── Toxic Spikes poison on a bare switch-in tox (real-log format) ─────────
+
+    [Fact]
+    public void Bare_switch_in_tox_with_toxic_spikes_down_is_the_layers_damage_and_KO()
+    {
+        // The m7 bug: real logs poison a switch-in with a BARE |-status|tox (no [from]),
+        // which looks like a Toxic move. With Toxic Spikes down, credit the layer, and
+        // the poison-death is the layer's kill, NOT the teammate that last moved.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Glimmora, M|item
+            |poke|p1|Ferrothorn, M|item
+            |poke|p2|Skarmory, M|item
+            |poke|p2|Baxcalibur, M|item
+            |start
+            |switch|p1a: Glimmora|Glimmora, M|100/100
+            |switch|p2a: Skarmory|Skarmory, M|100/100
+            |turn|1
+            |move|p1a: Glimmora|Toxic Spikes|p2a: Skarmory
+            |-sidestart|p2: B|move: Toxic Spikes
+            |turn|2
+            |move|p1a: Glimmora|Toxic Spikes|p2a: Skarmory
+            |-sidestart|p2: B|move: Toxic Spikes
+            |turn|3
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |move|p1a: Ferrothorn|Gyro Ball|p2a: Skarmory
+            |-damage|p2a: Skarmory|0 fnt
+            |faint|p2a: Skarmory
+            |switch|p2a: Baxcalibur|Baxcalibur, M|100/100
+            |-status|p2a: Baxcalibur|tox
+            |turn|4
+            |-damage|p2a: Baxcalibur|0 fnt|[from] psn
+            |faint|p2a: Baxcalibur
+            |win|A
+            """);
+        Assert.Equal(100, run.Of("Baxcalibur").TakenIndirect, 2);
+        Assert.Equal(100, run.Of("Glimmora").DealtIndirect, 2); // the layer
+        Assert.Equal(1, run.Of("Glimmora").Kills);
+        Assert.Equal(0, run.Of("Ferrothorn").DealtIndirect, 2); // the teammate that last moved is NOT credited
+        Assert.Equal(0, run.Of("Ferrothorn").AlliesKoed);
+    }
+
+    [Fact]
+    public void A_toxic_move_still_credits_the_mover_not_the_toxic_spikes_layer()
+    {
+        // Guard the disambiguation: a bare tox on a mon that did NOT just switch in is a
+        // Toxic move, credited to the mover, even with Toxic Spikes on the field.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Glimmora, M|item
+            |poke|p1|Grimmsnarl, M|item
+            |poke|p2|Blissey, F|item
+            |start
+            |switch|p1a: Glimmora|Glimmora, M|100/100
+            |switch|p2a: Blissey|Blissey, F|100/100
+            |turn|1
+            |move|p1a: Glimmora|Toxic Spikes|p2a: Blissey
+            |-sidestart|p2: B|move: Toxic Spikes
+            |turn|2
+            |switch|p1a: Grimmsnarl|Grimmsnarl, M|100/100
+            |move|p1a: Grimmsnarl|Toxic|p2a: Blissey
+            |-status|p2a: Blissey|tox
+            |turn|3
+            |-damage|p2a: Blissey|94/100|[from] psn
+            |win|A
+            """);
+        Assert.Equal(6, run.Of("Grimmsnarl").DealtIndirect, 2); // the Toxic mover
+        Assert.Equal(0, run.Of("Glimmora").DealtIndirect, 2);   // not the T-Spikes layer
+        Assert.Equal(6, run.Of("Blissey").TakenIndirect, 2);
+    }
+
+    // ── activeTurns must stop when a fainted mon's slot is never refilled ─────
+
+    [Fact]
+    public void A_fainted_mon_with_no_replacement_stops_counting_active_turns()
+    {
+        // Doubles, the away side brings only two mons. When one faints there is no bench
+        // to refill its slot, so it must not keep accruing presence for the rest of the
+        // game (the m19/m7 overcount).
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p1|Gyarados, M|item
+            |poke|p2|Snorlax, M|item
+            |poke|p2|Munchlax, M|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p1b: Gyarados|Gyarados, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |switch|p2b: Munchlax|Munchlax, M|100/100
+            |turn|1
+            |move|p1a: Garchomp|Earthquake|p2a: Snorlax|[spread] p2a,p2b
+            |-damage|p2a: Snorlax|0 fnt
+            |-damage|p2b: Munchlax|60/100
+            |faint|p2a: Snorlax
+            |turn|2
+            |move|p1a: Garchomp|Earthquake|p2b: Munchlax|[spread] p2b
+            |-damage|p2b: Munchlax|30/100
+            |turn|3
+            |move|p1a: Garchomp|Earthquake|p2b: Munchlax|[spread] p2b
+            |-damage|p2b: Munchlax|0 fnt
+            |faint|p2b: Munchlax
+            |win|A
+            """);
+        Assert.Equal(1, run.Of("Snorlax").ActiveTurns);   // only turn 1, not 1-3
+        Assert.Equal(3, run.Of("Munchlax").ActiveTurns);  // on the field all three turns
+        Assert.Equal(3, run.Of("Garchomp").ActiveTurns);
+    }
 }
