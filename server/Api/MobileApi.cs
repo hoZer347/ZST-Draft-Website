@@ -568,7 +568,7 @@ public static class MobileApi
         // they share) are recomputed. Run this after a scraper fix so the stats page
         // reflects corrected attribution without re-simulating the season.
         admin.MapPost("/leagues/{leagueId:int}/recompute-stats", async (
-            int leagueId, ClaimsPrincipal me, AppDbContext db, MatchStatsRecorder recorder, CancellationToken ct) =>
+            int leagueId, ClaimsPrincipal me, AppDbContext db, MatchStatsRecorder recorder, ReplayScorer scorer, CancellationToken ct) =>
         {
             if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
 
@@ -592,9 +592,20 @@ public static class MobileApi
                             && m.ReplayHomeSide != null && m.Result != MatchResult.Pending)
                 .ToListAsync(ct);
             var applied = 0;
+            var rescored = 0;
             foreach (var m in matches)
             {
                 await recorder.ApplyAsync(m, m.ReplayHomeSide!, m.ReplayLog!, m.Result, +1, ct);
+                // Re-score the mons-remaining counts from the stored log with the fixed
+                // scorer (the winner/standings are untouched; only HomeScore/AwayScore
+                // change, e.g. a forme double-count that used to read 1-1 becomes 0-1).
+                var sc = await scorer.ScoreLogAsync(m, m.ReplayLog!, ct);
+                if (sc.Ok && (m.HomeScore != sc.HomeScore || m.AwayScore != sc.AwayScore))
+                {
+                    m.HomeScore = sc.HomeScore;
+                    m.AwayScore = sc.AwayScore;
+                    rescored++;
+                }
                 // Save after EACH match: ApplyAsync reads the existing PokemonStat rows
                 // back from the DB to accumulate onto, so a later match only sees an
                 // earlier one's contribution once it's persisted. Batching to a single
@@ -602,7 +613,7 @@ public static class MobileApi
                 await db.SaveChangesAsync(ct);
                 applied++;
             }
-            return Results.Ok(new { leagueId, matchesApplied = applied, statRowsCleared = stale.Count });
+            return Results.Ok(new { leagueId, matchesApplied = applied, matchesRescored = rescored, statRowsCleared = stale.Count });
         });
 
         // Admin: ready ANY account into the not-yet-started draft (dummy or real

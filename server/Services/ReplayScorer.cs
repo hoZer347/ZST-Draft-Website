@@ -105,8 +105,11 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var homeSide = straight >= swapped ? "p1" : "p2";
         var awaySide = homeSide == "p1" ? "p2" : "p1";
 
-        var homeBrought = parsed.Brought.GetValueOrDefault(homeSide)?.Count ?? 0;
-        var awayBrought = parsed.Brought.GetValueOrDefault(awaySide)?.Count ?? 0;
+        // Survivors = roster size (from |teamsize|) minus faints. Uses the true mon
+        // count, NOT the de-duped Brought set, so a mon shown under two names (a forme
+        // hidden in team preview, e.g. Urshifu-Rapid-Strike) never inflates the score.
+        var homeBrought = parsed.Sizes.GetValueOrDefault(homeSide, parsed.Brought.GetValueOrDefault(homeSide)?.Count ?? 0);
+        var awayBrought = parsed.Sizes.GetValueOrDefault(awaySide, parsed.Brought.GetValueOrDefault(awaySide)?.Count ?? 0);
         var homeScore = Math.Max(0, homeBrought - parsed.Faints.GetValueOrDefault(homeSide));
         var awayScore = Math.Max(0, awayBrought - parsed.Faints.GetValueOrDefault(awaySide));
 
@@ -221,7 +224,12 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         bool Tie,
         Dictionary<string, string> Players,
         Dictionary<string, HashSet<string>> Brought,
-        Dictionary<string, int> Faints);
+        Dictionary<string, int> Faints,
+        // Mons per side (its roster size), for scoring. From |teamsize|, falling back
+        // to the |poke| count. NOT the Brought set's size: that de-dups by species and
+        // double-counts a mon whose team-preview name differs from its battle forme
+        // (Urshifu vs Urshifu-Rapid-Strike), which would inflate the survivor score.
+        Dictionary<string, int> Sizes);
 
     /// <summary>
     /// Walks the pipe-delimited battle log. Collects the two players, the species
@@ -233,6 +241,8 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var players = new Dictionary<string, string>();
         var brought = new Dictionary<string, HashSet<string>>();
         var faints = new Dictionary<string, int>();
+        var sizes = new Dictionary<string, int>();     // |teamsize| (authoritative roster count)
+        var pokeCount = new Dictionary<string, int>(); // |poke| line count, a fallback
         string? winner = null;
         var tie = false;
 
@@ -250,8 +260,13 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
                     players[parts[2]] = parts[3];
                     break;
 
+                case "teamsize" when parts.Length >= 4 && int.TryParse(parts[3], out var ts):
+                    sizes[parts[2]] = ts;
+                    break;
+
                 case "poke" when parts.Length >= 4:
                     Side(parts[2]).Add(SpeciesId(parts[3]));
+                    pokeCount[parts[2]] = pokeCount.GetValueOrDefault(parts[2]) + 1;
                     break;
 
                 case "switch" or "drag" when parts.Length >= 4:
@@ -274,7 +289,12 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
             }
         }
 
-        return new Parsed(winner, tie, players, brought, faints);
+        // Prefer the explicit |teamsize|; fall back to the |poke| count where a log
+        // somehow lacked it.
+        foreach (var (side, n) in pokeCount)
+            if (!sizes.ContainsKey(side)) sizes[side] = n;
+
+        return new Parsed(winner, tie, players, brought, faints, sizes);
     }
 
     /// <summary>Species out of a "Charizard-Mega-Y, L50, M" detail string.</summary>
