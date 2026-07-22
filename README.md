@@ -127,7 +127,12 @@ Once a draft finishes the server lays down a round-robin schedule
 ([ScheduleApi](server/Api/ScheduleApi.cs)): a full single round-robin, byes for
 odd rosters, one game per pair. Coaches build their teams in the Teambuilder tab
 (the official Showdown client pointed at our custom `gen9zstseason4` format, EVs
-and IVs and all) and battle on the private server.
+and IVs and all) and battle on the private server. That format's validator
+(`battle-server/showdown-config/custom-formats.js`) enforces the draft per coach:
+keyed by the logged-in Showdown name, it fetches the coach's roster from
+`/api/showdown/roster/{user}` at validation time and requires every mon to be
+drafted, mega stones to sit only on megas the coach drafted, and C-tier picks to
+Terastallize to their drafted Tera type.
 
 When a battle ends, the Showdown server POSTs its log to
 `/api/showdown/report` (shared-secret guarded). The server matches it to the

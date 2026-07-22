@@ -179,6 +179,9 @@ try { fs.mkdirSync(path.join(psDir, 'config', 'ladders'), { recursive: true }); 
 const reportEnv = {
   DRAFT_REPORT_URL: process.env.DRAFT_REPORT_URL || 'http://localhost:5211/api/showdown/report',
   DRAFT_REPORT_SECRET_FILE: path.resolve(__dirname, '..', '.report-secret'),
+  // Where the ZST Season 4 team validator (custom-formats.js) fetches a coach's
+  // drafted roster to enforce the draft. Inherited by the validator worker.
+  DRAFT_ROSTER_URL: process.env.DRAFT_ROSTER_URL || 'http://localhost:5211/api/showdown/roster',
 };
 
 const child = spawn(process.execPath, ['pokemon-showdown', 'start', port, '--skip-build'], {

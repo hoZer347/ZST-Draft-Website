@@ -182,6 +182,15 @@ function load(file) {
     // modern browsers never run. The first external script is the earliest real
     // client JS, so running just before it still beats the query-string strip.
     html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + MEGA_BACK_FALLBACK + '\n';
+    // Cache-bust our LOCAL patched data files by their mtime. Their ?v= in the shell
+    // is a hardcoded constant that never moves when patch-client-tiers.js rewrites the
+    // file, so browsers (and Cloudflare) would serve the stale bytes forever. Stamping
+    // the version with the file's mtime makes every re-patch a new URL, so a fix lands
+    // on the next load with no manual version bump.
+    html = html.replace(/\/data\/(search-index|teambuilder-tables)\.js\?v=\d+/g, (whole, name) => {
+      try { return `/data/${name}.js?v=${Math.floor(fs.statSync(path.join(ROOT, 'data', `${name}.js`)).mtimeMs)}`; }
+      catch { return whole; }
+    });
     raw = Buffer.from(html, 'utf8');
   }
   const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;

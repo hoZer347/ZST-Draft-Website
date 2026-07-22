@@ -12,7 +12,7 @@ namespace DraftLeague.Web.Api;
 /// </summary>
 public static class PlayersApi
 {
-    public record PlayerDto(string DiscordId, string Username, string? AvatarUrl, bool IsAdmin, string Source);
+    public record PlayerDto(string DiscordId, string Username, string? AvatarUrl, bool IsAdmin, string Source, bool HasTeam);
 
     public static void MapPlayersApi(this WebApplication app, string? corsPolicy = null)
     {
@@ -39,7 +39,10 @@ public static class PlayersApi
                         : $"https://cdn.discordapp.com/avatars/{u.DiscordId}/{u.AvatarHash}.png",
                     u.IsAdmin,
                     // Inlined rather than a helper call so EF can translate it.
-                    u.DiscordId.StartsWith("coach-") ? "dummy" : "discord"))
+                    u.DiscordId.StartsWith("coach-") ? "dummy" : "discord",
+                    // Whether this player coaches a team in the current season, so the
+                    // Teams page can offer a tab only for players who actually have one.
+                    db.Teams.Any(t => t.CoachId == u.DiscordId)))
                 .ToListAsync(ct);
 
             return Results.Ok(players
@@ -176,6 +179,62 @@ public static class PlayersApi
 
             return Results.Ok(new { user.TeamName, user.TeamIcon, user.ShowdownName });
         });
+
+        // Server-to-server: the Showdown battle server's team validator calls this at
+        // validation time to enforce that a coach only battles with their drafted
+        // roster (see battle-server/showdown-config/custom-formats.js). Keyed by the
+        // Showdown user id (lowercase-alphanumeric of the coach's ShowdownName), so no
+        // JWT, it isn't the browser calling. Returns only public draft data (the same
+        // picks the anonymous team page shows), so it needs no secret. `found:false`
+        // (not 404) means no coach claims that Showdown name, the validator rejects.
+        var roster = app.MapGet("/api/showdown/roster/{user}", async (
+            string user, AppDbContext db, CancellationToken ct) =>
+        {
+            var wanted = ShowdownId(user);
+            if (wanted.Length == 0) return Results.Ok(new { found = false });
+
+            // Identify the coach by their Showdown name if they've set one, otherwise
+            // fall back to their site (Discord) username. Both sides are normalised to
+            // a Showdown id (lowercased, punctuation stripped), so a site name like
+            // ".hozer" matches the Showdown login "hozer" with no explicit ShowdownName.
+            // Matched in memory (the roster is tiny, and toID has no SQL translation).
+            var users = await db.Users
+                .Select(u => new { u.DiscordId, u.Username, u.ShowdownName })
+                .ToListAsync(ct);
+            var coach = users.FirstOrDefault(u => u.ShowdownName != null && ShowdownId(u.ShowdownName) == wanted)
+                     ?? users.FirstOrDefault(u => ShowdownId(u.Username) == wanted);
+            if (coach is null) return Results.Ok(new { found = false });
+
+            var team = await db.Teams.FirstOrDefaultAsync(t => t.CoachId == coach.DiscordId, ct);
+            if (team is null) return Results.Ok(new { found = false });
+
+            var mons = await db.Picks
+                .Where(p => p.TeamId == team.Id)
+                .Select(p => new
+                {
+                    tier = p.Tier.ToString(),
+                    tera = p.TeraType,
+                    name = p.PokemonEntry.Name,
+                    // The sprite slug distinguishes mega / regional formes (e.g.
+                    // "charizard-megay"); the validator resolves it against the dex.
+                    slug = p.PokemonEntry.Sprite,
+                })
+                .ToListAsync(ct);
+
+            return Results.Ok(new { found = true, showdownName = coach.ShowdownName ?? coach.Username, mons });
+        });
+        if (corsPolicy is not null) roster.RequireCors(corsPolicy);
+    }
+
+    /// <summary>Showdown's user/species id form: lowercase, alphanumerics only.</summary>
+    private static string ShowdownId(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        Span<char> buf = stackalloc char[s.Length];
+        var n = 0;
+        foreach (var c in s)
+            if (char.IsLetterOrDigit(c)) buf[n++] = char.ToLowerInvariant(c);
+        return new string(buf[..n]);
     }
 
     /// <summary>Trim, null out blanks, and cap length.</summary>
