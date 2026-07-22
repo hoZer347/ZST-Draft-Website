@@ -17,17 +17,31 @@ function toId(s) {
   return ('' + (s == null ? '' : s)).toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// A drafted mon's "base" identity for roster matching: mega / primal formes collapse
-// to their base species (you draft "M-Charizard Y" and may bring Charizard), while
-// regional / other formes stay distinct draft picks (Rotom-Wash != Rotom).
+// A drafted mon's "base" identity for roster matching. Battle-only formes (mega,
+// primal, crowned) are built as the base species holding an item and transform in
+// battle, so they collapse to that base (you draft "M-Charizard Y" and bring
+// Charizard). Origin, regional and other formes are built directly and stay distinct
+// draft picks (Giratina-Origin != Giratina, Rotom-Wash != Rotom).
 function baseFormeId(dex, name) {
   const sp = dex.species.get(name);
-  if (sp && sp.exists) {
-    const forme = sp.forme || '';
-    if (forme.startsWith('Mega') || forme === 'Primal') return toId(sp.baseSpecies);
-    return sp.id;
-  }
+  if (sp && sp.exists) return typeof sp.battleOnly === 'string' ? toId(sp.battleOnly) : sp.id;
   return toId(name);
+}
+
+// The battle-only forme a held item transforms its holder into, or null. Mega stones
+// name it directly (megaStone); the orbs / rusted items name it via itemUser, but
+// only when that species is a battle-only forme (so Light Ball -> Pikachu, a plain
+// held item, is ignored). Origin orbs (Griseous Core) are NOT caught here: their
+// forme is built directly, and base validation rewrites "base + orb" to the Origin
+// species before the roster check, so species membership already covers them.
+function formeGrantedByItem(dex, item) {
+  if (!item || !item.exists) return null;
+  if (item.megaStone) { const sp = dex.species.get(item.megaStone); return sp.exists ? sp : null; }
+  if (item.itemUser && item.itemUser.length === 1) {
+    const sp = dex.species.get(item.itemUser[0]);
+    if (sp.exists && typeof sp.battleOnly === 'string') return sp;
+  }
+  return null;
 }
 
 // Blocking GET of a coach's drafted roster from the .NET league server, at the point
@@ -54,23 +68,27 @@ function fetchRosterSync(userid) {
 }
 
 // The roster rules, factored out of validateTeam so they're unit-testable with a
-// stub roster + the real Dex (see test/format.test.js). Given the coach's roster
-// { mons: [{ slug, tier, tera, name }] }, returns an array of problem strings:
+// stub roster + the real Dex (see test/roster-validate.test.js). Given the coach's
+// roster { mons: [{ slug, tier, tera, name }] }, returns an array of problem strings:
 //   - every set's species must be a drafted mon,
-//   - a mega stone must sit on the species it evolves AND be a mega the coach drafted,
+//   - a form-changing item (mega stone, Rusted Sword/Shield, Red/Blue Orb) must sit on
+//     the species it transforms AND unlock a battle-only forme the coach drafted,
 //   - a C-tier pick must Terastallize to its drafted Tera type.
+// Origin formes (Giratina/Dialga/Palkia-Origin) need no special item handling here:
+// base validation rewrites "base + orb" to the Origin species before this runs, so
+// the species-membership check enforces them like any other distinct forme.
 function checkRoster(team, roster, dex) {
   const problems = [];
-  const allowed = new Set();       // base forme ids the coach may bring
-  const megas = new Set();         // mega forme ids the coach actually drafted
+  const allowed = new Set();       // base ids the coach may bring
+  const granted = new Set();       // battle-only forme ids a drafted pick unlocks
   const draftedByBase = new Map(); // base id -> the drafted pick (for tier / tera)
   for (const m of (roster.mons || [])) {
     const slug = m.slug || m.name;
     const sp = dex.species.get(slug);
     let baseId;
-    if (sp && sp.exists && ((sp.forme || '').startsWith('Mega') || (sp.forme || '') === 'Primal')) {
-      baseId = toId(sp.baseSpecies);
-      megas.add(sp.id);
+    if (sp && sp.exists && typeof sp.battleOnly === 'string') {
+      baseId = toId(sp.battleOnly); // mega / primal / crowned: drafted as base + item
+      granted.add(sp.id);
     } else {
       baseId = sp && sp.exists ? sp.id : toId(slug);
     }
@@ -85,16 +103,19 @@ function checkRoster(team, roster, dex) {
 
     if (!allowed.has(baseId)) {
       problems.push(`${label} is not on your drafted team.`);
-      continue; // the mega / tera checks below assume a drafted mon
+      continue; // the item / tera checks below assume a drafted mon
     }
 
-    // Mega stone: must belong to this species, and be a mega the coach drafted.
+    // A form-changing item must sit on the species it transforms AND unlock a
+    // battle-only forme the coach actually drafted (a mega, primal or crowned forme).
     const item = dex.items.get(set.item);
-    if (item && item.exists && item.megaStone && item.megaEvolves) {
-      if (baseFormeId(dex, item.megaEvolves) !== baseId) {
-        problems.push(`${label} can't hold ${item.name}: that stone belongs to ${item.megaEvolves}.`);
-      } else if (!megas.has(toId(item.megaStone))) {
-        problems.push(`${label} can't hold ${item.name}: you drafted the base ${set.species}, not its mega (${item.megaStone}).`);
+    const grantedForme = formeGrantedByItem(dex, item);
+    if (grantedForme) {
+      const owner = grantedForme.battleOnly || grantedForme.baseSpecies;
+      if (toId(owner) !== baseId) {
+        problems.push(`${label} can't hold ${item.name}: it belongs to ${owner}.`);
+      } else if (!granted.has(grantedForme.id)) {
+        problems.push(`${label} can't hold ${item.name}: you didn't draft its ${grantedForme.forme} forme (${grantedForme.name}).`);
       }
     }
 
@@ -163,6 +184,7 @@ exports.Formats = [
       'Power Construct',      // ability banned (Zygarde still draftable with other abilities)
       'Revival Blessing',
       'Hidden Power',
+      'Rusted Shield',        // bans Zamazenta-Crowned (its required item), base Zamazenta stays legal
       // Zippy Zap (+1 evasion via a 100% self-secondary) is NOT covered by the
       // Evasion Clause, so ban it explicitly. Double Team / Minimize are already
       // banned BY that clause (via its Evasion Moves Clause), listing them here
@@ -175,6 +197,21 @@ exports.Formats = [
       'Poison Gem', 'Ground Gem', 'Flying Gem', 'Psychic Gem', 'Bug Gem', 'Rock Gem',
       'Ghost Gem', 'Dragon Gem', 'Dark Gem', 'Steel Gem', 'Fairy Gem',
     ],
+  },
+  {
+    // Open doubles scrims: bring any team, no tier/legality restrictions, just the
+    // battle QoL mods. Defined here (not the built-in Doubles Custom Game) because
+    // the self-hosted client only surfaces our custom formats + random battles; a
+    // built-in custom game never reaches its Battle! picker. No draft-roster check,
+    // this is for free practice games, not league matches.
+    name: "[Gen 9] Scrims",
+    desc: "Open doubles scrims. Bring any team; standard battle mods, no clauses or tier bans.",
+    mod: 'gen9',
+    gameType: 'doubles',
+    rated: false,
+    searchShow: true,
+    challengeShow: true,
+    ruleset: ['Cancel Mod', 'HP Percentage Mod', 'Sleep Clause Mod', 'Endless Battle Clause', 'Team Preview'],
   },
 ];
 

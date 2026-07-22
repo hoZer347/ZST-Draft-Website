@@ -40,6 +40,7 @@ function patchTable(tbl) {
 
   const groups = Object.fromEntries(ORDER.map((t) => [t, []]));
   const override = { ...tbl.overrideTier };
+  const seen = new Set();
   let illegal = 0;
   for (const id of ids) {
     const t = tiers[id];
@@ -52,6 +53,19 @@ function patchTable(tbl) {
     }
     groups[t].push(id);
     override[id] = t;
+    seen.add(id);
+  }
+
+  // Add tiered mons the client's browse list didn't already carry — the league's
+  // CUSTOM megas (Floette-Mega etc.) live only in overrideTier as Illegal, never in
+  // .tiers, so they'd never show. The client dex learns their species at runtime (see
+  // CUSTOM_DEX in serve-client.js), so listing them here makes them browsable/pickable.
+  let added = 0;
+  for (const id of Object.keys(tiers)) {
+    if (seen.has(id) || !ORDER.includes(tiers[id])) continue;
+    groups[tiers[id]].push(id);
+    override[id] = tiers[id];
+    added++;
   }
 
   const newTiers = [];
@@ -68,7 +82,7 @@ function patchTable(tbl) {
   // the whole set, nothing gets cut. Safe: only our format uses these tables now.
   tbl.formatSlices = {};
 
-  return { ...Object.fromEntries(ORDER.map((t) => [t, groups[t].length])), Illegal: illegal };
+  return { ...Object.fromEntries(ORDER.map((t) => [t, groups[t].length])), Illegal: illegal, Added: added };
 }
 
 // Patch the top-level table (gen9 singles) plus the gen9 doubles/natdex tables,

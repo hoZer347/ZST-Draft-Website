@@ -19,6 +19,10 @@ const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..', 'client', 'play.pokemonshowdown.com');
 const PORT = Number(process.env.PORT || 8791);
+// The .NET API, for the same-origin roster proxy below (avoids the teambuilder
+// having to reach the API cross-origin). Same host the report plugin posts to.
+const API_BASE = (process.env.DRAFT_REPORT_URL || 'http://localhost:5211/api/showdown/report')
+  .replace(/\/api\/showdown\/report\/?$/, '');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -47,6 +51,9 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '
 //, the file attaches `seedTeams` to window. A second script then reads the URL +
 // localStorage, calls it, and writes the result back.
 const SEED_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'seed-teams.js'), 'utf8');
+// Inlined into the page so the browser and the Node tests share the exact roster ->
+// buildable-species mapping (see ROSTER_RESTRICT below and test/roster-teambuilder.test.js).
+const ROSTER_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-teambuilder.js'), 'utf8');
 
 const CAPTURE_HEAD = `<script>
 (function () {
@@ -131,6 +138,198 @@ const AUTOLOGIN = `
 // LoginPopup's submit is an unnamed type="submit", so it is unaffected.
 const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[name="login"] { display: none !important; }</style>`;
 
+// Restrict the format pickers to the league's two formats and default the Battle!
+// button to ZST Season 4. The client parses the server's |formats| list into
+// window.BattleFormats, each entry carrying searchShow / challengeShow / tournamentShow
+// flags the format popups filter on. We wrap app.parseFormats so that after every
+// parse only the allowed ids keep those flags (everything else is hidden from the
+// Battle! / find-a-battle picker, the challenge picker, and tournaments), and the
+// main-menu search button is pointed at ZST (the stock default is a random battle,
+// which we've hidden). Both allowed formats (ZST + the "[Gen 9] Scrims" doubles
+// custom game) are defined in showdown-config/custom-formats.js; the self-hosted
+// client only surfaces our custom formats + random battles, so a built-in custom
+// game would never appear here. The teambuilder's own format list is unaffected.
+const FORMAT_ALLOW = ['gen9zstseason4', 'gen9scrims'];
+const FORMAT_DEFAULT = 'gen9zstseason4';
+const FORMAT_FILTER = `<script>
+(function(){
+  var ALLOW = ${JSON.stringify(FORMAT_ALLOW.reduce((o, id) => (o[id] = 1, o), {}))};
+  var DEFAULT = ${JSON.stringify(FORMAT_DEFAULT)};
+  function sanitize(){
+    var BF = window.BattleFormats; if (!BF) return;
+    for (var id in BF){ var f = BF[id]; if (!f) continue;
+      var ok = !!ALLOW[id]; f.searchShow = ok; f.challengeShow = ok; f.tournamentShow = ok; }
+  }
+  // Point the main-menu search (Battle!) format button at the default. renderFormats
+  // otherwise falls back to a random battle, which we've hidden; set the button's
+  // value and re-render so the label, team picker and the search all use ZST.
+  function setDefault(){
+    var mm = window.app && app.rooms && app.rooms[''];
+    if (!mm || mm.__zstDefaulted || !window.BattleFormats || !BattleFormats[DEFAULT]) return false;
+    var $btns = mm.$ ? mm.$('button[name=format]') : null;
+    if (!$btns || !$btns.length) return false;
+    mm.curFormat = DEFAULT;
+    $btns.each(function(i, el){ el.value = DEFAULT; });
+    if (mm.updateFormats) mm.updateFormats();
+    mm.__zstDefaulted = true;
+    return true;
+  }
+  function hook(){
+    if (!window.app || typeof app.parseFormats !== 'function') return false;
+    if (!app.__zstFormatFilter){
+      var orig = app.parseFormats;
+      app.parseFormats = function(){ var r = orig.apply(this, arguments); sanitize(); try { setDefault(); } catch(e){} return r; };
+      app.__zstFormatFilter = true;
+    }
+    sanitize(); // formats may already have been parsed before we hooked
+    var done = false; try { done = setDefault(); } catch(e){}
+    // Keep polling until the main-menu button has actually been defaulted (the room
+    // may render after the first parse); the wrap above handles any later re-parse.
+    return !!(window.app && app.rooms && app.rooms[''] && app.rooms[''].__zstDefaulted);
+  }
+  var iv = setInterval(function(){ if (hook()) clearInterval(iv); }, 150);
+  setTimeout(function(){ clearInterval(iv); }, 30000);
+})();
+</script>`;
+
+// Auto-fill a C-tier pick's drafted Tera type in the teambuilder. Each coach draws
+// a fixed Tera type for their C-tier mons; picking one of those species in the
+// builder should load it in already teratyped. We fetch the coach's roster (by the
+// captured login name, via the same-origin /zst-roster proxy) into a species->tera
+// map, then wrap TeambuilderRoom.setPokemon so that right after it sets the species
+// (which resets teraType), we re-apply the drafted Tera and re-render. Non-C picks,
+// and species the coach didn't draft, are left untouched.
+const AUTO_TERA = `<script>
+(function () {
+  var TERA = {};
+  function id(s) { return ('' + (s || '')).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function load() {
+    var name = window.__zstName;
+    if (!name) { try { name = sessionStorage.getItem('zst_name'); } catch (e) {} }
+    if (!name) return;
+    fetch('/zst-roster?name=' + encodeURIComponent(name)).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.found || !d.mons) return;
+      d.mons.forEach(function (m) {
+        if (m.tier === 'C' && m.tera) { if (m.name) TERA[id(m.name)] = m.tera; if (m.slug) TERA[id(m.slug)] = m.tera; }
+      });
+    }).catch(function () {});
+  }
+  function patch() {
+    var R = window.TeambuilderRoom;
+    if (!R || !R.prototype || typeof R.prototype.setPokemon !== 'function') return false;
+    if (R.prototype.__zstAutoTera) return true;
+    var orig = R.prototype.setPokemon;
+    R.prototype.setPokemon = function (val, selectNext) {
+      orig.call(this, val, selectNext);
+      try {
+        var set = this.curSet;
+        if (set && set.species) {
+          var t = TERA[id(set.species)];
+          if (t && set.teraType !== t) { set.teraType = t; this.updateSetTop(); this.save(); }
+        }
+      } catch (e) {}
+    };
+    R.prototype.__zstAutoTera = true;
+    return true;
+  }
+  load();
+  var iv = setInterval(function () { if (patch()) clearInterval(iv); }, 150);
+  setTimeout(function () { clearInterval(iv); }, 30000);
+})();
+</script>`;
+
+// Restrict the ZST Season 4 teambuilder's species picker to the coach's drafted
+// roster. We fetch the roster (same-origin /zst-roster proxy) and map each pick's slug
+// to the base species the builder offers (rosterSpeciesIds, inlined from ROSTER_LIB).
+//
+// The classic teambuilder's "add pokemon" (+) list AND its species text search both
+// flow through DexSearch.find (oldclient/search.js -> engine.find(query) -> reads
+// engine.results): an empty query is the browse list, a typed query is the text
+// search. So we wrap DexSearch.find and, for a pokemon search in the ZST format, keep
+// only drafted mons in this.results (dropping undrafted mons AND the ability/move/type
+// filter chips, since the coach should see just their team). Filtering the OUTPUT each
+// call sidesteps the per-search result cache. Fail OPEN: no roster / no match / a fetch
+// error leaves the normal list, because the format's validateTeam blocks any undrafted
+// mon at battle time regardless of the picker.
+const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
+<script>
+(function () {
+  var TAG = '[zst-roster]';
+  function dbg(msg) { try { console.log(TAG, msg); } catch (e) {} } // console breadcrumbs
+  var ALLOWED = null;   // { speciesid: true } once roster + Dex are both ready, else null
+  var MONS = null;      // fetched roster mons, held until window.Dex loads (CDN, async)
+  var tried = {};       // name -> 1, so each candidate is fetched at most once
+  function isGuest(x) { x = ('' + x).toLowerCase(); return !x || x === 'guest' || /^guest[0-9]/.test(x); }
+  function nameCandidates() {
+    // Try EVERY name we can see, because Showdown sanitises the login (drops '.', etc.)
+    // so the logged-in name, the ?name= value, and the DB's stored name can all differ.
+    // Whichever one the roster endpoint matches wins.
+    var c = [];
+    try { if (window.app && app.user && app.user.get) { var u = app.user.get('userid'), n = app.user.get('name'); if (!isGuest(u)) c.push(u); if (!isGuest(n)) c.push(n); } } catch (e) {}
+    if (window.__zstName) c.push(window.__zstName);
+    try { var s = sessionStorage.getItem('zst_name'); if (s) c.push(s); } catch (e) {}
+    return c.filter(function (x, i) { return x && !isGuest(x) && c.indexOf(x) === i; });
+  }
+  function fetchRoster() {
+    if (MONS) return; // already have a roster
+    var cands = nameCandidates();
+    if (!fetchRoster._logged) { fetchRoster._logged = 1; if (cands.length) dbg('name candidates: ' + JSON.stringify(cands)); }
+    cands.forEach(function (name) {
+      if (tried[name]) return;
+      tried[name] = 1;
+      fetch('/zst-roster?name=' + encodeURIComponent(name), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+        dbg('roster for "' + name + '" -> found=' + (d && d.found) + ' mons=' + (d && d.mons ? d.mons.length : 0));
+        if (!MONS && d && d.found && d.mons && d.mons.length) MONS = d.mons; // first match wins
+      }).catch(function (e) { delete tried[name]; dbg('fetch failed for "' + name + '" ' + e); });
+    });
+  }
+  function computeAllowed() {
+    if (ALLOWED || !MONS || !window.Dex || !window.Dex.species || !window.rosterSpeciesIds) return;
+    var ids = window.rosterSpeciesIds(MONS, function (slug) { return window.Dex.species.get(slug); });
+    if (ids && Object.keys(ids).length) {
+      ALLOWED = ids; window.__zstAllowed = ids;
+      dbg('restriction ACTIVE, allowed: ' + Object.keys(ids).join(','));
+    }
+  }
+  function installHook() {
+    var D = window.DexSearch;
+    if (!D || !D.prototype || typeof D.prototype.find !== 'function') return false;
+    if (D.prototype.__zstRoster) return true;
+    var origFind = D.prototype.find;
+    var logged = {};
+    D.prototype.find = function (query) {
+      var ret = origFind.call(this, query);
+      try {
+        var ts = this.typedSearch;
+        if (ts && ts.searchType === 'pokemon') {
+          window.__zstFmt = ts.format;
+          var before = Array.isArray(this.results) ? this.results.length : -1;
+          // Restrict EVERY pokemon search once the roster is loaded (the coach's client
+          // is league-only). Filtering the output each call sidesteps the result cache.
+          if (ALLOWED && Array.isArray(this.results)) {
+            this.results = window.filterPokemonResults(this.results, ALLOWED);
+          }
+          if (!logged[ts.format || '']) { logged[ts.format || ''] = 1; dbg('pokemon search: format=' + JSON.stringify(ts.format) + ' restricting=' + !!ALLOWED + ' rows ' + before + '->' + (Array.isArray(this.results) ? this.results.length : -1)); }
+        }
+      } catch (e) { dbg('filter error ' + e); }
+      return ret;
+    };
+    D.prototype.__zstRoster = true;
+    dbg('DexSearch hook installed');
+    return true;
+  }
+  // Poll: (re)fetch as the live login name resolves (auto-login runs async, esp. after
+  // a hard refresh), build ALLOWED once roster + Dex are ready, and install the hook.
+  var iv = setInterval(function () {
+    fetchRoster();
+    computeAllowed();
+    var hooked = installHook();
+    if (hooked && ALLOWED) clearInterval(iv);
+  }, 300);
+  setTimeout(function () { clearInterval(iv); }, 120000);
+})();
+</script>`;
+
 // Some of the league's custom megas (see showdown-config/custom-megas.js) only have
 // a FRONT sprite on the CDN and no back sprite, so they'd render blank from the
 // player's own side. As a fallback, we inject a small client patch: for those mons
@@ -140,6 +339,36 @@ const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[
 // the real back sprites (a mon that gains one drops off the list on the next start).
 const CUSTOM_MEGAS = (() => { try { return require('../showdown-config/custom-megas.js'); } catch { return { Pokedex: {} }; } })();
 const spriteToID = (s) => ('' + (s || '')).toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// Teach the CLIENT dex the league's custom megas at runtime. The client loads species
+// (pokedex.js) and items (items.js) from the official CDN, which has no custom megas,
+// so the teambuilder can't render "Mega Floette" et al. We Object.assign the custom
+// species + mega stones (from custom-megas.js, the same data merged into the SERVER
+// dex) into the client's global tables once they exist, then drop the client Dex's
+// memoised lookups so the new entries resolve. Format is identical to the client's own
+// pokedex/items entries (verified), so they render with real stats/sprite.
+const CUSTOM_DEX = (() => {
+  const pd = JSON.stringify(CUSTOM_MEGAS.Pokedex || {});
+  const it = JSON.stringify(CUSTOM_MEGAS.Items || {});
+  return `<script>
+(function () {
+  var PD = ${pd}, IT = ${it};
+  function merge() {
+    if (!window.BattlePokedex) return false;
+    for (var k in PD) if (!window.BattlePokedex[k]) window.BattlePokedex[k] = PD[k];
+    if (window.BattleItems) { for (var j in IT) if (!window.BattleItems[j]) window.BattleItems[j] = IT[j]; }
+    // Drop the Dex's memoised species/items so the new entries resolve. The cache is a
+    // single object with capitalised sub-tables (Dex.cache.Species / .Items); reset those
+    // sub-tables, NOT Dex.cache itself (get() reads this.cache.Species[id] and would throw).
+    // gen9 formats use the base Dex (Dex.mod('gen9') returns it), so this one covers them.
+    try { var D = window.Dex; if (D && D.cache) { D.cache.Species = {}; D.cache.Items = {}; } } catch (e) {}
+    return true;
+  }
+  var iv = setInterval(function () { if (merge()) clearInterval(iv); }, 100);
+  setTimeout(function () { clearInterval(iv); }, 30000);
+})();
+</script>`;
+})();
 let MEGA_BACK_FALLBACK = '';
 async function computeMegaBackFallback() {
   const CDN = 'https://play.pokemonshowdown.com/sprites/';
@@ -181,7 +410,7 @@ function load(file) {
     // comment, so a naive `<script` match would bury CAPTURE_HEAD in a block
     // modern browsers never run. The first external script is the earliest real
     // client JS, so running just before it still beats the query-string strip.
-    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + MEGA_BACK_FALLBACK + '\n';
+    html = html.replace(/<script[^>]*\bsrc=/i, CAPTURE_HEAD + '\n$&') + AUTOLOGIN + '\n' + LOCK_IDENTITY + '\n' + CUSTOM_DEX + '\n' + MEGA_BACK_FALLBACK + '\n' + AUTO_TERA + '\n' + FORMAT_FILTER + '\n' + ROSTER_RESTRICT + '\n';
     // Cache-bust our LOCAL patched data files by their mtime. Their ?v= in the shell
     // is a hardcoded constant that never moves when patch-client-tiers.js rewrites the
     // file, so browsers (and Cloudflare) would serve the stale bytes forever. Stamping
@@ -229,6 +458,21 @@ http.createServer((req, res) => {
       'access-control-allow-origin': '*',
     });
     res.end(body);
+    return;
+  }
+
+  // Same-origin proxy for the coach's draft roster, so the auto-Tera patch (see
+  // AUTO_TERA) can fetch it without a cross-origin call to the .NET API. Public
+  // data (the same picks the anonymous team page shows), server-to-server here.
+  if (url === '/zst-roster') {
+    const name = new URL(req.url, 'http://x').searchParams.get('name') || '';
+    fetch(`${API_BASE}/api/showdown/roster/${encodeURIComponent(name)}`)
+      .then((r) => r.text())
+      .then((body) => {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+        res.end(body);
+      })
+      .catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"found":false}'); });
     return;
   }
 

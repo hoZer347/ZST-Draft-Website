@@ -34,14 +34,16 @@ const { buildTeamWithTera } = require('../lib/random-team');
 // pipeline's requirement that pre-mega damage/healing still lands on the mega form
 // (both forms resolve to the same drafted pick, see ReplayStatsScraper.BaseId).
 class TeraPlayerAI extends RandomPlayerAI {
-  constructor(playerStream, teraNames) {
+  constructor(playerStream, teraNames, megaImmediate) {
     super(playerStream);
     this.teraNames = teraNames instanceof Set ? teraNames : new Set(teraNames || []);
     this.teraUsed = false;
     this.megaUsed = false;
     // Per-side mega policy: ~30% of sides never mega (null); the rest hold it for
-    // 0..3 eligible turns first, so damage often accrues on the base form.
-    this.megaDelay = Math.random() < 0.3 ? null : Math.floor(Math.random() * 4);
+    // 0..3 eligible turns first, so damage often accrues on the base form. With
+    // megaImmediate (set by the spec, used by deterministic tests) always mega the
+    // first turn it can, so a single battle reliably shows the mega evolving.
+    this.megaDelay = megaImmediate ? 0 : (Math.random() < 0.3 ? null : Math.floor(Math.random() * 4));
     this.megaCountdown = this.megaDelay;
   }
 
@@ -110,7 +112,7 @@ function exportTeam(packed) {
   catch { return null; }
 }
 
-async function runBattle(match) {
+async function runBattle(match, megaImmediate) {
   const streams = getPlayerStreams(new BattleStream());
   const spec = { formatid: FORMAT };
   // Name the players after the coaches (their Discord / dummy names) so the log
@@ -120,8 +122,8 @@ async function runBattle(match) {
   const p1 = { name: match.homeName || 'Home', team: home.team };
   const p2 = { name: match.awayName || 'Away', team: away.team };
 
-  new TeraPlayerAI(streams.p1, home.teraNames).start();
-  new TeraPlayerAI(streams.p2, away.teraNames).start();
+  new TeraPlayerAI(streams.p1, home.teraNames, megaImmediate).start();
+  new TeraPlayerAI(streams.p2, away.teraNames, megaImmediate).start();
 
   let winnerName = null;
   let turns = 0;
@@ -173,9 +175,11 @@ function readStdin() {
 async function main() {
   const spec = JSON.parse(await readStdin());
   const matches = Array.isArray(spec.matches) ? spec.matches : [];
+  // Opt-in deterministic mega timing (tests), otherwise timing varies per side.
+  const megaImmediate = !!spec.megaImmediate;
   const results = [];
   for (const m of matches) {
-    results.push(await runBattle(m));
+    results.push(await runBattle(m, megaImmediate));
   }
   process.stdout.write(JSON.stringify(results));
 }

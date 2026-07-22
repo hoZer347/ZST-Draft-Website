@@ -263,7 +263,9 @@ test('every format still builds with the custom megas merged (Mix and Mega guard
 test('a custom mega mega-evolves in a sim battle, with C-tier tera alongside', { skip: MEGA_ENGINE, timeout: 60000 }, () => {
   // Home leads a custom-mega Malamar (holds its stone → megas turn 1) next to a
   // C-tier Pikachu (teras). One battle exercises both gimmicks: mega + tera.
-  const spec = { matches: [{
+  // megaImmediate makes the sim AI always mega the first turn it can (season sims
+  // otherwise vary the timing / sometimes skip it), so one battle is deterministic.
+  const spec = { megaImmediate: true, matches: [{
     homeName: 'H', awayName: 'A',
     homeTeam: [{ s: 'malamar-mega', t: null }, { s: 'pikachu', t: 'Water' }],
     awayTeam: [{ s: 'snorlax', t: null }, { s: 'skarmory', t: null }],

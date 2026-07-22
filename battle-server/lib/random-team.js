@@ -81,9 +81,13 @@ const RESTRICTIONS = (() => {
 })();
 
 // Held items a mon can plausibly carry in gen 9 (drop past-gen / nonstandard), minus
-// anything the format bans (e.g. Bright Powder, Lax Incense, the type gems).
+// anything the format bans (e.g. Bright Powder, Lax Incense, the type gems) and any
+// form-locked gimmick item, which does nothing on a random mon: mega stones (also,
+// via isMegaStone, they'd wrongly float their non-mega holder to the lead), primal
+// orbs, Z-crystals, and forme-forcing items (Griseous Orb, Rusted Sword/Shield…).
 const USABLE_ITEMS = Dex.items.all()
-  .filter((i) => i.name && !i.isNonstandard && i.gen <= 9 && !RESTRICTIONS.items.has(i.id))
+  .filter((i) => i.name && !i.isNonstandard && i.gen <= 9 && !RESTRICTIONS.items.has(i.id) &&
+    !i.megaStone && !i.onPrimal && !i.zMove && !i.forcedForme)
   .map((i) => i.name);
 
 // Every move the species can learn, walking its prevo chain and base forme so a

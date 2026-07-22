@@ -131,8 +131,9 @@ and IVs and all) and battle on the private server. That format's validator
 (`battle-server/showdown-config/custom-formats.js`) enforces the draft per coach:
 keyed by the logged-in Showdown name, it fetches the coach's roster from
 `/api/showdown/roster/{user}` at validation time and requires every mon to be
-drafted, mega stones to sit only on megas the coach drafted, and C-tier picks to
-Terastallize to their drafted Tera type.
+drafted, form-changing items (mega stones, the origin orbs, Rusted Sword/Shield) to
+unlock only a battle forme the coach drafted, and C-tier picks to Terastallize to
+their drafted Tera type.
 
 When a battle ends, the Showdown server POSTs its log to
 `/api/showdown/report` (shared-secret guarded). The server matches it to the

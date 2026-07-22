@@ -59,7 +59,7 @@ test('a mega stone whose mega was not drafted is flagged (base drafted, mega not
   const roster = { found: true, mons: [{ slug: 'charizard', tier: 'A', tera: 'Fire' }] }; // base only
   const team = [set({ species: 'Charizard', item: 'Charizardite Y' })];
   const problems = checkRoster(team, roster, dex);
-  assert.ok(problems.some((p) => /not its mega/i.test(p)), problems.join(' | '));
+  assert.ok(problems.some((p) => /didn't draft its Mega-Y forme/i.test(p)), problems.join(' | '));
 });
 
 test('a mega stone on the wrong species is flagged', () => {
@@ -124,12 +124,45 @@ test('the wrong mega stone (X) is flagged when only the Y mega was drafted', () 
   // ROSTER drafts charizard-megay; Charizardite X evolves the same base but is a
   // different mega the coach never drafted.
   const problems = checkRoster([set({ species: 'Charizard', item: 'Charizardite X' })], ROSTER, dex);
-  assert.ok(problems.some((p) => /not its mega \(Charizard-Mega-X\)/i.test(p)), problems.join(' | '));
+  assert.ok(problems.some((p) => /didn't draft its Mega-X forme \(Charizard-Mega-X\)/i.test(p)), problems.join(' | '));
 });
 
 test('the base of a drafted mega is allowed with no stone at all', () => {
   // Drafting M-Charizard Y lets you bring plain Charizard (no mega) too.
   assert.deepEqual(checkRoster([set({ species: 'Charizard' })], ROSTER, dex), []);
+});
+
+// ── Battle-only formes reached via a held item (crowned) and origin formes ──
+
+test('a crowned forme built as base + rusted item is allowed when the crowned forme was drafted', () => {
+  const roster = { found: true, mons: [{ slug: 'zamazenta-crowned', tier: 'S', tera: null }] };
+  // Built as base Zamazenta holding Rusted Shield (it transforms to Crowned in battle).
+  assert.deepEqual(checkRoster([set({ species: 'Zamazenta', item: 'Rusted Shield' })], roster, dex), []);
+});
+
+test('base + rusted item is flagged when only the base (not the crowned forme) was drafted', () => {
+  const roster = { found: true, mons: [{ slug: 'zamazenta', tier: 'S', tera: null }] }; // base only
+  const problems = checkRoster([set({ species: 'Zamazenta', item: 'Rusted Shield' })], roster, dex);
+  assert.ok(problems.some((p) => /didn't draft its Crowned forme \(Zamazenta-Crowned\)/i.test(p)), problems.join(' | '));
+});
+
+test('a rusted item on the wrong species is flagged', () => {
+  const roster = { found: true, mons: [{ slug: 'garchomp', tier: 'A', tera: null }] };
+  const problems = checkRoster([set({ species: 'Garchomp', item: 'Rusted Shield' })], roster, dex);
+  assert.ok(problems.some((p) => /belongs to Zamazenta/i.test(p)), problems.join(' | '));
+});
+
+test('an origin forme must be drafted (base validation rewrites base+orb to the Origin species)', () => {
+  // By the time checkRoster runs, base validation has already set species to
+  // Giratina-Origin; a coach who only drafted Altered Giratina is flagged.
+  const roster = { found: true, mons: [{ slug: 'giratina', tier: 'S', tera: null }] };
+  const problems = checkRoster([set({ species: 'Giratina-Origin', item: 'Griseous Core' })], roster, dex);
+  assert.ok(problems.some((p) => /Giratina-Origin is not on your drafted team/i.test(p)), problems.join(' | '));
+});
+
+test('the drafted origin forme is allowed', () => {
+  const roster = { found: true, mons: [{ slug: 'giratina-origin', tier: 'S', tera: null }] };
+  assert.deepEqual(checkRoster([set({ species: 'Giratina-Origin', item: 'Griseous Core' })], roster, dex), []);
 });
 
 test('a roster entry with no slug falls back to matching by name', () => {
