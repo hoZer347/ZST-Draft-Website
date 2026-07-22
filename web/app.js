@@ -24,7 +24,8 @@ const el = {
   draftSettings: $('draft-settings'), setWeeks: $('set-weeks'), setTimeout: $('set-timeout'), weeksHint: $('weeks-hint'),
   devSignin: $('dev-signin'), devSigninSelect: $('dev-signin-select'),
   // team page
-  teamPage: $('team-page'), teamTitle: $('team-title'), teamBody: $('team-body'), teamClose: $('team-close'),
+  teamPage: $('team-page'), teamTitle: $('team-title'), teamBody: $('team-body'),
+  teamTabs: $('team-tabs'),
   teamIcon: $('team-icon'), teamShowdown: $('team-showdown'), teamEdit: $('team-edit'),
   teamEditForm: $('team-edit-form'), tpIcon: $('tp-icon'), tpShowdown: $('tp-showdown'),
   tpCancel: $('tp-cancel'), tpMsg: $('tp-msg'),
@@ -91,11 +92,22 @@ async function signedIn() {
   // Now that we've landed, hydrate the draft tab (state + roster + realtime) in the
   // background. It only fills the draft view, so it never delays the tab we're on.
   hydrateDraft();
+  // Reveal the "Next matchup" header button if you have an upcoming game.
+  refreshNextMatchup();
 }
 
 // The tab name persisted by showView (or null in private mode / first visit).
 function readActiveTab() {
   try { return localStorage.getItem('activeTab'); } catch { return null; }
+}
+
+// Which nav tab wears the active highlight. Tracked apart from showView so the team
+// overlay (opened by the Teams tab, a roster click, or the Next matchup pill) can
+// light up the Teams tab while it's open, then hand the highlight back to the
+// underlying view's tab when it closes.
+let currentView = readActiveTab() || 'draft';
+function setActiveTab(name) {
+  for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.view === name);
 }
 
 // Admin-only "view as a dummy coach" control. Shows the picker for a real admin;
@@ -258,6 +270,77 @@ async function removePlayer(p, li) {
 const STAT_ROWS = [['HP', 'hp'], ['Atk', 'atk'], ['Def', 'def'], ['SpA', 'spAtk'], ['SpD', 'spDef'], ['Spe', 'speed']];
 
 let teamPageId = null; // discordId of the team currently open
+// Players with a team this season, for the team-page tab bar. Cached while the
+// page is open (switching tabs reuses it) and dropped on close so a reopen picks
+// up any roster change.
+let teamTabPlayers = null;
+
+// The opponent in your next unplayed game, or null. Surfaces as a "Next matchup"
+// pill at the head of the team-page tab bar, opening their team so you can scout it.
+let nextMatchupOpp = null;
+
+// The row of tabs across the top of the team page: a "Next matchup" shortcut (when
+// you have an upcoming game) then one tab per player who has a team, so you can flip
+// between rosters. Highlights the one currently shown.
+async function renderTeamTabs(activeId) {
+  const bar = el.teamTabs;
+  if (!bar) return;
+  if (!teamTabPlayers) {
+    try {
+      const res = await Auth.authFetch('/api/players');
+      teamTabPlayers = res.ok ? (await res.json()).filter((p) => p.hasTeam) : [];
+    } catch { teamTabPlayers = []; }
+  }
+  const tabs = [];
+  // Quick-jump to your next opponent's team, when you have one.
+  if (nextMatchupOpp) {
+    const nb = document.createElement('button');
+    nb.type = 'button';
+    nb.className = 'team-tab team-tab--next' + (nextMatchupOpp.coachId === activeId ? ' active' : '');
+    nb.textContent = '⚔ Next matchup';
+    nb.title = `Scout ${nextMatchupOpp.name}'s team (Week ${nextMatchupOpp.week})`;
+    nb.onclick = () => openTeam(nextMatchupOpp.coachId, nextMatchupOpp.name);
+    tabs.push(nb);
+  }
+  for (const p of teamTabPlayers) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'team-tab' + (p.discordId === activeId ? ' active' : '');
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', p.discordId === activeId ? 'true' : 'false');
+    b.textContent = p.username;
+    b.onclick = () => openTeam(p.discordId, p.username);
+    tabs.push(b);
+  }
+  bar.replaceChildren(...tabs);
+  bar.hidden = tabs.length === 0;
+}
+
+async function refreshNextMatchup() {
+  nextMatchupOpp = null;
+  if (leagueId != null) {
+    let data = scheduleData;
+    if (!data) {
+      try {
+        const res = await Auth.authFetch(`/api/leagues/${leagueId}/schedule`);
+        if (res.ok) data = await res.json();
+      } catch { /* leave it unset */ }
+    }
+    if (data && data.myTeamId != null && Array.isArray(data.matches)) {
+      // Earliest unplayed game that involves you.
+      const next = data.matches
+        .filter((m) => m.mine && !m.played)
+        .sort((a, b) => (a.week - b.week) || (a.id - b.id))[0];
+      if (next) {
+        const oppId = next.homeTeamId === data.myTeamId ? next.awayTeamId : next.homeTeamId;
+        const opp = (data.teams || []).find((t) => t.id === oppId);
+        if (opp) nextMatchupOpp = { coachId: opp.coachId, name: opp.coachName || opp.name, week: next.week };
+      }
+    }
+  }
+  // The pill lives in the team-page tab bar, so repaint it if that page is open.
+  if (teamPageId != null) renderTeamTabs(teamPageId);
+}
 
 async function openTeam(discordId, username) {
   teamPageId = discordId;
@@ -265,6 +348,12 @@ async function openTeam(discordId, username) {
   el.teamEditForm.hidden = true;
   el.teamBody.replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'Loading…' }));
   el.teamPage.hidden = false;
+  // Lift the header above the overlay and slot the overlay beneath it, so the nav
+  // stays clickable (there's no Back button; you leave via the tabs or Escape).
+  document.body.classList.add('team-open');
+  setActiveTab('teams'); // the Teams tab wears the highlight while a team is open
+  syncHeaderHeight();
+  renderTeamTabs(discordId); // fire-and-forget: the roster tabs load alongside the team
   try {
     const res = await Auth.authFetch(`/api/players/${encodeURIComponent(discordId)}/team`);
     if (!res.ok) throw new Error(`Failed (${res.status})`);
@@ -276,9 +365,13 @@ async function openTeam(discordId, username) {
 
 function closeTeam() {
   if (!el.teamPage) return;
+  document.body.classList.remove('team-open');
+  setActiveTab(currentView); // hand the highlight back to the view underneath
   el.teamPage.hidden = true;
   el.teamEditForm.hidden = true;
   el.teamBody.replaceChildren();
+  if (el.teamTabs) { el.teamTabs.replaceChildren(); el.teamTabs.hidden = true; }
+  teamTabPlayers = null; // refetch on next open so a roster change shows up
   teamPageId = null;
 }
 
@@ -318,14 +411,18 @@ function renderTeam(data) {
   const mvp = pickMvp(data.mons);
   for (const m of data.mons) m.__mvp = m === mvp;
 
-  // Two colour-grouped columns: left runs S, A, A; right runs B, B, B; the four
-  // C's split two per column so the blue rows line up at the bottom.
-  const by = { S: [], A: [], B: [], C: [] };
-  for (const m of data.mons) (by[m.tier] ??= []).push(m);
-  const cs = by.C ?? [];
-  const half = Math.ceil(cs.length / 2);
-  const left = [...(by.S ?? []), ...(by.A ?? []), ...cs.slice(0, half)];
-  const right = [...(by.B ?? []), ...cs.slice(half)];
+  // Blocks read in DRAFT ORDER: by tier (S, A, B, C) then the order each was
+  // picked. The server already sorts the mons this way, but sort defensively so the
+  // order never depends on payload quirks. On mobile the team body collapses to one
+  // column (see .team-body), giving a single SABC draft-order stack. On desktop it's
+  // two columns filled as contiguous halves, so each column still reads in order and
+  // the two together continue the same run.
+  const tierRank = { S: 0, A: 1, B: 2, C: 3 };
+  const sorted = [...data.mons].sort((a, b) =>
+    (tierRank[a.tier] ?? 9) - (tierRank[b.tier] ?? 9) || (a.pickNumber ?? 0) - (b.pickNumber ?? 0));
+  const half = Math.ceil(sorted.length / 2);
+  const left = sorted.slice(0, half);
+  const right = sorted.slice(half);
 
   const col = (mons) => {
     const c = document.createElement('div');
@@ -681,13 +778,10 @@ function render(s) {
     el.banner.hidden = true;
   }
 
-  // Play is admin-only. Undo is for the admin or whoever made the last pick.
-  // isAdmin comes from the draft state (live DB), not the cached login token,
-  // a demoted coach must not keep seeing admin controls.
+  // Play and Undo are admin-only. isAdmin comes from the draft state (live DB),
+  // not the cached login token, a demoted coach must not keep seeing admin controls.
   const isAdmin = !!s.isAdmin;
-  const lastPick = s.picks[s.picks.length - 1];
-  const canUndo = s.picks.length > 0 && s.state !== 'NotStarted'
-    && (isAdmin || (myTeamId != null && lastPick.teamId === myTeamId));
+  const canUndo = isAdmin && s.picks.length > 0 && s.state !== 'NotStarted';
   el.play.hidden = !(isAdmin && (s.state === 'NotStarted' || s.state === 'Paused'));
   el.rollback.hidden = !canUndo;
   // Abort is admin-only and only meaningful once the draft has begun.
@@ -1062,7 +1156,11 @@ async function connect() {
   // A match was scored or the schedule was regenerated, refresh the tab if it's
   // been opened (scheduleData is set on first view) so results land live.
   conn.on('scheduleChanged', () => {
+    // Your next unplayed game may have changed (a result landed, or the schedule was
+    // regenerated). When the schedule is open, ensureSchedule reloads it and updates
+    // the header button at its end; otherwise refresh the button on its own.
     if (scheduleData) ensureSchedule();
+    else refreshNextMatchup();
     // A scored match changes standings + stat leaders. Drop the cache; refresh
     // now only if the scoreboard is the view being looked at.
     scoreboardData = null;
@@ -1311,6 +1409,7 @@ async function ensureSchedule() {
     return;
   }
   renderSchedule();
+  refreshNextMatchup(); // fresh schedule → keep the header "Next matchup" button current
 }
 
 const muted = (text) => Object.assign(document.createElement('p'), { className: 'muted', textContent: text });
@@ -1429,8 +1528,8 @@ function matchCard(m, size) {
     head.append(when);
   }
 
-  // Only a coach in this match, or an admin, gets the replay control.
-  const canEdit = m.mine || !!draft?.isAdmin;
+  // Only an admin gets the edit/remove replay control.
+  const canEdit = !!draft?.isAdmin;
 
   // home, score(+replay button), away, with the winner emphasised once played.
   const homeWon = m.result === 'HomeWin';
@@ -1622,9 +1721,9 @@ function avatarBubble(url, className) {
   return span;
 }
 
-// The centre of the score/players row: the score, plus, for a played match and
-// only for the two coaches in it or an admin, a dynamic replay button that
-// toggles an inline watch/edit panel beneath the card.
+// The centre of the score/players row: the score, plus a dynamic replay button
+// (Watch for everyone; Edit/Remove admin-only, see canEdit) that toggles an inline
+// watch/edit panel beneath the card.
 function matchMiddle(m, card, canEdit) {
   const wrap = document.createElement('div');
   wrap.className = 'match-mid-wrap';
@@ -1769,7 +1868,8 @@ function showView(name) {
   closeTierFilters(); // and the mobile filter panel, so it doesn't linger open
   syncHeaderHeight(); // keep the sticky Filters button's offset correct
   for (const v of document.querySelectorAll('.view')) v.hidden = v.id !== `view-${name}`;
-  for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.view === name);
+  currentView = name;
+  setActiveTab(name);
   // The schedule tab pins the header to the top (desktop too, see style.css).
   document.body.classList.toggle('sched-view', name === 'schedule');
   try { localStorage.setItem('activeTab', name); } catch { /* private mode */ } // remember for next login
@@ -1920,6 +2020,19 @@ function renderStats() {
 
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
+  // A leading icon-only column (blank header) that stays frozen on mobile while the
+  // Pokémon name + Trainer un-pin; clicking it sorts by Pokémon like the name column.
+  const iconTh = document.createElement('th');
+  iconTh.className = 'stats-icon-h';
+  iconTh.title = 'Sort by Pokémon';
+  if (key === 'pokemon') iconTh.classList.add('sorted');
+  iconTh.onclick = () => {
+    statsSort = statsSort.key === 'pokemon'
+      ? { key: 'pokemon', dir: -statsSort.dir }
+      : { key: 'pokemon', dir: 1 };
+    renderStats();
+  };
+  hr.append(iconTh);
   for (const c of STAT_COLS) {
     const th = document.createElement('th');
     th.textContent = c.label + (c.key === key ? (dir < 0 ? ' ▾' : ' ▴') : '');
@@ -1945,17 +2058,20 @@ function renderStats() {
     // team bolds its Pokémon + Trainer text instead of getting a background wash.
     tr.className = `stats-row tier--${r.tier}` + (r.mine ? ' stats-row--mine' : '');
 
-    const mon = document.createElement('td');
-    // Flex lives on an inner wrapper, not the <td>, display:flex on a table cell
-    // drops it out of the column layout and misaligns the whole table.
-    const cell = document.createElement('div');
-    cell.className = 'stats-mon';
+    // The sprite is its own cell so it can stay frozen on mobile while the name and
+    // Trainer scroll away; the name and Trainer follow in separate cells.
+    const icon = document.createElement('td');
+    icon.className = 'stats-icon';
     const img = document.createElement('img');
     img.className = 'stats-sprite'; img.alt = ''; img.loading = 'lazy'; applySprite(img, r);
+    icon.append(img);
+    tr.append(icon);
+
+    const mon = document.createElement('td');
+    mon.className = 'stats-name-cell';
     const nm = document.createElement('span');
     nm.className = 'stats-name'; nm.textContent = r.pokemon;
-    cell.append(img, nm);
-    mon.append(cell);
+    mon.append(nm);
     tr.append(mon);
 
     const trn = document.createElement('td');
@@ -2070,7 +2186,7 @@ document.querySelectorAll('.tab').forEach((t) => {
     if (t.dataset.view === 'teambuilder') { openTeambuilder(); return; }
     // My team isn't a view either, it opens the same team-page overlay you get
     // by clicking your own icon in the roster, for the signed-in user.
-    if (t.dataset.view === 'myteam') { const u = Auth.user(); if (u) openTeam(u.discordId, u.username); return; }
+    if (t.dataset.view === 'teams') { const u = Auth.user(); if (u) openTeam(u.discordId, u.username); return; }
     showView(t.dataset.view);
   };
 });
@@ -2742,8 +2858,9 @@ on('ready-all-dummies', async () => {
   }
 });
 
-on('team-close', closeTeam);
-// Escape closes the team page (or just the edit form if it's open).
+// The team page has no Back button: leave it by clicking any other nav tab (which
+// closes it via showView) or pressing Escape. Escape closes the team page (or just
+// the edit form if it's open).
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (el.tabs.classList.contains('open')) { setNav(false); return; }

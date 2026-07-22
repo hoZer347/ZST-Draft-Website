@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=316">
-  <link rel="stylesheet" href="style.css?v=316">
+  <link rel="icon" href="favicon.ico?v=323">
+  <link rel="stylesheet" href="style.css?v=323">
 </head>
 <body>
   <header>
@@ -24,7 +24,7 @@
     <nav id="tabs" class="tabs" hidden>
       <button class="tab" data-view="scoreboard">Scoreboard</button>
       <button class="tab active" data-view="draft">Draft</button>
-      <button class="tab" data-view="myteam">My team</button>
+      <button class="tab" data-view="teams">Teams</button>
       <button class="tab" data-view="schedule">Schedule</button>
       <button class="tab" data-view="stats">Stats</button>
       <button class="tab" data-view="draftstats">Draft Stats</button>
@@ -269,7 +269,6 @@
     <!-- Team page: covers the draft when a name in the roster is clicked. -->
     <div id="team-page" class="team-page" hidden>
       <div class="team-page-head">
-        <button id="team-close" class="team-close">← Back</button>
         <img id="team-icon" class="team-icon" alt="" hidden>
         <div class="team-heading">
           <h2 id="team-title" class="team-title"></h2>
@@ -277,6 +276,9 @@
         </div>
         <button id="team-edit" class="linkish team-edit" hidden>Edit team</button>
       </div>
+
+      <!-- One tab per player who has a team this season; picks whose team to show. -->
+      <div id="team-tabs" class="team-tabs" role="tablist" hidden></div>
 
       <!-- Own-team customisation form, revealed by the Edit button. -->
       <form id="team-edit-form" class="team-edit-form card" hidden>
@@ -297,14 +299,14 @@
     </div>
   </main>
 
-  <script src="config.js?v=316"></script>
-  <script src="auth-logic.js?v=316"></script>
-  <script src="auth.js?v=316"></script>
+  <script src="config.js?v=323"></script>
+  <script src="auth-logic.js?v=323"></script>
+  <script src="auth.js?v=323"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=316"></script>
-  <script src="sprite.js?v=316"></script>
-  <script src="teambuilder.js?v=316"></script>
-  <script src="landing.js?v=316"></script>
-  <script src="app.js?v=316"></script>
+  <script src="pool-logic.js?v=323"></script>
+  <script src="sprite.js?v=323"></script>
+  <script src="teambuilder.js?v=323"></script>
+  <script src="landing.js?v=323"></script>
+  <script src="app.js?v=323"></script>
 </body>
 </html>

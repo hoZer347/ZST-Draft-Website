@@ -271,12 +271,13 @@ main {
   body.nav-open .nav-toggle span:nth-child(2) { opacity: 0; }
   body.nav-open .nav-toggle span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
 
-  /* The tab row becomes a left slide-in drawer. */
+  /* The tab row becomes a left slide-in drawer. Sits above the team-page overlay
+     (z-index 50) so the hamburger route still works to leave a team page. */
   .tabs {
     position: fixed;
     top: 0;
     left: 0;
-    z-index: 50;
+    z-index: 58;
     height: 100dvh;
     width: min(80vw, 300px);
     flex-direction: column;
@@ -300,8 +301,8 @@ main {
   .tab:hover { background: var(--bg); }
   .tab.active { color: #fff; background: var(--accent); }
 
-  /* Dim scrim behind the drawer. */
-  .nav-backdrop.open { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .45); }
+  /* Dim scrim behind the drawer (above the team-page overlay, below the drawer). */
+  .nav-backdrop.open { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, .45); }
 
   /* Tighter page gutters on a phone. */
   main { padding: 14px; gap: 12px; }
@@ -384,8 +385,8 @@ main {
 /* Default zebra striping (alternating gray / base). The tier colour lives only on
    the frozen Pokémon + Trainer columns (below), not the whole row. */
 .stats-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--muted) 7%, transparent); }
-/* Tier-coloured left edge on the frozen first column, matching the leaderboard and
-   draft-stats rows. */
+/* Tier-coloured left edge on the frozen first (icon) column, matching the
+   leaderboard and draft-stats rows. */
 .stats-table tbody tr.tier--S td:first-child,
 .stats-table tbody tr.tier--A td:first-child,
 .stats-table tbody tr.tier--B td:first-child,
@@ -395,37 +396,41 @@ main {
 /* Your own team's mons: no background highlight (rows keep the default zebra),
    just bold the Pokémon and Trainer text so your mons stand out at a glance. */
 .stats-table tbody tr.stats-row--mine .stats-name,
-.stats-table tbody tr.stats-row--mine td:nth-child(2) { font-weight: 800; }
+.stats-table tbody tr.stats-row--mine td:nth-child(3) { font-weight: 800; }
 /* Hover feedback wins over the tint (declared last so it layers on top). */
 .stats-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-.stats-mon { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
-/* Pokémon (1st) and Trainer (2nd) read left-aligned within their own column;
-   every other column stays centered. */
-.stats-table th:nth-child(1), .stats-table td:nth-child(1),
-.stats-table th:nth-child(2), .stats-table td:nth-child(2) { text-align: left; }
-.stats-sprite { width: 30px; height: 30px; object-fit: contain; image-rendering: pixelated; flex: none; }
+/* Pokémon name (2nd) and Trainer (3rd) read left-aligned within their own column;
+   the icon (1st) centers its sprite, every stat column stays centered. */
+.stats-table th:nth-child(2), .stats-table td:nth-child(2),
+.stats-table th:nth-child(3), .stats-table td:nth-child(3) { text-align: left; }
+.stats-table th.stats-icon-h, .stats-table td.stats-icon { padding-left: 6px; padding-right: 6px; }
+.stats-sprite { width: 30px; height: 30px; object-fit: contain; image-rendering: pixelated; vertical-align: middle; }
 .stats-name { font-weight: 600; }
 
-/* Pin the Pokémon (1st) and Trainer (2nd) columns so they stay in view when the
-   wide table is scrolled right. Sticky cells need an OPAQUE background (their
-   row's own colour, or scrolled columns show through) and a z-index above the
-   normal cells; the two header cells are the top-left corner and sit above
-   everything. Fixed widths keep the 2nd column's `left` offset aligned to the 1st. */
+/* Pin the icon (1st), Pokémon name (2nd) and Trainer (3rd) columns so they stay in
+   view when the wide table is scrolled right. Sticky cells need an OPAQUE background
+   (their row's own colour, or scrolled columns show through) and a z-index above the
+   normal cells; the header cells are the top-left corner and sit above everything.
+   Fixed widths keep each column's `left` offset aligned to the one before it, and
+   sum to the 308px block the tier gradient spans (44 + 136 + 128). */
 .stats-table th:nth-child(1), .stats-table td:nth-child(1) {
-  position: sticky; left: 0; width: 180px; min-width: 180px; max-width: 180px;
+  position: sticky; left: 0; width: 44px; min-width: 44px; max-width: 44px;
 }
 .stats-table th:nth-child(2), .stats-table td:nth-child(2) {
+  position: sticky; left: 44px; width: 136px; min-width: 136px; max-width: 136px;
+}
+.stats-table th:nth-child(3), .stats-table td:nth-child(3) {
   position: sticky; left: 180px; width: 128px; min-width: 128px; max-width: 128px;
 }
-/* The tier colour lives here, on the frozen Pokémon + Trainer columns: ONE opaque
-   90° tier gradient spanning BOTH columns (180px + 128px = 308px), strong at the
-   left edge and fading right, while the scrollable body columns stay on the plain
-   zebra. The full 308px-wide gradient is painted in each cell and the Trainer
-   column is shifted left by 180px so its slice continues exactly where the Pokémon
-   column ends, reading as one gradient rather than restarting per cell. Sticky
+/* The tier colour lives here, on the frozen icon + Pokémon + Trainer columns: ONE
+   opaque 90° tier gradient spanning ALL THREE (44 + 136 + 128 = 308px), strong at
+   the left edge and fading right, while the scrollable body columns stay on the
+   plain zebra. The full 308px-wide gradient is painted in each cell and each column
+   is shifted left by its own offset so its slice continues exactly where the one
+   before it ends, reading as one gradient rather than restarting per cell. Sticky
    cells must be OPAQUE (else scrolled columns show through), so it's mixed over
    --bg, not translucent. */
-.stats-table td:nth-child(1), .stats-table td:nth-child(2) {
+.stats-table td:nth-child(1), .stats-table td:nth-child(2), .stats-table td:nth-child(3) {
   background-image: linear-gradient(90deg,
     color-mix(in srgb, var(--tc, transparent) 30%, var(--bg)) 0,
     color-mix(in srgb, var(--tc, transparent) 8%, var(--bg)) 308px);
@@ -433,29 +438,60 @@ main {
   background-size: 308px 100%;
   z-index: 1;
 }
-.stats-table td:nth-child(1) { background-position: 0 0; }     /* shows 0–180px of the gradient */
-.stats-table td:nth-child(2) { background-position: -180px 0; } /* shows 180–308px, continuing it */
-/* Owned mons: outline the frozen Pokémon + Trainer pair in the mine accent. The
-   Pokémon cell draws the left + top + bottom edges, the Trainer cell the right +
-   top + bottom, so together they frame the two entries as one block (this takes
-   over the first column's tier left-edge bar on your own rows). */
+.stats-table td:nth-child(1) { background-position: 0 0; }      /* shows 0–44px of the gradient */
+.stats-table td:nth-child(2) { background-position: -44px 0; }  /* shows 44–180px, continuing it */
+.stats-table td:nth-child(3) { background-position: -180px 0; } /* shows 180–308px, continuing it */
+/* Owned mons: outline the frozen icon + Pokémon + Trainer trio in the mine accent.
+   The icon cell draws left + top + bottom, the Trainer cell right + top + bottom, and
+   the name cell just top + bottom, so together they frame the block as one (this
+   takes over the icon column's tier left-edge bar on your own rows). */
 .stats-table tbody tr.stats-row--mine td:nth-child(1) {
   box-shadow: inset 1px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
 }
 .stats-table tbody tr.stats-row--mine td:nth-child(2) {
+  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+.stats-table tbody tr.stats-row--mine td:nth-child(3) {
   box-shadow: inset -1px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
 }
 @media (prefers-color-scheme: dark) {
-  .stats-table td:nth-child(1), .stats-table td:nth-child(2) {
+  .stats-table td:nth-child(1), .stats-table td:nth-child(2), .stats-table td:nth-child(3) {
     background-image: linear-gradient(90deg,
       color-mix(in srgb, var(--tc, transparent) 38%, var(--bg)) 0,
       color-mix(in srgb, var(--tc, transparent) 12%, var(--bg)) 308px);
   }
 }
 .stats-table tbody tr:hover td:nth-child(1),
-.stats-table tbody tr:hover td:nth-child(2) { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+.stats-table tbody tr:hover td:nth-child(2),
+.stats-table tbody tr:hover td:nth-child(3) { background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
 .stats-table th { z-index: 2; }                                   /* header row above body cells */
-.stats-table th:nth-child(1), .stats-table th:nth-child(2) { z-index: 3; } /* frozen corner on top */
+.stats-table th:nth-child(1), .stats-table th:nth-child(2), .stats-table th:nth-child(3) { z-index: 3; } /* frozen corner on top */
+
+/* On a phone the frozen block (~308px) swallows most of the width, leaving no room
+   for the actual stats. So below 620px only the sprite stays frozen: the Pokémon
+   name and Trainer un-pin and scroll away with the stats, dragging only the icon. */
+@media (max-width: 620px) {
+  .stats-table td:nth-child(2), .stats-table td:nth-child(3) {
+    position: static;
+    width: auto; min-width: 0; max-width: none;
+    background-image: none;
+    box-shadow: none;
+    z-index: auto;
+  }
+  /* Headers keep sticking to the TOP on vertical scroll (base th rule) but release
+     their LEFT pin, so only the icon header stays frozen horizontally. */
+  .stats-table th:nth-child(2), .stats-table th:nth-child(3) {
+    left: auto;
+    width: auto; min-width: 0; max-width: none;
+    z-index: 2;
+  }
+  /* The frozen block is now just the 44px icon, so its wash is that wide. */
+  .stats-table td:nth-child(1) { background-size: 44px 100%; }
+  .stats-table tbody tr.stats-row--mine td:nth-child(1) {
+    box-shadow: inset 1px 0 0 var(--accent), inset -1px 0 0 var(--accent),
+                inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+  }
+}
 
 /* Filter bar above the table: summary on the left, Tier/Team selects on the right. */
 .stats-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -838,12 +874,20 @@ main {
 
 .team-page {
   position: fixed;
-  inset: 0;
+  /* Sit BELOW the header (kept above via body.team-open) rather than covering it,
+     so the nav stays clickable to leave, no Back button needed. */
+  top: var(--header-h, 56px);
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 50;
   background: var(--bg);
   overflow-y: auto;
   padding: 20px;
 }
+/* While the team page is open, pin the header on top of the overlay so its tabs
+   (and the mobile hamburger) stay reachable, closing the page on navigation. */
+body.team-open header { position: fixed; top: 0; left: 0; right: 0; z-index: 60; }
 .team-page-head {
   position: sticky;
   top: -20px;
@@ -856,17 +900,6 @@ main {
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
-.team-close {
-  font: inherit;
-  font-weight: 600;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 14px;
-  cursor: pointer;
-}
-.team-close:hover { border-color: var(--accent); color: var(--accent); }
 .team-title { margin: 0; font-size: 18px; }
 
 /* Square, player-supplied team icon. */
@@ -891,11 +924,52 @@ main {
 }
 .team-edit-actions { display: flex; align-items: center; gap: 12px; }
 
+/* Player switcher across the top of the team page: a scrollable row of pills. */
+.team-tabs {
+  max-width: 1000px;
+  margin: 0 auto 14px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.team-tab {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.team-tab:hover { color: var(--text); border-color: var(--accent); }
+.team-tab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+}
+/* The "Next matchup" shortcut pill: an accent-tinted lead-in before the roster
+   tabs, so scouting your next opponent stands out from the plain name tabs. */
+.team-tab--next {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  font-weight: 700;
+}
+.team-tab--next:hover { background: color-mix(in srgb, var(--accent) 20%, var(--card)); }
+.team-tab--next.active { background: color-mix(in srgb, var(--accent) 24%, var(--card)); }
+
 .team-body {
   max-width: 1000px;
   margin: 0 auto;
+  /* Two columns filled as contiguous DRAFT-ORDER halves (see renderTeam); collapses
+     to a single SABC draft-order stack on mobile below. */
   display: grid;
-  grid-template-columns: repeat(2, 1fr); /* left = S A A …, right = B B B … */
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   align-items: start;
 }
