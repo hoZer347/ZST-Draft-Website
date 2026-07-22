@@ -13,18 +13,24 @@ internal static class ReplayLogRunner
 {
     public static (ReplayStatsScraper.Result Result, Dictionary<string, Pick> Picks) Run(string log)
     {
-        var byKey = new Dictionary<string, Pick>();
+        // Resolve exactly as production does: a per-side base-id → pick map read
+        // through ResolveInMap, so a mon's base and mega/battle forms (Charizard ↔
+        // Charizard-Mega-Y, Palafin ↔ Palafin-Hero) collapse to ONE drafted pick,
+        // and pre-form-change damage lands on the same row.
+        var bySide = new Dictionary<string, Dictionary<string, Pick>>();
+        var named = new Dictionary<string, Pick>();
         var id = 1;
         Pick Get(string side, string species)
         {
-            var key = side + ":" + new string(species.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
-            if (!byKey.TryGetValue(key, out var p)) byKey[key] = p = new Pick { Id = id++ };
+            if (!bySide.TryGetValue(side, out var map)) bySide[side] = map = new();
+            var p = ReplayStatsScraper.ResolveInMap(map, species);
+            if (p is null) map[ReplayStatsScraper.BaseId(species)] = p = new Pick { Id = id++ };
+            var sid = new string(species.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+            named.TryAdd(sid, p); // look up by the exact species that switched in
             return p;
         }
 
-        var result = ReplayStatsScraper.Scrape(log, (side, species) => Get(side, species));
-        var named = new Dictionary<string, Pick>();
-        foreach (var (k, v) in byKey) named[k.Split(':')[1]] = v;
+        var result = ReplayStatsScraper.Scrape(log, Get);
         return (result, named);
     }
 

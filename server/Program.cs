@@ -283,6 +283,69 @@ if (app.Environment.IsDevelopment())
         return Results.Ok(result);
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
+    // Full per-mon scrape of one match's stored replay log, plus the raw log, the
+    // captured team pastes and the recorded score, for the bug-finding-tests skill:
+    // an agent audits the scraper's attribution against the log this returns. Every
+    // GameStat bucket is exposed (not the trimmed schedule strip), so the agent can
+    // check damage/heal source+target and conservation totals.
+    app.MapGet("/dev/match-scrape/{matchId:int}", async (int matchId, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
+    {
+        if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+        var m = await db.Matches.Include(x => x.HomeTeam).Include(x => x.AwayTeam)
+            .FirstOrDefaultAsync(x => x.Id == matchId, ct);
+        if (m is null) return Results.NotFound();
+        if (string.IsNullOrEmpty(m.ReplayLog) || m.ReplayHomeSide is null)
+            return Results.Ok(new { matchId, played = false });
+
+        // Base-species -> pick per team (a log's "Salamence" resolves to a "M-Salamence"
+        // pick on the right side), same mapping the schedule strip uses.
+        var picks = await db.Picks.Include(p => p.PokemonEntry)
+            .Where(p => p.TeamId == m.HomeTeamId || p.TeamId == m.AwayTeamId).ToListAsync(ct);
+        var byTeamBase = new Dictionary<int, Dictionary<string, DraftLeague.Web.Models.Pick>>();
+        foreach (var p in picks)
+        {
+            if (!byTeamBase.TryGetValue(p.TeamId, out var map)) byTeamBase[p.TeamId] = map = new();
+            map[ReplayStatsScraper.BaseId(p.PokemonEntry.Name)] = p;
+            if (!string.IsNullOrEmpty(p.PokemonEntry.Sprite)) map[ReplayStatsScraper.BaseId(p.PokemonEntry.Sprite)] = p;
+        }
+        var homeSide = m.ReplayHomeSide;
+        ReplayStatsScraper.Result scraped;
+        try
+        {
+            scraped = ReplayStatsScraper.Scrape(m.ReplayLog!, (side, species) =>
+            {
+                var teamId = side == homeSide ? m.HomeTeamId : m.AwayTeamId;
+                return byTeamBase.TryGetValue(teamId, out var map)
+                    ? ReplayStatsScraper.ResolveInMap(map, species) : null;
+            });
+        }
+        catch (Exception ex) { return Results.Ok(new { matchId, scrapeError = ex.Message }); }
+
+        var mons = scraped.Stats.Select(kv => new
+        {
+            pokemon = kv.Key.PokemonEntry.Name,
+            team = kv.Key.TeamId == m.HomeTeamId ? "home" : "away",
+            teamId = kv.Key.TeamId,
+            tier = kv.Key.Tier.ToString(),
+            kv.Value.Kills, kv.Value.Deaths, kv.Value.AlliesKoed, kv.Value.SelfKos, kv.Value.Crits, kv.Value.ActiveTurns,
+            kv.Value.Started, kv.Value.Terastallized, kv.Value.Finished,
+            kv.Value.DealtDirect, kv.Value.DealtIndirect, kv.Value.TakenDirect, kv.Value.TakenIndirect,
+            kv.Value.TakenSelf, kv.Value.Recovered, kv.Value.Healed,
+            kv.Value.DealtAllyDirect, kv.Value.DealtAllyIndirect, kv.Value.HealedEnemy,
+        }).ToList();
+
+        return Results.Ok(new
+        {
+            matchId = m.Id, m.Week, homeSide, played = true,
+            home = m.HomeTeam.CoachName, away = m.AwayTeam.CoachName,
+            result = m.Result.ToString(), m.HomeScore, m.AwayScore, turns = scraped.Turns,
+            homeExport = m.HomeTeamExport, awayExport = m.AwayTeamExport,
+            log = m.ReplayLog,
+            uncredited = scraped.Uncredited,
+            mons,
+        });
+    }).RequireAuthorization().RequireCors(CorsPolicy);
+
     // Trigger the daily desktop snapshot now (it otherwise runs at 3am ET).
     app.MapPost("/dev/snapshot-now", async (SnapshotScheduler snapshots, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
     {

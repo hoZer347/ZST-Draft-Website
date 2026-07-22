@@ -1800,6 +1800,8 @@ const STAT_COLS = [
     tip: 'Of only the games it played, the share of turns it stayed on the field. Independent of usage.' },
   { key: 'k', label: 'KOs', num: true, tip: 'Opposing Pokémon knocked out.' },
   { key: 'd', label: 'Faints', num: true, tip: 'Times this mon was knocked out.' },
+  { key: 'allyKos', label: 'Ally KOs', num: true, tip: 'Own teammates this mon knocked out (friendly fire, or handing over a damaging item that finished them).' },
+  { key: 'selfKos', label: 'Self-KOs', num: true, tip: 'Times this mon took itself down, no enemy or ally credited (Explosion, Final Gambit, self-damage).' },
   { key: 'plusminus', label: '+/−', num: true, fmt: (v) => (v > 0 ? `+${v}` : `${v}`), tip: 'KOs minus Faints.' },
   { key: 'record', label: 'W–L', num: true, text: (r) => `${r.w}–${r.l}`, tip: 'Record of games it played.' },
   { key: 'winrate', label: 'Win%', num: true, fmt: (v) => `${Math.round(v * 100)}%`,

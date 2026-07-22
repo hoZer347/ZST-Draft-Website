@@ -143,8 +143,11 @@ function randomSet(mon) {
   const pool = movePool(species);
   const moves = pool.length ? sampleN(pool, Math.min(4, pool.length)) : ['tackle'];
 
+  // Showdown's dex spells Sirfetch'd / Farfetch'd with a curly apostrophe (U+2019).
+  // Some clients render its UTF-8 bytes as mojibake ("SirfetchΓÇÖd"), so use a
+  // straight apostrophe for the display nickname; species keeps the canonical name.
   const set = {
-    name: species.name,
+    name: species.name.replace(/’/g, "'"),
     species: species.name,
     ability: abilities.length ? pick(abilities) : (species.abilities['0'] || 'No Ability'),
     item,
@@ -165,12 +168,28 @@ function randomSet(mon) {
 // they simply can't take the field. `mons` items are either a slug string or
 // { s: slug, t: teraType|null }.
 //
+// True if `item` is a mega stone (holds the mega-evolution wiring). Used to spot a
+// set that will mega-evolve so it can be led (see chooseSets).
+function isMegaStone(item) {
+  if (!item) return false;
+  const it = Dex.items.get(item);
+  return !!(it && it.megaStone);
+}
+
 function chooseSets(mons, count) {
   const keyOf = (m) => (typeof m === 'string' ? m : m.s);
   const valid = mons.filter((m) => Dex.species.get(keyOf(m)).exists);
   const chosen = sampleN(valid, Math.min(count, valid.length));
   if (!chosen.length) throw new Error('roster has no Showdown-known species');
-  return chosen.map(randomSet);
+  const sets = chosen.map(randomSet);
+  // Lead the mega. Team preview brings the packed team "default" (the first slots
+  // are the leads), and the AI only mega-evolves a mon that is ACTUALLY on the
+  // field; a mega stuck in the back that the random AI never switches in just sits
+  // there as its un-evolved base form (the "Floette that never becomes Mega Floette"
+  // bug). Floating any stone-holder to the front makes a drafted mega reliably come
+  // in and transform. A stable sort keeps everything else in its sampled order.
+  sets.sort((a, b) => (isMegaStone(b.item) ? 1 : 0) - (isMegaStone(a.item) ? 1 : 0));
+  return sets;
 }
 
 // The packed team string.

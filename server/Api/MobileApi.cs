@@ -256,7 +256,7 @@ public static class MobileApi
                     teamTurns = s.Pick.Team.BattleTurns,
                     gp = s.GamesPlayed,
                     starts = s.Starts, finishes = s.Finishes,
-                    k = s.Kills, d = s.Deaths, w = s.Wins, l = s.Losses,
+                    k = s.Kills, d = s.Deaths, allyKos = s.AlliesKoed, selfKos = s.SelfKos, w = s.Wins, l = s.Losses,
                     dealt = s.DamageDealtDirect + s.DamageDealtIndirect,
                     dealtDirect = s.DamageDealtDirect, dealtIndirect = s.DamageDealtIndirect,
                     dealtAllyDirect = s.DamageDealtAllyDirect, dealtAllyIndirect = s.DamageDealtAllyIndirect,

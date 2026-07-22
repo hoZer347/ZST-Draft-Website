@@ -38,7 +38,7 @@ public class ScraperAttributionTests
     public void Recoil_tagged_capitalised_is_still_self_damage()
     {
         // Real replays tag recoil "Recoil" (capital), not the "recoil" the older test
-        // above uses — it must still count as SELF, never as opponent damage taken.
+        // above uses, it must still count as SELF, never as opponent damage taken.
         var run = ReplayLogRunner.Run("""
             |player|p1|A|1|
             |player|p2|B|2|
@@ -205,6 +205,267 @@ public class ScraperAttributionTests
         Assert.Equal(0, run.Of("Snorlax").DealtIndirect, 2);
     }
 
+    [Fact]
+    public void Explosion_hp_cost_is_self_damage_and_scores_no_kill_for_the_opponent()
+    {
+        // Explosion faints the user with no -damage line of its own; the HP it spends is
+        // self-damage, and the opponent that chipped it earlier doesn't get the KO.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Coalossal, M|item
+            |poke|p2|Gardevoir, F|item
+            |start
+            |switch|p1a: Coalossal|Coalossal, M|100/100
+            |switch|p2a: Gardevoir|Gardevoir, F|100/100
+            |turn|1
+            |move|p2a: Gardevoir|Moonblast|p1a: Coalossal
+            |-damage|p1a: Coalossal|40/100
+            |move|p1a: Coalossal|Explosion|p2a: Gardevoir
+            |-damage|p2a: Gardevoir|20/100
+            |faint|p1a: Coalossal
+            |win|B
+            """);
+        Assert.Equal(60, run.Of("Coalossal").TakenDirect, 2); // Moonblast
+        Assert.Equal(40, run.Of("Coalossal").TakenSelf, 2);   // the HP Explosion spent
+        Assert.Equal(80, run.Of("Coalossal").DealtDirect, 2); // Explosion hit Gardevoir
+        Assert.Equal(1, run.Of("Coalossal").Deaths);
+        Assert.Equal(0, run.Of("Gardevoir").Kills);           // self-KO: no kill for the foe
+        Assert.Equal(1, run.Of("Coalossal").SelfKos);         // it took itself down
+    }
+
+    [Fact]
+    public void Friendly_fire_KO_is_an_ally_ko_not_a_kill()
+    {
+        // A spread move that finishes your own ally is an AlliesKoed for the attacker,
+        // not a Kill, and the ally's faint is still a Death.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p1|Munchlax, M|item
+            |poke|p2|Gengar, M|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p1b: Munchlax|Munchlax, M|8/100
+            |switch|p2a: Gengar|Gengar, M|100/100
+            |turn|1
+            |move|p1a: Garchomp|Earthquake|p2a: Gengar|[spread] p1b,p2a
+            |-damage|p1b: Munchlax|0 fnt
+            |-damage|p2a: Gengar|60/100
+            |faint|p1b: Munchlax
+            |win|A
+            """);
+        Assert.Equal(1, run.Of("Garchomp").AlliesKoed);
+        Assert.Equal(0, run.Of("Garchomp").Kills);
+        Assert.Equal(8, run.Of("Garchomp").DealtAllyDirect, 2);
+        Assert.Equal(1, run.Of("Munchlax").Deaths);
+        Assert.Equal(0, run.Of("Munchlax").SelfKos);
+    }
+
+    [Fact]
+    public void Final_gambit_hp_cost_is_self_damage()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Shuckle, M|item
+            |poke|p2|Blissey, F|item
+            |start
+            |switch|p1a: Shuckle|Shuckle, M|100/100
+            |switch|p2a: Blissey|Blissey, F|100/100
+            |turn|1
+            |move|p1a: Shuckle|Final Gambit|p2a: Blissey
+            |-damage|p2a: Blissey|60/100
+            |faint|p1a: Shuckle
+            |win|B
+            """);
+        Assert.Equal(100, run.Of("Shuckle").TakenSelf, 2);  // its whole bar
+        Assert.Equal(40, run.Of("Shuckle").DealtDirect, 2); // damage dealt to Blissey
+        Assert.Equal(1, run.Of("Shuckle").Deaths);
+        Assert.Equal(0, run.Of("Blissey").Kills);
+    }
+
+    [Fact]
+    public void Ghost_curse_hp_cost_is_self_damage()
+    {
+        // A Ghost using Curse spends half its HP (a bare -damage on itself), which is
+        // self, not indirect. The residual on the target is a separate line.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gengar, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Gengar|Gengar, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Gengar|Curse|p2a: Snorlax
+            |-start|p2a: Snorlax|Curse|[of] p1a: Gengar
+            |-damage|p1a: Gengar|50/100
+            |win|B
+            """);
+        Assert.Equal(50, run.Of("Gengar").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Gengar").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Gengar").TakenDirect, 2);
+    }
+
+    [Fact]
+    public void Curse_residual_is_credited_to_the_caster()
+    {
+        // The per-turn curse chip carries no [of]; the caster is remembered from the
+        // -start, so it's the caster's indirect damage dealt (not left orphaned).
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gengar, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Gengar|Gengar, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Gengar|Curse|p2a: Snorlax
+            |-start|p2a: Snorlax|Curse|[of] p1a: Gengar
+            |-damage|p1a: Gengar|50/100
+            |turn|2
+            |-damage|p2a: Snorlax|75/100|[from] Curse
+            |win|A
+            """);
+        Assert.Equal(25, run.Of("Gengar").DealtIndirect, 2);   // the curse chip
+        Assert.Equal(25, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(50, run.Of("Gengar").TakenSelf, 2);       // the placement cost
+    }
+
+    [Fact]
+    public void Salt_cure_residual_is_credited_to_the_user()
+    {
+        // Salt Cure's -start names no source; the mon that just moved applied it.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garganacl, M|item
+            |poke|p2|Stakataka|item
+            |start
+            |switch|p1a: Garganacl|Garganacl, M|100/100
+            |switch|p2a: Stakataka|Stakataka|100/100
+            |turn|1
+            |move|p1a: Garganacl|Salt Cure|p2a: Stakataka
+            |-start|p2a: Stakataka|Salt Cure
+            |-damage|p2a: Stakataka|88/100|[from] Salt Cure
+            |turn|2
+            |-damage|p2a: Stakataka|76/100|[from] Salt Cure
+            |win|A
+            """);
+        Assert.Equal(24, run.Of("Garganacl").DealtIndirect, 2); // two 12% ticks
+        Assert.Equal(24, run.Of("Stakataka").TakenIndirect, 2);
+    }
+
+    [Fact]
+    public void Solar_power_chip_is_self_damage_even_though_it_tags_of_the_holder()
+    {
+        // Solar Power / Dry Skin tag [of] the SUFFERING holder, so the [of] mon is the
+        // victim itself: self-damage, not indirect credited to a foe.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Tropius, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Tropius|Tropius, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |-weather|SunnyDay
+            |turn|1
+            |-damage|p1a: Tropius|88/100|[from] ability: Solar Power|[of] p1a: Tropius
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Tropius").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Tropius").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Snorlax").DealtIndirect, 2);
+    }
+
+    [Fact]
+    public void Mimikyu_disguise_break_is_self_damage()
+    {
+        // The disguise break costs Mimikyu 1/8, tagged "[from] pokemon: Mimikyu-Busted"
+        // with no [of]: its own form mechanic, so self.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Mimikyu, F|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Mimikyu|Mimikyu, F|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p2a: Snorlax|Body Slam|p1a: Mimikyu
+            |-activate|p1a: Mimikyu|ability: Disguise
+            |-damage|p1a: Mimikyu|88/100|[from] pokemon: Mimikyu-Busted
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Mimikyu").TakenSelf, 2);
+        Assert.Equal(0, run.Of("Mimikyu").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Snorlax").DealtIndirect, 2);
+    }
+
+    [Fact]
+    public void Perish_song_faint_is_indirect_damage_credited_to_the_caster()
+    {
+        // Perish Song fells mons from the counter with no -damage line: the HP each
+        // loses is booked as indirect damage credited to the caster (the caster's own
+        // is self), so the game's HP still reconciles.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gengar, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Gengar|Gengar, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Gengar|Perish Song|p1a: Gengar
+            |-start|p1a: Gengar|perish3
+            |-start|p2a: Snorlax|perish3
+            |turn|2
+            |-start|p1a: Gengar|perish0
+            |-start|p2a: Snorlax|perish0
+            |faint|p2a: Snorlax
+            |faint|p1a: Gengar
+            |win|A
+            """);
+        Assert.Equal(100, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(1, run.Of("Snorlax").Deaths);
+        Assert.Equal(100, run.Of("Gengar").DealtIndirect, 2); // felled the enemy
+        Assert.Equal(1, run.Of("Gengar").Kills);
+        Assert.Equal(100, run.Of("Gengar").TakenSelf, 2);     // its own song felled it too
+        Assert.Equal(1, run.Of("Gengar").SelfKos);
+    }
+
+    [Fact]
+    public void Ohko_move_is_direct_damage_and_a_kill()
+    {
+        // Fissure / Sheer Cold / Horn Drill deal damage = the target's HP through the
+        // normal path, so they emit a plain -damage to 0: direct damage + a kill.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Dugtrio, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Dugtrio|Dugtrio, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Dugtrio|Fissure|p2a: Snorlax
+            |-damage|p2a: Snorlax|0 fnt
+            |-ohko
+            |faint|p2a: Snorlax
+            |win|A
+            """);
+        Assert.Equal(100, run.Of("Dugtrio").DealtDirect, 2);
+        Assert.Equal(100, run.Of("Snorlax").TakenDirect, 2);
+        Assert.Equal(1, run.Of("Dugtrio").Kills);
+        Assert.Equal(1, run.Of("Snorlax").Deaths);
+    }
+
     // ── Enemy-inflicted status is NOT self (kept credited to the inflictor) ───
 
     [Fact]
@@ -302,6 +563,126 @@ public class ScraperAttributionTests
         Assert.Equal(1, run.Of("Weezing").Deaths);
     }
 
+    [Fact]
+    public void Rough_skin_chip_is_credited_to_the_holder()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Lopunny, F|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p2a: Lopunny|Lopunny, F|100/100
+            |turn|1
+            |move|p2a: Lopunny|Close Combat|p1a: Garchomp
+            |-damage|p1a: Garchomp|70/100
+            |-damage|p2a: Lopunny|88/100|[from] ability: Rough Skin|[of] p1a: Garchomp
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Garchomp").DealtIndirect, 2);
+        Assert.Equal(12, run.Of("Lopunny").TakenIndirect, 2);
+        Assert.Equal(30, run.Of("Lopunny").DealtDirect, 2);
+        Assert.Equal(0, run.Of("Garchomp").Kills); // survived, no KO
+    }
+
+    [Fact]
+    public void Iron_barbs_chip_is_credited_to_the_holder()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferrothorn, M|item
+            |poke|p2|Lopunny, F|item
+            |start
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |switch|p2a: Lopunny|Lopunny, F|100/100
+            |turn|1
+            |move|p2a: Lopunny|Close Combat|p1a: Ferrothorn
+            |-damage|p1a: Ferrothorn|70/100
+            |-damage|p2a: Lopunny|88/100|[from] ability: Iron Barbs|[of] p1a: Ferrothorn
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Ferrothorn").DealtIndirect, 2);
+        Assert.Equal(12, run.Of("Lopunny").TakenIndirect, 2);
+        Assert.Equal(30, run.Of("Lopunny").DealtDirect, 2);
+    }
+
+    [Fact]
+    public void Rough_skin_recoil_that_KOs_the_attacker_is_a_kill_for_the_holder()
+    {
+        // A contact ability whose chip finishes the attacker: the damage AND the KO go
+        // to the holder (the [of] mon), not left uncredited.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Lopunny, F|item
+            |start
+            |switch|p1a: Garchomp|Garchomp, M|100/100
+            |switch|p2a: Lopunny|Lopunny, F|8/100
+            |turn|1
+            |move|p2a: Lopunny|Close Combat|p1a: Garchomp
+            |-damage|p1a: Garchomp|70/100
+            |-damage|p2a: Lopunny|0 fnt|[from] ability: Rough Skin|[of] p1a: Garchomp
+            |faint|p2a: Lopunny
+            |win|A
+            """);
+        Assert.Equal(8, run.Of("Garchomp").DealtIndirect, 2);
+        Assert.Equal(8, run.Of("Lopunny").TakenIndirect, 2);
+        Assert.Equal(1, run.Of("Garchomp").Kills);   // the recoil scored the KO
+        Assert.Equal(1, run.Of("Lopunny").Deaths);
+    }
+
+    [Fact]
+    public void Iron_barbs_recoil_that_KOs_the_attacker_is_a_kill_for_the_holder()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferrothorn, M|item
+            |poke|p2|Lopunny, F|item
+            |start
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |switch|p2a: Lopunny|Lopunny, F|8/100
+            |turn|1
+            |move|p2a: Lopunny|Close Combat|p1a: Ferrothorn
+            |-damage|p1a: Ferrothorn|70/100
+            |-damage|p2a: Lopunny|0 fnt|[from] ability: Iron Barbs|[of] p1a: Ferrothorn
+            |faint|p2a: Lopunny
+            |win|A
+            """);
+        Assert.Equal(8, run.Of("Ferrothorn").DealtIndirect, 2);
+        Assert.Equal(8, run.Of("Lopunny").TakenIndirect, 2);
+        Assert.Equal(1, run.Of("Ferrothorn").Kills);
+        Assert.Equal(1, run.Of("Lopunny").Deaths);
+    }
+
+    [Fact]
+    public void Rocky_helmet_chip_that_KOs_the_attacker_is_a_kill_for_the_holder()
+    {
+        // Companion to the chip-only case above: when the Helmet recoil lands the KO,
+        // the item's holder is credited the kill.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferrothorn, M|item
+            |poke|p2|Lopunny, F|item
+            |start
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |switch|p2a: Lopunny|Lopunny, F|8/100
+            |turn|1
+            |move|p2a: Lopunny|Close Combat|p1a: Ferrothorn
+            |-damage|p1a: Ferrothorn|70/100
+            |-damage|p2a: Lopunny|0 fnt|[from] item: Rocky Helmet|[of] p1a: Ferrothorn
+            |faint|p2a: Lopunny
+            |win|A
+            """);
+        Assert.Equal(8, run.Of("Ferrothorn").DealtIndirect, 2);
+        Assert.Equal(1, run.Of("Ferrothorn").Kills);
+        Assert.Equal(1, run.Of("Lopunny").Deaths);
+    }
+
     // ── Hazards: ownership survives faints, switches, and resets ──────────────
 
     [Fact]
@@ -393,6 +774,234 @@ public class ScraperAttributionTests
         Assert.Equal(1, run.Of("Skarmory").Kills);
         Assert.Equal(0, run.Of("Ferrothorn").DealtIndirect, 2); // its rocks were cleared
         Assert.Equal(0, run.Of("Ferrothorn").Kills);
+    }
+
+    [Fact]
+    public void Spikes_chip_on_switch_in_is_credited_to_the_setter()
+    {
+        // Stealth Rock and Toxic Spikes are covered above; Spikes' grounded switch-in
+        // chip (|-damage| [from] Spikes) is the third entry hazard, credited the same way.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Klefki, M|item
+            |poke|p2|Snorlax, M|item
+            |poke|p2|Garchomp, M|item
+            |start
+            |switch|p1a: Klefki|Klefki, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Klefki|Spikes|p2a: Snorlax
+            |-sidestart|p2: B|Spikes
+            |turn|2
+            |switch|p2a: Garchomp|Garchomp, M|100/100
+            |-damage|p2a: Garchomp|88/100|[from] Spikes
+            |win|A
+            """);
+        Assert.Equal(12, run.Of("Klefki").DealtIndirect, 2);
+        Assert.Equal(12, run.Of("Garchomp").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Garchomp").TakenSelf, 2);
+    }
+
+    // ── Magic Bounce / Magic Coat: reflected residual damage is the REFLECTOR's ──
+    // When a reflectable move is bounced, Showdown re-emits it as a fresh |move| line
+    // from the reflector (…|[from] ability: Magic Bounce, or |[from] Magic Coat), so
+    // the mon that just "moved" is the reflector. Every hazard/status/seed it lays
+    // therefore belongs to the reflector, on the ORIGINAL user's side, never to the
+    // user who threw it. These lock that for every reflectable move that can chip.
+
+    [Theory]
+    [InlineData("Toxic", "tox")]        // badly poison (residual still tags [from] psn)
+    [InlineData("Poison Powder", "psn")]
+    [InlineData("Poison Gas", "psn")]
+    [InlineData("Toxic Thread", "psn")]
+    public void Reflected_poison_move_residual_is_the_reflectors_indirect_damage(string move, string status)
+    {
+        // Snorlax throws the poison move; Xatu's Magic Bounce sends it back onto
+        // Snorlax. The poison chip is Xatu's indirect damage, NOT Snorlax's own.
+        var run = ReplayLogRunner.Run($"""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Snorlax|Snorlax, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Snorlax|{move}|p2a: Xatu
+            |move|p2a: Xatu|{move}|p1a: Snorlax|[from] ability: Magic Bounce
+            |-status|p1a: Snorlax|{status}
+            |turn|2
+            |-damage|p1a: Snorlax|94/100|[from] psn
+            |win|B
+            """);
+        Assert.Equal(6, run.Of("Xatu").DealtIndirect, 2);    // the reflector owns the chip
+        Assert.Equal(6, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Snorlax").TakenSelf, 2);     // NOT self-inflicted
+        Assert.Equal(0, run.Of("Snorlax").DealtIndirect, 2); // NOT the thrower's
+    }
+
+    [Fact]
+    public void Reflected_will_o_wisp_burn_residual_is_the_reflectors_indirect_damage()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Snorlax|Snorlax, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Snorlax|Will-O-Wisp|p2a: Xatu
+            |move|p2a: Xatu|Will-O-Wisp|p1a: Snorlax|[from] ability: Magic Bounce
+            |-status|p1a: Snorlax|brn
+            |turn|2
+            |-damage|p1a: Snorlax|94/100|[from] brn
+            |win|B
+            """);
+        Assert.Equal(6, run.Of("Xatu").DealtIndirect, 2);
+        Assert.Equal(6, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Snorlax").TakenSelf, 2);
+    }
+
+    [Fact]
+    public void Reflected_leech_seed_residual_is_the_reflectors_indirect_damage()
+    {
+        // The bounced seed lands on the thrower (Snorlax); its residual carries
+        // [of] p2a: Xatu, so the drain is Xatu's indirect damage and self-recovery.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Snorlax|Snorlax, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Snorlax|Leech Seed|p2a: Xatu
+            |move|p2a: Xatu|Leech Seed|p1a: Snorlax|[from] ability: Magic Bounce
+            |-start|p1a: Snorlax|move: Leech Seed
+            |turn|2
+            |-damage|p1a: Snorlax|88/100|[from] Leech Seed|[of] p2a: Xatu
+            |-heal|p2a: Xatu|100/100|[from] Leech Seed|[silent]
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Xatu").DealtIndirect, 2);
+        Assert.Equal(12, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Snorlax").DealtIndirect, 2);
+    }
+
+    [Fact]
+    public void Reflected_stealth_rock_chip_is_the_reflectors_indirect_damage()
+    {
+        // Ferrothorn's Stealth Rock is bounced onto ITS OWN side (p1); the next p1
+        // switch-in (Talonflame, 4x weak) takes the chip, credited to Xatu.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferrothorn, M|item
+            |poke|p1|Talonflame, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Ferrothorn|Stealth Rock|p2a: Xatu
+            |move|p2a: Xatu|Stealth Rock|p1a: Ferrothorn|[from] ability: Magic Bounce
+            |-sidestart|p1: A|move: Stealth Rock
+            |turn|2
+            |switch|p1a: Talonflame|Talonflame, M|100/100
+            |-damage|p1a: Talonflame|50/100|[from] Stealth Rock
+            |win|B
+            """);
+        Assert.Equal(50, run.Of("Xatu").DealtIndirect, 2);
+        Assert.Equal(50, run.Of("Talonflame").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Ferrothorn").DealtIndirect, 2); // the thrower set nothing
+    }
+
+    [Fact]
+    public void Reflected_spikes_chip_is_the_reflectors_indirect_damage()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Klefki, M|item
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Klefki|Klefki, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Klefki|Spikes|p2a: Xatu
+            |move|p2a: Xatu|Spikes|p1a: Klefki|[from] ability: Magic Bounce
+            |-sidestart|p1: A|Spikes
+            |turn|2
+            |switch|p1a: Snorlax|Snorlax, M|100/100
+            |-damage|p1a: Snorlax|88/100|[from] Spikes
+            |win|B
+            """);
+        Assert.Equal(12, run.Of("Xatu").DealtIndirect, 2);
+        Assert.Equal(12, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Klefki").DealtIndirect, 2);
+    }
+
+    [Fact]
+    public void Reflected_toxic_spikes_poison_is_the_reflectors_indirect_damage()
+    {
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferroseed, M|item
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Xatu, F|item
+            |start
+            |switch|p1a: Ferroseed|Ferroseed, M|100/100
+            |switch|p2a: Xatu|Xatu, F|100/100
+            |turn|1
+            |move|p1a: Ferroseed|Toxic Spikes|p2a: Xatu
+            |move|p2a: Xatu|Toxic Spikes|p1a: Ferroseed|[from] ability: Magic Bounce
+            |-sidestart|p1: A|move: Toxic Spikes
+            |turn|2
+            |switch|p1a: Snorlax|Snorlax, M|100/100
+            |-status|p1a: Snorlax|tox|[from] move: Toxic Spikes
+            |turn|3
+            |-damage|p1a: Snorlax|94/100|[from] psn
+            |win|B
+            """);
+        Assert.Equal(6, run.Of("Xatu").DealtIndirect, 2);
+        Assert.Equal(6, run.Of("Snorlax").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Ferroseed").DealtIndirect, 2);
+    }
+
+    [Fact]
+    public void Reflected_via_magic_coat_also_credits_the_reflector()
+    {
+        // Magic Coat (the move that mimics Magic Bounce) re-emits the bounced move the
+        // same way, tagged |[from] Magic Coat. Stealth Rock stands in for all of them.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Ferrothorn, M|item
+            |poke|p1|Talonflame, M|item
+            |poke|p2|Espeon, F|item
+            |start
+            |switch|p1a: Ferrothorn|Ferrothorn, M|100/100
+            |switch|p2a: Espeon|Espeon, F|100/100
+            |turn|1
+            |move|p2a: Espeon|Magic Coat|p2a: Espeon
+            |-singleturn|p2a: Espeon|move: Magic Coat
+            |move|p1a: Ferrothorn|Stealth Rock|p2a: Espeon
+            |move|p2a: Espeon|Stealth Rock|p1a: Ferrothorn|[from] Magic Coat
+            |-sidestart|p1: A|move: Stealth Rock
+            |turn|2
+            |switch|p1a: Talonflame|Talonflame, M|100/100
+            |-damage|p1a: Talonflame|50/100|[from] Stealth Rock
+            |win|B
+            """);
+        Assert.Equal(50, run.Of("Espeon").DealtIndirect, 2);
+        Assert.Equal(50, run.Of("Talonflame").TakenIndirect, 2);
+        Assert.Equal(0, run.Of("Ferrothorn").DealtIndirect, 2);
     }
 
     // ── Healing: drain's [of] is the victim, Wish is self, Heal Pulse a foe ───
@@ -790,9 +1399,9 @@ public class ScraperAttributionTests
     public void Destiny_bond_credits_the_KO_to_the_bond_user_that_dragged_its_killer_down()
     {
         // Ceruledge Destiny Bonds, faints to Dondozo's Crunch, and takes Dondozo down
-        // with it. Dondozo's faint carries NO -damage of its own — Showdown reports the
+        // with it. Dondozo's faint carries NO -damage of its own, Showdown reports the
         // bond user's own faint, then the |-activate ... Destiny Bond, then the killer's
-        // faint — so that KO must be credited to Ceruledge. (Regression: it was going
+        // faint, so that KO must be credited to Ceruledge. (Regression: it was going
         // uncredited because there was no last-damage dealer to attribute it to.)
         var run = ReplayLogRunner.Run("""
             |player|p1|A|1|
@@ -943,5 +1552,245 @@ public class ScraperAttributionTests
             """);
         Assert.Equal(10, run.Of("Rillaboom").Healed, 2);      // still credited off the field
         Assert.Equal(0, run.Of("Incineroar").Recovered, 2);
+    }
+
+    // ── Major status: attribution rides with the mon across a switch ─────────
+
+    [Fact]
+    public void Burn_chip_stays_credited_to_the_inflictor_after_the_victim_pivots_out()
+    {
+        // A burned mon that switches out and back keeps its burn (major status
+        // persists across switches). Its chip after the pivot must still be
+        // credited to the mon that burned it, not orphaned. Regression: status
+        // used to be slot-keyed and cleared on switch-out, so every tick after the
+        // first pivot went uncredited (dealt != taken).
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Talonflame, M|item
+            |poke|p2|Snorlax, M|item
+            |poke|p2|Gengar, M|item
+            |start
+            |switch|p1a: Talonflame|Talonflame, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Talonflame|Will-O-Wisp|p2a: Snorlax
+            |-status|p2a: Snorlax|brn
+            |-damage|p2a: Snorlax|94/100|[from] brn
+            |turn|2
+            |switch|p2a: Gengar|Gengar, M|100/100
+            |turn|3
+            |switch|p2a: Snorlax|Snorlax, M|94/100
+            |-damage|p2a: Snorlax|88/100|[from] brn
+            |win|A
+            """);
+        Assert.Equal(12, run.Of("Snorlax").TakenIndirect, 2);   // both ticks land on the victim
+        Assert.Equal(12, run.Of("Talonflame").DealtIndirect, 2); // both credited to the burner, post-pivot too
+    }
+
+    // ── Weather: a bare re-announce must not steal ownership ─────────────────
+
+    [Fact]
+    public void Bare_weather_reannounce_keeps_the_original_setter_not_the_last_mover()
+    {
+        // Sand Stream sets sand (owner = Tyranitar). After Tapu Bulu moves, the engine
+        // repeats a bare |-weather|Sandstorm. That must NOT reassign the sand to Tapu
+        // Bulu (the last mover): otherwise Tapu Bulu's own sand chip resolves dealer ==
+        // victim and books taken with no matching dealt (dealt != taken). It stays
+        // Tyranitar's indirect damage.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Tapu Bulu, M|item
+            |poke|p2|Tyranitar, M|item
+            |start
+            |switch|p1a: Tapu Bulu|Tapu Bulu, M|100/100
+            |switch|p2a: Tyranitar|Tyranitar, M|100/100
+            |-weather|Sandstorm|[from] ability: Sand Stream|[of] p2a: Tyranitar
+            |turn|1
+            |move|p1a: Tapu Bulu|Wood Hammer|p2a: Tyranitar
+            |-damage|p2a: Tyranitar|70/100
+            |-weather|Sandstorm
+            |-damage|p1a: Tapu Bulu|94/100|[from] Sandstorm
+            |win|B
+            """);
+        Assert.Equal(6, run.Of("Tapu Bulu").TakenIndirect, 2); // sand credited to the setter
+        Assert.Equal(0, run.Of("Tapu Bulu").TakenSelf, 2);     // not self-damage
+        Assert.Equal(6, run.Of("Tyranitar").DealtIndirect, 2); // Tyranitar still owns the sand
+        Assert.Equal(30, run.Of("Tapu Bulu").DealtDirect, 2);
+    }
+
+    // ── Delayed mega: pre-mega damage lands on the mega form ────────────────
+
+    [Fact]
+    public void Damage_before_and_after_a_mega_evolution_all_lands_on_one_pick()
+    {
+        // A mon can hold its stone a few turns (see simulate-season.js mega timing),
+        // taking hits as its BASE form, then mega-evolve. Base and mega forms share a
+        // base id, so every point, before and after, belongs to the single drafted pick.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Alakazam, M|item
+            |poke|p2|Tyranitar, M|item
+            |start
+            |switch|p1a: Alakazam|Alakazam, M|100/100
+            |switch|p2a: Tyranitar|Tyranitar, M|100/100
+            |turn|1
+            |move|p2a: Tyranitar|Rock Slide|p1a: Alakazam
+            |-damage|p1a: Alakazam|70/100
+            |turn|2
+            |detailschange|p1a: Alakazam|Alakazam-Mega, M
+            |-mega|p1a: Alakazam|Alakazam|Alakazite
+            |move|p1a: Alakazam|Psychic|p2a: Tyranitar
+            |-damage|p2a: Tyranitar|60/100
+            |turn|3
+            |move|p2a: Tyranitar|Rock Slide|p1a: Alakazam
+            |-damage|p1a: Alakazam|40/100
+            |win|B
+            """);
+        // One row, holding the pre-mega hit (30) AND the post-mega hit (30). A split
+        // into separate base/mega picks would leave "Alakazam" with only the first 30.
+        Assert.Equal(60, run.Of("Alakazam").TakenDirect, 2);
+        Assert.Equal(40, run.Of("Alakazam").DealtDirect, 2); // dealt as the mega form
+        Assert.Equal(40, run.Of("Tyranitar").TakenDirect, 2);
+    }
+
+    // ── Battle-only forms resolve to the drafted base ───────────────────────
+
+    [Fact]
+    public void Battle_only_forms_resolve_to_their_drafted_base()
+    {
+        var palafin = new DraftLeague.Web.Models.Pick { Id = 1 };
+        var rotomWash = new DraftLeague.Web.Models.Pick { Id = 2 };
+        var map = new Dictionary<string, DraftLeague.Web.Models.Pick>
+        {
+            [DraftLeague.Web.Services.ReplayStatsScraper.BaseId("Palafin")] = palafin,
+            [DraftLeague.Web.Services.ReplayStatsScraper.BaseId("Rotom-Wash")] = rotomWash,
+        };
+        // Zero-to-Hero renames Palafin to "Palafin-Hero" mid-battle; that form is
+        // never drafted, so it must fall back to the drafted base and keep scoring.
+        Assert.Same(palafin, DraftLeague.Web.Services.ReplayStatsScraper.ResolveInMap(map, "Palafin-Hero"));
+        Assert.Same(palafin, DraftLeague.Web.Services.ReplayStatsScraper.ResolveInMap(map, "Palafin"));
+        // A drafted distinct form matches directly and never collapses to a sibling.
+        Assert.Same(rotomWash, DraftLeague.Web.Services.ReplayStatsScraper.ResolveInMap(map, "Rotom-Wash"));
+        Assert.Null(DraftLeague.Web.Services.ReplayStatsScraper.ResolveInMap(map, "Rotom-Heat"));
+    }
+
+    // ── Nicknames never affect attribution (resolve by species, not nickname) ─
+    // The scraper reads the species from a switch's DETAILS field (the "Garchomp, M"
+    // after the slot), not from the "p1a: Nickname" label, which SlotId trims at the
+    // colon. These lock that in: a nickname is present, duplicated within a team, and
+    // duplicated across teams, and finally set to ANOTHER species' name to prove a
+    // collision can't leak. ReplayLogRunner keys each Pick by the log species, so if
+    // the scraper ever resolved by nickname the by-species lookups below would miss
+    // and every assertion would read a zeroed GameStat.
+
+    [Fact]
+    public void A_nickname_does_not_change_attribution()
+    {
+        // Baseline: both mons carry a nickname unrelated to their species; damage is
+        // still booked against the species, not the nickname.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Sharky|Garchomp, M|100/100
+            |switch|p2a: BigBoy|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Sharky|Earthquake|p2a: BigBoy
+            |-damage|p2a: BigBoy|60/100
+            |win|A
+            """);
+        Assert.Equal(40, run.Of("Garchomp").DealtDirect, 2);
+        Assert.Equal(40, run.Of("Snorlax").TakenDirect, 2);
+    }
+
+    [Fact]
+    public void Duplicate_nicknames_on_one_team_still_split_by_species()
+    {
+        // Both p1 mons share the nickname "Chungus" and cycle through the same slot;
+        // the differing species keeps their stats apart.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p1|Snorlax, M|item
+            |poke|p2|Gengar, M|item
+            |start
+            |switch|p1a: Chungus|Garchomp, M|100/100
+            |switch|p2a: Gengar|Gengar, M|100/100
+            |turn|1
+            |move|p1a: Chungus|Earthquake|p2a: Gengar
+            |-damage|p2a: Gengar|50/100
+            |move|p2a: Gengar|Shadow Ball|p1a: Chungus
+            |-damage|p1a: Chungus|60/100
+            |turn|2
+            |switch|p1a: Chungus|Snorlax, M|100/100
+            |move|p2a: Gengar|Shadow Ball|p1a: Chungus
+            |-damage|p1a: Chungus|70/100
+            |win|B
+            """);
+        Assert.Equal(50, run.Of("Garchomp").DealtDirect, 2); // its Earthquake
+        Assert.Equal(40, run.Of("Garchomp").TakenDirect, 2); // the first Shadow Ball
+        Assert.Equal(30, run.Of("Snorlax").TakenDirect, 2);  // the second, after the swap
+        Assert.Equal(0, run.Of("Snorlax").DealtDirect, 2);   // never attacked
+        Assert.Equal(70, run.Of("Gengar").DealtDirect, 2);   // 40 + 30
+        Assert.Equal(50, run.Of("Gengar").TakenDirect, 2);
+    }
+
+    [Fact]
+    public void Duplicate_nicknames_across_teams_do_not_cross_contaminate()
+    {
+        // The same nickname "Twin" on both sides: the slot side (p1a vs p2a) plus the
+        // species keeps the two mons distinct, so neither steals the other's damage.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Garchomp, M|item
+            |poke|p2|Gengar, M|item
+            |start
+            |switch|p1a: Twin|Garchomp, M|100/100
+            |switch|p2a: Twin|Gengar, M|100/100
+            |turn|1
+            |move|p1a: Twin|Earthquake|p2a: Twin
+            |-damage|p2a: Twin|40/100
+            |move|p2a: Twin|Shadow Ball|p1a: Twin
+            |-damage|p1a: Twin|55/100
+            |win|A
+            """);
+        Assert.Equal(60, run.Of("Garchomp").DealtDirect, 2);
+        Assert.Equal(45, run.Of("Garchomp").TakenDirect, 2);
+        Assert.Equal(60, run.Of("Gengar").TakenDirect, 2);
+        Assert.Equal(45, run.Of("Gengar").DealtDirect, 2);
+    }
+
+    [Fact]
+    public void A_nickname_that_collides_with_another_species_does_not_leak()
+    {
+        // Adversarial: a Gengar nicknamed "Snorlax" faces a real Snorlax. If the
+        // scraper resolved by the label it would credit Gengar's hit to the Snorlax
+        // pick; resolving by the details field keeps them separate.
+        var run = ReplayLogRunner.Run("""
+            |player|p1|A|1|
+            |player|p2|B|2|
+            |poke|p1|Gengar, M|item
+            |poke|p2|Snorlax, M|item
+            |start
+            |switch|p1a: Snorlax|Gengar, M|100/100
+            |switch|p2a: Snorlax|Snorlax, M|100/100
+            |turn|1
+            |move|p1a: Snorlax|Shadow Ball|p2a: Snorlax
+            |-damage|p2a: Snorlax|50/100
+            |move|p2a: Snorlax|Body Slam|p1a: Snorlax
+            |-damage|p1a: Snorlax|65/100
+            |win|A
+            """);
+        Assert.Equal(50, run.Of("Gengar").DealtDirect, 2);   // the nicknamed attacker
+        Assert.Equal(35, run.Of("Gengar").TakenDirect, 2);
+        Assert.Equal(50, run.Of("Snorlax").TakenDirect, 2);  // the real Snorlax
+        Assert.Equal(35, run.Of("Snorlax").DealtDirect, 2);
     }
 }

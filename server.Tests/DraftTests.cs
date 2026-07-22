@@ -380,4 +380,101 @@ public class DraftTests : IAsyncLifetime
             Assert.NotEqual(pickedName, o.GetProperty("name").GetString());
         });
     }
+
+    // ── one mega per team ────────────────────────────────────────────────────
+
+    // Rigs tier B to a known 4-mon pool (3 megas + Snorlax) so the offer's random
+    // sample is fully determined: B offers 5 >= 4, so every ELIGIBLE mon appears.
+    // Optionally marks an unrelated mega as already drafted by a team.
+    private async Task RigMegaBPoolAsync(int leagueId, int? megaHolder)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // Clear the whole league pool (not just tier B): the seed's names are unique
+        // per (LeagueId, Name) across ALL tiers, so a stray "Snorlax" elsewhere would
+        // collide with the ones added here. The offer under test only reads tier B.
+        db.Pokemon.RemoveRange(db.Pokemon.Where(p => p.LeagueId == leagueId));
+        db.Pokemon.AddRange(
+            new PokemonEntry { LeagueId = leagueId, Name = "M-Blastoise", Sprite = "blastoise-mega", Tier = Tier.B, DexNumber = 9 },
+            new PokemonEntry { LeagueId = leagueId, Name = "M-Gengar", Sprite = "gengar-mega", Tier = Tier.B, DexNumber = 94 },
+            new PokemonEntry { LeagueId = leagueId, Name = "M-Lopunny", Sprite = "lopunny-mega", Tier = Tier.B, DexNumber = 428 },
+            new PokemonEntry { LeagueId = leagueId, Name = "Snorlax", Sprite = "snorlax", Tier = Tier.B, DexNumber = 143 });
+        if (megaHolder is int team)
+            db.Pokemon.Add(new PokemonEntry { LeagueId = leagueId, Name = "M-Held", Sprite = "held-mega", Tier = Tier.A, DexNumber = 9001, DraftedByTeamId = team });
+        await db.SaveChangesAsync();
+    }
+
+    private static bool OfferedIsMega(JsonElement o) =>
+        DraftEngine.IsMega(o.GetProperty("name").GetString()!, o.GetProperty("sprite").GetString());
+
+    [Fact]
+    public async Task Once_a_team_holds_a_mega_no_more_megas_are_offered()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("p1", "p2");
+        var s = await StateAsync(admin, draftId);
+        var onClock = Int(s, "onClockTeamId");
+
+        // The on-clock team already holds a mega; the B pool is 3 megas + 1 plain.
+        // Without the cap all four would be offered; with it, only the non-mega is.
+        await RigMegaBPoolAsync(Int(s, "leagueId"), megaHolder: onClock);
+
+        (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/offer",
+            new { teamId = onClock, tier = B })).EnsureSuccessStatusCode();
+
+        var offered = (await StateAsync(admin, draftId)).GetProperty("offered").EnumerateArray().ToList();
+        Assert.NotEmpty(offered);
+        Assert.DoesNotContain(offered, OfferedIsMega);                                    // no more megas
+        Assert.Contains(offered, o => o.GetProperty("name").GetString() == "Snorlax");    // the plain mon still is
+    }
+
+    [Fact]
+    public async Task A_team_with_no_mega_is_still_offered_megas()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("p1", "p2");
+        var s = await StateAsync(admin, draftId);
+        var onClock = Int(s, "onClockTeamId");
+
+        // Same rigged pool, but the team holds NO mega, so the cap doesn't apply and
+        // the megas stay eligible (B offers 5 >= the 4-mon pool, so all four appear).
+        await RigMegaBPoolAsync(Int(s, "leagueId"), megaHolder: null);
+
+        (await byTeam[onClock].PostAsJsonAsync($"/api/drafts/{draftId}/offer",
+            new { teamId = onClock, tier = B })).EnsureSuccessStatusCode();
+
+        var offered = (await StateAsync(admin, draftId)).GetProperty("offered").EnumerateArray().ToList();
+        Assert.Contains(offered, OfferedIsMega);
+    }
+
+    [Fact]
+    public async Task Auto_pick_wont_give_a_second_mega_to_a_team_that_holds_one()
+    {
+        var (admin, draftId, byTeam) = await StartWithAsync("p1", "p2");
+        var s = await StateAsync(admin, draftId);
+        var onClock = Int(s, "onClockTeamId");
+        var leagueId = Int(s, "leagueId");
+
+        // The team holds a mega; the only mons left are C-tier megas (which auto-pick
+        // reaches first) and one plain B mon. The cap must skip the C megas and land
+        // the auto-pick on the plain mon rather than handing out a second mega.
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Pokemon.RemoveRange(db.Pokemon.Where(p => p.LeagueId == leagueId));
+            db.Pokemon.AddRange(
+                new PokemonEntry { LeagueId = leagueId, Name = "M-Held", Sprite = "held-mega", Tier = Tier.A, DexNumber = 9001, DraftedByTeamId = onClock },
+                new PokemonEntry { LeagueId = leagueId, Name = "M-Rayquaza", Sprite = "rayquaza-mega", Tier = Tier.C, DexNumber = 384 },
+                new PokemonEntry { LeagueId = leagueId, Name = "M-Sableye", Sprite = "sableye-mega", Tier = Tier.C, DexNumber = 302 },
+                new PokemonEntry { LeagueId = leagueId, Name = "Snorlax", Sprite = "snorlax", Tier = Tier.B, DexNumber = 143 });
+            await db.SaveChangesAsync();
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var engine = scope.ServiceProvider.GetRequiredService<DraftEngine>();
+            Assert.True((await engine.AutoPickAsync(draftId, preferSkip: false)).Ok);
+        }
+
+        var pick = (await StateAsync(admin, draftId)).GetProperty("picks").EnumerateArray().Single();
+        Assert.Equal("Snorlax", pick.GetProperty("name").GetString()); // not a second mega
+    }
 }

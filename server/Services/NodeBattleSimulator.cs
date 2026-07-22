@@ -58,6 +58,14 @@ public class NodeBattleSimulator(IHostEnvironment env, ILogger<NodeBattleSimulat
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            // Node emits UTF-8. Without this, Windows reads stdout in the console
+            // codepage and mangles non-ASCII species names (Sirfetch'd's apostrophe,
+            // Flabébé, the Nidoran genders), turning them into letters ToId keeps, so
+            // the mon never resolves to its pick. Feed the spec in as UTF-8 too.
+            // BOM-less: Encoding.UTF8 would write a BOM to Node's stdin and break its
+            // JSON.parse. Reading stdout as UTF-8 strips any leading BOM anyway.
+            StandardOutputEncoding = new System.Text.UTF8Encoding(false),
+            StandardInputEncoding = new System.Text.UTF8Encoding(false),
         };
         psi.ArgumentList.Add("scripts/simulate-season.js");
 

@@ -38,17 +38,22 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
     private static string RandomTera() => TeraTypes[Random.Shared.Next(TeraTypes.Length)];
 
     /// <summary>
+    /// A mega evolution: the "M-" name prefix or a "-mega" sprite slug, matched WITH
+    /// the hyphen so a species that merely contains "mega" (Meganium, Yanmega) isn't
+    /// caught. Used both to bar a Tera type and to cap each team at one mega.
+    /// </summary>
+    public static bool IsMega(string name, string? sprite) =>
+        name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
+        || (sprite?.Contains("-mega", StringComparison.OrdinalIgnoreCase) ?? false);
+
+    /// <summary>
     /// Some C-tier mons are barred from a Tera type by league rule: megas (they
     /// already transform, so a Tera on top is too much) and Shedinja specifically
-    /// (Tera would give its 1-HP shell a real defensive typing). Megas are the
-    /// "M-" name prefix or a "-mega" sprite slug, matched WITH the hyphen so a
-    /// species that merely contains "mega" (Meganium, Yanmega) isn't caught.
-    /// Shedinja is matched by name.
+    /// (Tera would give its 1-HP shell a real defensive typing). Shedinja is matched
+    /// by name.
     /// </summary>
     public static bool TeraBarred(string name, string? sprite) =>
-        name.StartsWith("M-", StringComparison.OrdinalIgnoreCase)
-        || (sprite?.Contains("-mega", StringComparison.OrdinalIgnoreCase) ?? false)
-        || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
+        IsMega(name, sprite) || name.Equals("Shedinja", StringComparison.OrdinalIgnoreCase);
 
     private static string? RollTera(Tier tier, string name, string? sprite) =>
         tier == Tier.C && !TeraBarred(name, sprite) ? RandomTera() : null;
@@ -92,6 +97,11 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier && p.DraftedByTeamId == null
                             && !teamDex.Contains(p.DexNumber))
                 .ToListAsync(ct);
+
+            // One mega per team: once a coach holds a mega, stop offering them more
+            // (a mega already transforms; a second would double up that power).
+            if (pool.Count > 0 && await TeamHasMegaAsync(teamId, ct))
+                pool = pool.Where(p => !IsMega(p.Name, p.Sprite)).ToList();
 
             if (pool.Count == 0) return DraftActionResult.Fail($"No {tier} tier pokemon left");
 
@@ -218,15 +228,19 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                     // Same dex-number guard as a manual offer: never auto-pick a
                     // form of a species the team already holds.
                     var teamDex = await TeamDexNumbersAsync(teamId.Value, ct);
+                    // And the same one-mega-per-team cap (see OfferOptionsAsync).
+                    var teamHasMega = await TeamHasMegaAsync(teamId.Value, ct);
 
                     // Randomise client-side. Ordering by Guid.NewGuid() is a SQL
                     // Server idiom that EF cannot translate for SQLite, and it
                     // threw on every tick, silently wedging the whole clock.
-                    var candidates = await db.Pokemon
+                    var candidates = (await db.Pokemon
                         .Where(p => p.LeagueId == draft.LeagueId && p.Tier == tier && p.DraftedByTeamId == null
                                     && !teamDex.Contains(p.DexNumber))
                         .Select(p => new { p.Id, p.Name, p.Sprite })
-                        .ToListAsync(ct);
+                        .ToListAsync(ct))
+                        .Where(c => !teamHasMega || !IsMega(c.Name, c.Sprite))
+                        .ToList();
 
                     var chosen = candidates.Count == 0 ? null : candidates[Random.Shared.Next(candidates.Count)];
                     candidateId = chosen?.Id;
@@ -614,6 +628,21 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             .Select(p => p.DexNumber)
             .Distinct()
             .ToListAsync(ct);
+
+    /// <summary>
+    /// True if the team already holds a mega. Evaluated in memory (a roster is at
+    /// most a handful of rows) so the "M-" / "-mega" match is the same reliable,
+    /// case-insensitive check <see cref="IsMega"/> uses everywhere else, rather than
+    /// a database LIKE with its own collation rules.
+    /// </summary>
+    private async Task<bool> TeamHasMegaAsync(int teamId, CancellationToken ct)
+    {
+        var drafted = await db.Pokemon
+            .Where(p => p.DraftedByTeamId == teamId)
+            .Select(p => new { p.Name, p.Sprite })
+            .ToListAsync(ct);
+        return drafted.Any(p => IsMega(p.Name, p.Sprite));
+    }
 
     /// <summary>Total picks a full roster holds, the sum of every tier's slots.</summary>
     private static int TotalSlots(Draft draft) => draft.League.TierRules.Sum(r => r.SlotsPerTeam);

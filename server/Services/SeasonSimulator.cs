@@ -270,7 +270,7 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
         var scraped = ReplayStatsScraper.Scrape(battleLog, (side, species) =>
         {
             var team = side == "p1" ? home : away;
-            return pickByTeamBase.TryGetValue(team.Id, out var map) ? map.GetValueOrDefault(BaseId(species)) : null;
+            return pickByTeamBase.TryGetValue(team.Id, out var map) ? ReplayStatsScraper.ResolveInMap(map, species) : null;
         });
         // Season-presence denominator: the game's turn count (one field slot per
         // turn). A team's mons sum to 100% in singles and 200% in doubles, where

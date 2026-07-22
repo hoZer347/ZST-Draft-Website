@@ -48,7 +48,7 @@ public class MatchStatsRecorder(AppDbContext db, ILogger<MatchStatsRecorder> log
         {
             var teamId = side == homeSide ? homeId : awayId;
             return byTeamBase.TryGetValue(teamId, out var map)
-                ? map.GetValueOrDefault(ReplayStatsScraper.BaseId(species)) : null;
+                ? ReplayStatsScraper.ResolveInMap(map, species) : null;
         });
 
         if (scraped.Stats.Count == 0)
@@ -86,6 +86,8 @@ public class MatchStatsRecorder(AppDbContext db, ILogger<MatchStatsRecorder> log
             st.Finishes += (gs.Finished ? 1 : 0) * sign; // still standing at the end this game
             st.Kills += gs.Kills * sign;
             st.Deaths += gs.Deaths * sign;
+            st.AlliesKoed += gs.AlliesKoed * sign;
+            st.SelfKos += gs.SelfKos * sign;
             st.Crits += gs.Crits * sign;
             st.ActiveTurns += gs.ActiveTurns * sign;
             st.PlayedTurns += scraped.Turns * sign; // usage-presence denominator

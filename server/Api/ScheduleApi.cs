@@ -696,7 +696,7 @@ public static class ScheduleApi
                 {
                     var teamId = side == homeSide ? lm.HomeTeamId : lm.AwayTeamId;
                     return byTeamBase.TryGetValue(teamId, out var map)
-                        ? map.GetValueOrDefault(ReplayStatsScraper.BaseId(species)) : null;
+                        ? ReplayStatsScraper.ResolveInMap(map, species) : null;
                 });
             }
             catch { continue; }

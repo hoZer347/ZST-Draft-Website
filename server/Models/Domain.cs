@@ -316,6 +316,13 @@ public class PokemonStat
     public int Finishes { get; set; }
     public int Kills { get; set; }
     public int Deaths { get; set; }
+    /// <summary>Allies this mon knocked out (friendly fire / handing over a damaging
+    /// item that finished them), kept apart from Kills.</summary>
+    public int AlliesKoed { get; set; }
+    /// <summary>Times this mon took itself down with no enemy or ally credited
+    /// (Explosion / Final Gambit, self-damage). Deaths = Kills-against + AlliesKoed +
+    /// SelfKos across the league.</summary>
+    public int SelfKos { get; set; }
     public int Wins { get; set; }
     public int Losses { get; set; }
 

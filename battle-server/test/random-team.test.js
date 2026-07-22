@@ -117,6 +117,19 @@ test('the packed mega team round-trips to base species holding the stone', () =>
   assert.equal(mon.item, 'Charizardite Y');
 });
 
+test('a mega is LED (packed first) so it reliably comes in to mega-evolve', () => {
+  // Team preview brings the packed team "default" (the first slots are the leads),
+  // and the sim AI only mega-evolves a mon that is ACTUALLY on the field. A mega
+  // stuck in the back that the random AI never switches in just sits there as its
+  // un-evolved base form (the "Floette that never becomes Mega Floette" bug). So a
+  // mega placed anywhere in the roster must be floated to the front.
+  const team = Teams.unpack(buildRandomTeam(['garchomp', 'snorlax', 'gyarados-mega', 'gengar'], 4));
+  assert.equal(team[0].species, 'Gyarados', 'the mega (as its base form) leads');
+  assert.ok(Dex.items.get(team[0].item).megaStone, 'and it holds its mega stone');
+  // The other three keep their spots behind it (order among them is the sample's).
+  assert.deepEqual(team.slice(1).map((m) => m.species).sort(), ['Garchomp', 'Gengar', 'Snorlax']);
+});
+
 // ── format restrictions applied at team-build time (the sim battles under
 // custom-game, which bans nothing, so we strip these here, the same options the
 // Showdown team builder would refuse to submit) ─────────────────────────────────
