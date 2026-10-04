@@ -23,6 +23,7 @@ obj/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak*
 
 # ── Flutter ───────────────────────────────────────────────
 app/.dart_tool/

@@ -6,6 +6,9 @@ const el = {
   signin: $('signin'), signinError: $('signin-error'), app: $('app'),
   account: $('account'), avatar: $('avatar'), username: $('username'),
   viewAs: $('view-as'), stopViewAs: $('stop-view-as'),
+  signinPlayer: $('signin-player'), logout: $('logout'),
+  inviteNote: $('invite-note'), browseVisitor: $('browse-visitor'),
+  copyInvite: $('copy-invite'), copyInviteMsg: $('copy-invite-msg'),
   tabs: $('tabs'), ready: $('ready'), playerList: $('player-list'), addDummy: $('add-dummy'),
   readyAllDummies: $('ready-all-dummies'),
   navToggle: $('nav-toggle'), navBackdrop: $('nav-backdrop'),
@@ -13,6 +16,7 @@ const el = {
   onClock: $('on-clock'), onClockBox: $('on-clock-box'), pickNo: $('pick-no'), timer: $('timer'),
   turnCountdown: $('turn-countdown'),
   play: $('play'), rollback: $('rollback'), abort: $('abort'), simSeason: $('sim-season'),
+  syncPokedex: $('sync-pokedex'), syncPokedexMsg: $('sync-pokedex-msg'),
   snapshotSeason: $('snapshot-season'), restoreSeason: $('restore-season'), restoreFile: $('restore-file'),
   simRandomSeason: $('sim-random-season'), simRandom16: $('sim-random-16'),
   simBattles: $('sim-battles'), simBattlesLabel: $('sim-battles-label'),
@@ -39,8 +43,11 @@ const el = {
 
 // ── session ────────────────────────────────────────────────────────────
 
+// Show the sign-in card. Reached deliberately now (the Sign in button, an invite
+// link, or a failed visitor pass), never as the wall in front of the league.
 function signedOut() {
   el.signin.hidden = false;
+  if (el.inviteNote) el.inviteNote.hidden = !Auth.storedInvite();
   el.app.hidden = true;
   el.tabs.hidden = true;
   el.ready.hidden = true;
@@ -68,6 +75,14 @@ async function signedIn() {
   el.account.hidden = false;
   el.navToggle.hidden = false; // reveal the hamburger (mobile CSS decides if it shows)
   el.username.textContent = user.username;
+
+  // A visitor is signed in as nobody: everything admin- or coach-gated is already
+  // off (the server resolves all of it from an identity this token doesn't carry),
+  // so the only thing left is to swap Sign out for Sign in.
+  const visitor = Auth.isVisitor();
+  document.body.classList.toggle('visitor', visitor);
+  if (el.signinPlayer) el.signinPlayer.hidden = !visitor;
+  if (el.logout) el.logout.hidden = visitor;
   // Not every Discord account has an avatar, and this element survives a
   // sign-out, so the empty case has to clear it rather than leave the last one.
   if (user.avatarUrl) { el.avatar.src = user.avatarUrl; el.avatar.hidden = false; }
@@ -116,6 +131,7 @@ async function renderImpersonation(user) {
   // Defensive: a cached HTML/JS mismatch (missing #view-as) must not throw and
   // break sign-in, the impersonation controls are simply absent then.
   if (!user || !el.viewAs || !el.stopViewAs) return;
+  if (Auth.isVisitor()) { el.viewAs.hidden = true; el.stopViewAs.hidden = true; return; }
   const impersonating = !!Auth.impersonator();
   el.stopViewAs.hidden = !impersonating;
   const canPick = !impersonating && !!user.isAdmin;
@@ -314,6 +330,36 @@ async function renderTeamTabs(activeId) {
   }
   bar.replaceChildren(...tabs);
   bar.hidden = tabs.length === 0;
+}
+
+// The Teams tab opens your own roster. A visitor has none, so it opens the first
+// team in the league instead and the tab bar takes them anywhere from there.
+async function openTeamsTab() {
+  const u = Auth.user();
+  if (u?.discordId) { openTeam(u.discordId, u.username); return; }
+
+  if (!teamTabPlayers) {
+    try {
+      const res = await Auth.authFetch('/api/players');
+      teamTabPlayers = res.ok ? (await res.json()).filter((p) => p.hasTeam) : [];
+    } catch { teamTabPlayers = []; }
+  }
+  const first = teamTabPlayers[0];
+  if (first) { openTeam(first.discordId, first.username); return; }
+
+  // Nobody has a roster yet. Say so, rather than letting the click do nothing.
+  teamPageId = null;
+  el.teamTitle.textContent = 'Teams';
+  el.teamEditForm.hidden = true;
+  el.teamIcon.hidden = true;
+  el.teamShowdown.hidden = true;
+  el.teamEdit.hidden = true;
+  el.teamBody.replaceChildren(muted('No teams yet, they appear once a draft has started.'));
+  el.teamPage.hidden = false;
+  document.body.classList.add('team-open');
+  setActiveTab('teams');
+  syncHeaderHeight();
+  renderTeamTabs(null);
 }
 
 async function refreshNextMatchup() {
@@ -786,6 +832,15 @@ function render(s) {
   el.rollback.hidden = !canUndo;
   // Abort is admin-only and only meaningful once the draft has begun.
   el.abort.hidden = !(isAdmin && s.state !== 'NotStarted');
+  // Pokédex refresh: admin-only, in every draft state. It re-pulls the pool and
+  // nothing else, sparing drafted and currently-offered mons, so it's safe to run
+  // mid-draft and after it (see PokedexSync.RefreshAsync).
+  if (el.syncPokedex) el.syncPokedex.hidden = !isAdmin;
+  // Invite links are the only route from visitor to player, so the button is up
+  // in every draft state, not just the lobby.
+  if (el.copyInvite) el.copyInvite.hidden = !isAdmin;
+  if (el.copyInviteMsg && el.copyInvite?.hidden) el.copyInviteMsg.hidden = true;
+  if (el.syncPokedexMsg && el.syncPokedex?.hidden) el.syncPokedexMsg.hidden = true;
   // Season simulator: admin-only, pre-start (same context as Start). Shown on
   // the live site too, the server runs in Development so the endpoint exists,
   // and it's admin-gated server-side.
@@ -805,7 +860,7 @@ function render(s) {
   // pre-start action), so hide it once running/complete.
   if (el.readyAllDummies) el.readyAllDummies.hidden = !(isAdmin && s.state === 'NotStarted');
 
-  renderTurn(mine, isAdmin, s);
+  renderTurn(mine, s);
   renderPicks(s);
 }
 
@@ -838,11 +893,12 @@ function renderTurnCountdown(s) {
     : `${n} pick${n === 1 ? '' : 's'} until you're up`;
 }
 
-// The tier buttons + offered options. Shown to the coach on the clock (who can
-// act) and to the admin (read-only), nobody else sees the live pick controls.
-function renderTurn(mine, isAdmin, s) {
+// The tier buttons + offered options. Shown to everyone while the draft runs, so
+// the league can watch the options come up, but only the coach on the clock can
+// act; everybody else (including the admin) gets the same panel read-only.
+function renderTurn(mine, s) {
   const canAct = mine;
-  if (!(mine || isAdmin) || s.state !== 'Running') { el.turn.hidden = true; el.skip.hidden = true; return; }
+  if (s.state !== 'Running') { el.turn.hidden = true; el.skip.hidden = true; return; }
   el.turn.hidden = false;
   el.turn.classList.toggle('readonly', !canAct);
 
@@ -869,7 +925,7 @@ function renderTurn(mine, isAdmin, s) {
     const b = document.createElement('button');
     b.className = `tier tier--${key}`;
     b.innerHTML = `<span class="tier-key">${key}</span><span class="tier-left">${remaining} left</span>`;
-    // Only the coach on the clock can act; the admin sees the same panel but
+    // Only the coach on the clock can act; every other viewer sees the same panel
     // read-only. The server enforces this too, disabling avoids a doomed click.
     b.disabled = !canAct || remaining <= 0 || (openTier !== null && openTier !== key);
     b.classList.toggle('open', openTier === key);
@@ -1418,6 +1474,42 @@ const muted = (text) => Object.assign(document.createElement('p'), { className: 
 let schedMineOnly = false;
 if (el.schedMine) el.schedMine.onchange = () => { schedMineOnly = el.schedMine.checked; renderSchedule(); };
 
+// ── spoiler collapse ─────────────────────────────────────────────────────
+// A finished game hides its result behind a collapse: the two coaches, the week and
+// the replay link stay visible, the score, the winner highlight and the per-mon
+// scoresheet don't. Every game starts collapsed the moment it's finished, yours
+// included, so scrolling the schedule can never spoil a battle you're about to
+// watch. Which games you've opened is remembered per league + viewer in
+// localStorage, so a re-login brings the same cards back open.
+let schedOpen = new Set();   // ids of played matches the viewer has revealed
+let schedOpenKey = null;
+
+function schedOpenSet() {
+  const key = `sched.open.${leagueId ?? 'x'}.${Auth.user()?.discordId ?? 'anon'}`;
+  if (key !== schedOpenKey) {
+    schedOpenKey = key;
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) ?? '[]');
+      schedOpen = new Set(Array.isArray(raw) ? raw : []);
+    } catch { schedOpen = new Set(); } // private mode / corrupt value
+  }
+  return schedOpen;
+}
+
+function schedOpenSave() {
+  try { localStorage.setItem(schedOpenKey, JSON.stringify([...schedOpen])); } catch { /* private mode */ }
+}
+
+// Forget ids that aren't finished games any more (the season was regenerated, or a
+// replay was removed and the match went back to Pending). Keeps the stored set from
+// growing, and means a match that gets re-reported comes back collapsed.
+function schedOpenPrune(playedIds) {
+  const open = schedOpenSet();
+  let changed = false;
+  for (const id of [...open]) if (!playedIds.has(id)) { open.delete(id); changed = true; }
+  if (changed) schedOpenSave();
+}
+
 function renderSchedule() {
   const data = scheduleData;
   if (!data) return;
@@ -1427,6 +1519,9 @@ function renderSchedule() {
   if (el.schedFilterbar) el.schedFilterbar.hidden = !canFilter;
 
   let matches = data.matches ?? [];
+  // Prune against every match, not the filtered view, so the "only my battles"
+  // toggle can't drop the open state of everyone else's games.
+  schedOpenPrune(new Set(matches.filter((m) => m.played).map((m) => m.id)));
   if (schedMineOnly && canFilter) matches = matches.filter((m) => m.mine);
   if (!matches.length) {
     // Empty either because the draft hasn't begun, or the "my battles" filter
@@ -1512,8 +1607,13 @@ const DUE_FMT = {
 };
 
 function matchCard(m, size) {
+  // A finished game is collapsed until the viewer opens it (see schedOpenSet):
+  // coaches, week and replay link only, no score, no winner colour, no scoresheet.
+  const collapsed = m.played && !schedOpenSet().has(m.id);
+
   const card = document.createElement('div');
-  card.className = `match match--${size}` + (m.mine ? ' match--is-mine' : '');
+  card.className = `match match--${size}` + (m.mine ? ' match--is-mine' : '')
+    + (collapsed ? ' match--collapsed' : '');
 
   const head = document.createElement('div');
   head.className = 'match-head';
@@ -1532,24 +1632,35 @@ function matchCard(m, size) {
   const canEdit = !!draft?.isAdmin;
 
   // home, score(+replay button), away, with the winner emphasised once played.
-  const homeWon = m.result === 'HomeWin';
-  const awayWon = m.result === 'AwayWin';
+  // While collapsed nobody "won": the green winner name would give the game away.
+  const homeWon = !collapsed && m.result === 'HomeWin';
+  const awayWon = !collapsed && m.result === 'AwayWin';
   const row = document.createElement('div');
   row.className = 'match-row';
   row.append(
     teamSide(m.homeName, m.homeAvatar, m.homeTeamId === m.myTeamId, homeWon, 'home'),
-    matchMiddle(m, card, canEdit),
+    matchMiddle(m, card, canEdit, collapsed, () => reopenMatchCard(card, m, size)),
     teamSide(m.awayName, m.awayAvatar, m.awayTeamId === m.myTeamId, awayWon, 'away'),
   );
   card.append(head, row);
 
-  // Played game: a compact per-mon stat strip under the score.
-  if (m.played && m.battleStats?.length) card.append(battleStatsBlock(m));
+  // Played game: a compact per-mon stat strip under the score. Built only once
+  // revealed, so a collapsed card carries no result in its DOM at all.
+  if (m.played && !collapsed && m.battleStats?.length) card.append(battleStatsBlock(m));
 
   // Your own unplayed game: nothing to submit. Playing it on our Showdown server
   // reports the finished battle automatically (see /api/showdown/report).
   if (!m.played && m.mine) card.append(autoRecordNote());
   return card;
+}
+
+// Flip one finished game between hidden and revealed, remember the choice, and swap
+// the card for a freshly built one in the same slot.
+function reopenMatchCard(card, m, size) {
+  const open = schedOpenSet();
+  if (open.has(m.id)) open.delete(m.id); else open.add(m.id);
+  schedOpenSave();
+  card.replaceWith(matchCard(m, size));
 }
 
 // Under a played match's score: a per-mon stat table for each team (home left, away
@@ -1724,13 +1835,18 @@ function avatarBubble(url, className) {
 // The centre of the score/players row: the score, plus a dynamic replay button
 // (Watch for everyone; Edit/Remove admin-only, see canEdit) that toggles an inline
 // watch/edit panel beneath the card.
-function matchMiddle(m, card, canEdit) {
+function matchMiddle(m, card, canEdit, collapsed, onToggle) {
   const wrap = document.createElement('div');
   wrap.className = 'match-mid-wrap';
 
   const mid = document.createElement('div');
   mid.className = 'match-mid';
-  if (m.played && m.homeScore != null && m.awayScore != null) {
+  if (collapsed) {
+    // Hidden result: a placeholder in the score's place, so the card keeps its shape.
+    mid.classList.add('match-mid--hidden');
+    mid.textContent = '?';
+    mid.title = 'Result hidden, open the game to see it';
+  } else if (m.played && m.homeScore != null && m.awayScore != null) {
     mid.classList.add('match-score');
     mid.textContent = `${m.homeScore}–${m.awayScore}`;
   } else if (m.played) {
@@ -1743,7 +1859,7 @@ function matchMiddle(m, card, canEdit) {
   // Combined both-teams paste, only as a fallback: when the game has builds but no
   // per-mon scoresheet to hang the per-team links under. Normally each team's build
   // links under its own stats table instead (see battleStatsSide / teamPasteLink).
-  if (m.played && m.hasPaste && !m.battleStats?.length) {
+  if (m.played && !collapsed && m.hasPaste && !m.battleStats?.length) {
     const paste = document.createElement('a');
     paste.className = 'match-paste-link';
     paste.href = `/matches/${m.id}/teams`;
@@ -1769,6 +1885,18 @@ function matchMiddle(m, card, canEdit) {
       watch.textContent = 'Watch replay';
       actions.append(watch);
     }
+
+    // Show/hide the result. Always present on a finished game, so a spoiled card
+    // can be closed again as easily as a hidden one is opened.
+    const reveal = document.createElement('button');
+    reveal.type = 'button';
+    reveal.className = 'match-replay-btn match-reveal-btn';
+    reveal.textContent = collapsed ? 'Show result' : 'Hide result';
+    reveal.title = collapsed
+      ? 'Reveal the score and scoresheet for this game'
+      : 'Hide this game’s result again';
+    reveal.onclick = onToggle;
+    actions.append(reveal);
 
     // Edit/Add + Remove are only for a coach IN the match (or an admin).
     if (canEdit) {
@@ -2186,7 +2314,7 @@ document.querySelectorAll('.tab').forEach((t) => {
     if (t.dataset.view === 'teambuilder') { openTeambuilder(); return; }
     // My team isn't a view either, it opens the same team-page overlay you get
     // by clicking your own icon in the roster, for the signed-in user.
-    if (t.dataset.view === 'teams') { const u = Auth.user(); if (u) openTeam(u.discordId, u.username); return; }
+    if (t.dataset.view === 'teams') { openTeamsTab(); return; }
     showView(t.dataset.view);
   };
 });
@@ -2311,8 +2439,8 @@ function standingsCard(rows, myTeamId = null) {
     // The W–L record (which already conveys the win/loss differential the sort
     // leads on) plus the KO tiebreakers.
     const record = statChip('Record', recordText(r), 'Match record: wins-losses' + (r.draws ? '-draws' : ''));
-    const koDiff = statChip('KO±', signed(r.koDiff), 'KO differential, total KOs scored minus total faints');
-    const kos = statChip('KOs', `${r.totalKos}`, "Total KOs scored across the team's roster");
+    const koDiff = statChip('Diff', signed(r.koDiff), 'KO differential, counted per game: mons the opponents lost minus mons this team lost');
+    const kos = statChip('KOs', `${r.totalKos}`, "Opposing mons this team's mons knocked out. Self-KOs are not credited, but still count toward Diff");
     const faints = statChip('Faints', `${r.totalFaints}`, "Total times the team's mons fainted");
 
     const stats = document.createElement('span');
@@ -2643,6 +2771,38 @@ on('abort', async () => {
 
 on('skip', () => skip());
 
+// Admin: re-pull the pool from the source Google Sheet, in any draft state.
+// Touches only the Pokémon pool; readied players, teams, picks, the clock and the
+// draft state are left alone, and drafted / currently-offered mons are never
+// removed, so this is safe in the lobby, mid-draft and after the draft.
+on('sync-pokedex', async () => {
+  const btn = el.syncPokedex;
+  if (!btn) return;
+  const say = (msg) => {
+    if (!el.syncPokedexMsg) return;
+    el.syncPokedexMsg.textContent = msg;
+    el.syncPokedexMsg.hidden = !msg;
+  };
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '⟳ Refreshing…';
+  say('');
+  try {
+    const res = await Auth.authFetch(`/api/admin/drafts/${draftId}/sync-pokedex`, { method: 'POST' });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? `Failed (${res.status})`);
+    poolCache = null; // the tier list re-fetches the new pool the next time it opens
+    const tierlist = $('view-tierlist');
+    if (tierlist && !tierlist.hidden) await ensureTierList();
+    say(`Pokédex refreshed: ${body.changed} row(s) changed, ${body.total} in the pool.`);
+  } catch (e) {
+    say(`Could not refresh the Pokédex, ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
+
 // Dev-only: replace the league with the canned, fully-played ZST 3 test season.
 on('sim-season', async () => {
   if (!confirm('Load ZST 3, replace this league with the canned test season (real teams, drafted rosters, played matches)? This wipes the current draft.')) return;
@@ -2888,6 +3048,67 @@ on('login', async () => {
   catch (e) { el.signinError.textContent = e.message; el.signinError.hidden = false; }
 });
 
+// From the sign-in card back to browsing. The counterpart of the header's Sign in.
+on('browse-visitor', async () => {
+  try { await Auth.visitorSignIn(); await signedIn(); }
+  catch (e) { el.signinError.textContent = e.message; el.signinError.hidden = false; }
+});
+
+// A visitor asking for a real account. Drops the pass first: staying "signed in"
+// as a visitor while the Discord round trip runs would leave a stale session
+// behind if the login is abandoned. Any invite they arrived on is kept, they may
+// well have browsed before deciding to claim it.
+on('signin-player', () => {
+  Auth.dropVisitor();
+  signedOut();
+});
+
+// Admin: copy a player invite link. Whoever opens it can sign in with Discord and
+// join as a coach; without one, a new Discord account is turned away and can only
+// browse. The link is single-purpose and expires, see TokenService.IssueInvite.
+on('copy-invite', async () => {
+  const btn = el.copyInvite;
+  if (!btn) return;
+  const say = (msg) => {
+    if (!el.copyInviteMsg) return;
+    el.copyInviteMsg.textContent = msg;
+    el.copyInviteMsg.hidden = !msg;
+  };
+  btn.disabled = true;
+  say('');
+  try {
+    const res = await Auth.authFetch('/api/admin/invite', { method: 'POST' });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error ?? `Failed (${res.status})`);
+    const copied = await copyText(body.url);
+    say(copied
+      ? `Player invite copied, good for ${body.days} day${body.days === 1 ? '' : 's'}.`
+      : body.url);
+  } catch (e) {
+    say(`Could not create an invite, ${e.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Clipboard write with a fallback: navigator.clipboard needs a secure context,
+// and the dev site is reachable over plain http on the LAN.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
 // Dev-only "Sign in as" picker (localhost). Lists existing accounts (admin + every
 // coach) so you can drive the app without Discord. Hidden and inert in production
 // (the /dev/* routes 404 there, so populate just fails quietly).
@@ -2931,23 +3152,38 @@ if (el.viewAs) el.viewAs.onchange = async (e) => {
 };
 on('stop-view-as', () => { Auth.stopImpersonating(); location.reload(); });
 
-// The signed-in session lives in localStorage, so a normal reload stays logged
-// in. A hard reload, Ctrl+F5, or Ctrl/Cmd+Shift+R, is the deliberate "start
-// clean" gesture, so wipe the session synchronously first. keydown reaches this
-// handler before the browser navigates; plain F5 is left alone.
-window.addEventListener('keydown', (e) => {
-  const hardF5 = e.key === 'F5' && (e.ctrlKey || e.metaKey || e.shiftKey);
-  const shiftR = (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'r' || e.key === 'R');
-  if (hardF5 || shiftR) Auth.forget();
-}, true);
+// A hard reload (Ctrl+F5, Ctrl/Cmd+Shift+R) used to wipe the session here, on the
+// theory that it means "start clean". It doesn't: people hard-reload to get fresh
+// assets, and it cost them a full Discord re-auth every time. Cache-busting is the
+// `?v=` on each asset in index.html; signing out is the Sign out button.
 
 (async function boot() {
+  // Before anything reads the URL: an admin's ?invite=… is stashed and stripped
+  // so it survives the round trip through Discord.
+  const invited = !!Auth.captureInvite();
+
+  let loginFailed = false;
   try {
     await Auth.handleRedirect();
   } catch (e) {
     el.signinError.textContent = e.message;
     el.signinError.hidden = false;
+    loginFailed = true;
   }
-  if (Auth.isLoggedIn()) await signedIn();
-  else signedOut();
+
+  if (Auth.isLoggedIn()) { await signedIn(); return; }
+
+  // Arriving with an invite means someone was sent here to become a player, so
+  // they get the sign-in card. So does a login that just failed, with its reason
+  // still on screen. Everyone else browses: the league is public, and the default
+  // entry is a visitor pass, no Discord prompt.
+  if (invited || loginFailed) { signedOut(); return; }
+
+  try { await Auth.visitorSignIn(); await signedIn(); }
+  catch (e) {
+    // No pass, no reads. Fall back to the sign-in card rather than a blank page.
+    el.signinError.textContent = e.message;
+    el.signinError.hidden = false;
+    signedOut();
+  }
 })();

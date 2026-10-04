@@ -10,9 +10,10 @@ namespace DraftLeague.Web.Tests;
 
 /// <summary>
 /// The scoreboard endpoint: team standings (sorted W-L, KO diff, wins, KOs) and
-/// per-mon stat leaders (presence, +/-, healing, damage ratio), all rolled up
-/// from the stored PokemonStat rows and the teams' match records. Seeds known
-/// values straight into the DB so every ranking and tiebreak is hand-checkable.
+/// per-mon stat leaders (presence, +/-, healing, damage ratio). The leaders come
+/// from the stored PokemonStat rows. The standings take KO diff and Faints from each
+/// game's faint counts and KOs from the teams' credited Kills. Seeds known values
+/// straight into the DB so every ranking and tiebreak is hand-checkable.
 /// </summary>
 public class ScoreboardTests : IAsyncLifetime
 {
@@ -31,6 +32,23 @@ public class ScoreboardTests : IAsyncLifetime
         };
         db.Teams.Add(team);
         return team;
+    }
+
+    // A played game: the scoreboard reads KO diff and Faints off the faint lines, so
+    // that is all the stored log needs. Home is p1. The result only has to be
+    // something other than Pending (the endpoint skips those); the standings' W-L
+    // comes from the seeded Team record, not from these games.
+    private void AddGame(AppDbContext db, League league, Team home, Team away, int homeFaints, int awayFaints)
+    {
+        var log = string.Join("\n",
+            Enumerable.Repeat("|faint|p1a: Home", homeFaints)
+                .Concat(Enumerable.Repeat("|faint|p2a: Away", awayFaints)));
+        db.Matches.Add(new Match
+        {
+            LeagueId = league.Id, HomeTeam = home, AwayTeam = away, Week = 1,
+            Result = homeFaints <= awayFaints ? MatchResult.HomeWin : MatchResult.AwayWin,
+            ReplayLog = log, ReplayHomeSide = "p1",
+        });
     }
 
     // dealt/taken go into the "direct" buckets and heal into HpHealed (ally heal);
@@ -98,12 +116,19 @@ public class ScoreboardTests : IAsyncLifetime
             var t6 = AddTeam(db, league, "T6", wins: 0, losses: 0); // rd 0, no games at all
             await db.SaveChangesAsync();
 
-            AddMon(db, draft, league, t1, "t1a", k: 3, d: 1, activeTurns: 0, dealt: 0, taken: 0, heal: 0);
-            AddMon(db, draft, league, t2, "t2a", k: 6, d: 0, activeTurns: 0, dealt: 0, taken: 0, heal: 0); // koDiff 6, kos 6
-            AddMon(db, draft, league, t3, "t3a", k: 10, d: 4, activeTurns: 0, dealt: 0, taken: 0, heal: 0); // koDiff 6, kos 10
-            AddMon(db, draft, league, t4, "t4a", k: 8, d: 2, activeTurns: 0, dealt: 0, taken: 0, heal: 0); // koDiff 6, kos 8
-            AddMon(db, draft, league, t5, "t5a", k: 5, d: 2, activeTurns: 0, dealt: 0, taken: 0, heal: 0); // koDiff 3
-            // t6 has no picks/stats at all.
+            // T1 is everyone else's opponent, so their KO totals are exactly the mons T1
+            // lost to them, each credited as a kill: T2 6-0, T3 10-4, T4 8-2, T5 5-2.
+            // That leaves T1 on 8-29, last on KO differential and still 1st, because
+            // record differential outranks it.
+            AddGame(db, league, t1, t2, homeFaints: 6, awayFaints: 0);
+            AddGame(db, league, t1, t3, homeFaints: 6, awayFaints: 4);
+            AddGame(db, league, t1, t3, homeFaints: 4, awayFaints: 0);
+            AddGame(db, league, t1, t4, homeFaints: 6, awayFaints: 2);
+            AddGame(db, league, t1, t4, homeFaints: 2, awayFaints: 0);
+            AddGame(db, league, t1, t5, homeFaints: 5, awayFaints: 2);
+            // t6 has no games at all.
+            foreach (var (team, k, d) in new[] { (t1, 8, 29), (t2, 6, 0), (t3, 10, 4), (t4, 8, 2), (t5, 5, 2) })
+                AddMon(db, draft, league, team, team.CoachName, k, d, activeTurns: 0, dealt: 0, taken: 0, heal: 0);
             await db.SaveChangesAsync();
         }
 
@@ -118,10 +143,11 @@ public class ScoreboardTests : IAsyncLifetime
         Assert.Equal(4, standings[0].GetProperty("recordDiff").GetInt32());
         Assert.Equal(6, standings[1].GetProperty("koDiff").GetInt32());
         Assert.Equal(4, standings[1].GetProperty("wins").GetInt32());
+        Assert.Equal(-21, standings[0].GetProperty("koDiff").GetInt32()); // worst KO diff, still 1st
         Assert.Equal(10, standings[2].GetProperty("totalKos").GetInt32()); // T3 beats T4 on totalKos
-        Assert.Equal(4, standings[2].GetProperty("totalFaints").GetInt32()); // T3: KOs 10, deaths 4
+        Assert.Equal(4, standings[2].GetProperty("totalFaints").GetInt32()); // T3: KOs 10, faints 4
         Assert.Equal(8, standings[3].GetProperty("totalKos").GetInt32());
-        Assert.Equal(2, standings[3].GetProperty("totalFaints").GetInt32()); // T4: KOs 8, deaths 2
+        Assert.Equal(2, standings[3].GetProperty("totalFaints").GetInt32()); // T4: KOs 8, faints 2
         Assert.Equal(3, standings[4].GetProperty("koDiff").GetInt32());
 
         // A team with no games still appears, at the bottom, all zeros.
@@ -184,6 +210,39 @@ public class ScoreboardTests : IAsyncLifetime
         Assert.Equal(151.0 / 51.0, ratios[1].GetProperty("value").GetDouble(), 3); // m2: (150+1)/(50+1)
 
         Assert.Equal(9, leaders.GetProperty("plusMinus").EnumerateArray().First().GetProperty("value").GetDouble());
+    }
+
+    [Fact]
+    public async Task Standings_diff_counts_self_KOs_but_KOs_column_does_not()
+    {
+        int leagueId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var (id, draft, league) = await NewLeagueAsync(db);
+            leagueId = id;
+
+            var win = AddTeam(db, league, "Winner", wins: 1, losses: 0);
+            var lose = AddTeam(db, league, "Loser", wins: 0, losses: 1);
+            await db.SaveChangesAsync();
+
+            // The loser lost 3 mons but only 2 to an attack; the third blew itself up, so
+            // the scraper credits the winner with 2 Kills and books a self-KO instead. The
+            // differential still reads the 3-1 the game finished on, but KOs stays at 2.
+            AddGame(db, league, win, lose, homeFaints: 1, awayFaints: 3);
+            AddMon(db, draft, league, win, "w1", k: 2, d: 1, activeTurns: 0, dealt: 0, taken: 0, heal: 0);
+            AddMon(db, draft, league, lose, "l1", k: 1, d: 3, activeTurns: 0, dealt: 0, taken: 0, heal: 0);
+            await db.SaveChangesAsync();
+        }
+
+        var standings = (await ScoreboardAsync(leagueId)).GetProperty("standings").EnumerateArray().ToList();
+
+        Assert.Equal("Winner", standings[0].GetProperty("trainer").GetString());
+        Assert.Equal(2, standings[0].GetProperty("totalKos").GetInt32());   // the self-KO is not the winner's
+        Assert.Equal(1, standings[0].GetProperty("totalFaints").GetInt32());
+        Assert.Equal(3, standings[1].GetProperty("totalFaints").GetInt32()); // but it is still the loser's faint
+        Assert.Equal(2, standings[0].GetProperty("koDiff").GetInt32());     // +2, not the +1 kill credit gives
+        Assert.Equal(-2, standings[1].GetProperty("koDiff").GetInt32());    // and the two sides mirror
     }
 
     [Fact]

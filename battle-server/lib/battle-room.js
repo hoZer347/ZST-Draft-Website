@@ -1,6 +1,6 @@
 'use strict';
 
-const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
+const { BattleStream, getPlayerStreams } = require('./engine').requireEngine();
 
 /**
  * One battle in progress, wrapped around the sim's streams.
@@ -16,11 +16,11 @@ class BattleRoom {
   /**
    * @param {object}  opts
    * @param {string}  opts.id       stable room id, e.g. "match-42"
-   * @param {string}  opts.format   sim format id, e.g. "gen9customgame"
+   * @param {string}  opts.format   sim format id, e.g. "gen9championsdoublescustomgame"
    * @param {{name:string, team:string}} opts.p1  packed-team player spec
    * @param {{name:string, team:string}} opts.p2
    */
-  constructor({ id, format = 'gen9customgame', p1, p2 }) {
+  constructor({ id, format = 'gen9championsdoublescustomgame', p1, p2 }) {
     this.id = id;
     this.format = format;
     this.winner = undefined; // undefined while live; string name or '' (tie) once decided

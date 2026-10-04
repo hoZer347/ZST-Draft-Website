@@ -48,12 +48,49 @@ frontend reads the client id from `/api/auth/config`, so it isn't duplicated in
 
 1. Client makes a PKCE `code_verifier` + `code_challenge`, sends the user to Discord.
 2. Discord redirects back with a `code`.
-3. Client posts `{code, codeVerifier, redirectUri}` to `POST /api/auth/discord`.
+3. Client posts `{code, codeVerifier, redirectUri, invite}` to
+   `POST /api/auth/discord` (`invite` only when one was stashed from a link).
 4. Server checks `redirectUri` is in `Discord:RedirectUris`, exchanges the code with
-   the secret + verifier, upserts a `User` keyed by Discord snowflake, and issues a
-   30-minute JWT + 30-day refresh token.
-5. Client sends `Authorization: Bearer <jwt>`; on 401 it refreshes once. Refresh
-   tokens **rotate** (each use revokes the old one) and are stored as SHA-256 hashes.
+   the secret + verifier, requires a valid invite if this snowflake is new, upserts a
+   `User` keyed by it, and issues a 30-minute JWT + 30-day refresh token.
+5. Client sends `Authorization: Bearer <jwt>`; it renews a token it knows is spent
+   and refreshes once on a 401. Refresh tokens **rotate** (each use revokes the old
+   one) and are stored as SHA-256 hashes.
+
+A rotated token keeps working for `Jwt:RefreshGraceSeconds` (default 60). Tabs share
+one stored token and can refresh simultaneously; without the grace the loser got a
+401, which cleared the session and forced a fresh Discord login. The client also
+single-flights its own refreshes. Set the grace to 0 for strict single use.
+
+## Three ways in: visitor, player, admin
+
+**Visitor** is the default and needs nothing. Opening the site posts to
+`POST /api/auth/visitor` and gets back a short-lived access token that carries no
+`discord_id` claim and no refresh token. That is the whole security model: every
+write path resolves its caller through `ClaimsPrincipal.DiscordId()`, and
+`IsAdminAsync` / `OwnsTeamAsync` both return false when it is null, so a visitor
+reads everything and can change nothing. The token exists only because the read
+endpoints sit behind `RequireAuthorization`. It lasts `Jwt:VisitorTokenHours`
+(default 12) and the page just mints another when it lapses, there is nothing to
+refresh. `VisitorTests` pins both halves: what a visitor may read, and that every
+write is refused.
+
+**Player** takes an invite. An admin hits **Copy player invite** on the draft tab
+(`POST /api/admin/invite`) and hands out the resulting
+`https://<host>/?invite=<token>` link. Opening it stashes the token and shows the
+Discord sign-in card instead of dropping you into visitor mode; the exchange sends
+the token along, and the server requires a valid one before it will create a
+**new** `User`. An account that already exists is never asked for an invite, so
+signing out cannot lock a coach out of a league they are already in.
+
+The invite is a JWT signed with `Jwt:Key`, carrying a `purpose=invite` claim and
+an expiry (`Invite:ValidDays`, default 14) and nothing else. No invite table: the
+signature is the record. The purpose claim is what stops a live access token
+being spent as an invite, since both are signed with the same key. It is reusable
+until it expires, so treat a leaked link as a leaked invite. Set
+`Invite:RequireForNewUsers` to `false` to reopen open signup.
+
+**Admin** is unchanged, see below.
 
 ## Identity and admin
 

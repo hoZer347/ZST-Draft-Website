@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -216,7 +216,9 @@ public static class BuildPageRenderer
     // summary-screen hexagon (physical stats on the right, special on the left).
     private static readonly int[] HexOrder = { 0, 1, 2, 5, 4, 3 };
     private static readonly string[] HexLabels = { "HP", "Atk", "Def", "Spe", "SpD", "SpA" };
-    private const int MaxEv = 252;
+    // The league's Champions format spends Stat Points, not EVs: 32 per stat, not
+    // 252, so a full axis is 32. Change with the format's cap.
+    private const int MaxEv = 32;
 
     private static (double X, double Y) HexPoint(double frac, int corner)
     {

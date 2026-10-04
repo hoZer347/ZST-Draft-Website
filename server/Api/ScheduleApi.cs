@@ -37,8 +37,8 @@ public static class ScheduleApi
         // Renders a headless-sim battle's stored log as an animated Showdown replay.
         // Anonymous on purpose: the schedule's "Watch replay" link is a plain <a>
         // that opens in a new tab with no auth header, so it can't sit behind
-        // RequireAuthorization. Only sim battles carry a ReplayLog; real matches
-        // link straight to Showdown.
+        // RequireAuthorization. Serves any match whose log we captured or fetched,
+        // coach-reported games included.
         app.MapGet("/api/matches/{matchId:int}/replay", async (int matchId, AppDbContext db, CancellationToken ct) =>
         {
             var log = await db.Matches.Where(m => m.Id == matchId).Select(m => m.ReplayLog).FirstOrDefaultAsync(ct);
@@ -305,8 +305,16 @@ public static class ScheduleApi
 
             // ── matches (Pending first; results/standings/stats applied after ids exist) ──
             var created = new List<(Match Match, SnapMatch Snap)>();
-            foreach (var sm in snap.Matches)
+            foreach (var s in snap.Matches)
             {
+                // A scrims log never counts as a league result, so its fixture comes back unplayed.
+                var sm = s.ReplayLog is not null && ReplayScorer.IsScrims(s.ReplayLog)
+                    ? s with
+                    {
+                        Result = nameof(MatchResult.Pending), HomeScore = null, AwayScore = null, ReplayUrl = null,
+                        ReplayLog = null, ReplayHomeSide = null, HomeTeamExport = null, AwayTeamExport = null,
+                    }
+                    : s;
                 if (!teamMap.TryGetValue(sm.HomeTeamId, out var home) || !teamMap.TryGetValue(sm.AwayTeamId, out var away)) continue;
                 var match = new Match
                 {
@@ -325,8 +333,9 @@ public static class ScheduleApi
             int recorded = 0;
             foreach (var (match, sm) in created)
             {
-                // A stored local-renderer link must point at the NEW match id; a real
-                // Showdown replay URL is kept as-is.
+                // Any match we hold a log for is re-pointed at the local renderer under
+                // the NEW match id, in preference to whatever URL the snapshot carried:
+                // the log is ours and always renders, a public Showdown replay expires.
                 match.ReplayUrl = !string.IsNullOrEmpty(sm.ReplayLog) ? $"/api/matches/{match.Id}/replay" : sm.ReplayUrl;
                 if (!Enum.TryParse<MatchResult>(sm.Result, out var result) || result == MatchResult.Pending) continue;
                 match.Result = result;
@@ -354,9 +363,10 @@ public static class ScheduleApi
             return Results.Ok(new { teams = teamMap.Count, picks = matchedPicks, missedPicks, matches = created.Count, recorded });
         });
 
-        // The scoreboard: team standings plus a handful of per-mon stat leaders,
-        // all derived from the stored PokemonStat rows and the teams' match
-        // records. Same numbers the Stats tab shows, rolled up into rankings.
+        // The scoreboard: team standings plus a handful of per-mon stat leaders. The
+        // leaders are the stored PokemonStat rows rolled up into rankings, the same
+        // numbers the Stats tab shows; the standings pair each team's match record
+        // with the KO columns counted off its games' faints.
         api.MapGet("/leagues/{leagueId:int}/scoreboard", async (
             int leagueId, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
         {
@@ -383,8 +393,8 @@ public static class ScheduleApi
                     .ToListAsync(ct))
                 .ToDictionary(u => u.DiscordId, u => u.AvatarHash!);
 
-            // Every played mon in the league, with the raw fields the leaderboards
-            // and the per-team KO rollups are built from. Mirrors /api/stats.
+            // Every played mon in the league, with the raw fields the leaderboards and
+            // each team's MVP are built from. Mirrors /api/stats.
             var mons = await db.PokemonStats
                 .Where(s => s.Pick.Team.LeagueId == leagueId && s.GamesPlayed > 0)
                 .Select(s => new
@@ -411,10 +421,31 @@ public static class ScheduleApi
                 })
                 .ToListAsync(ct);
 
-            // Per-team KO rollups for the standings tiebreakers.
-            var koByTeam = mons
-                .GroupBy(m => m.teamId)
-                .ToDictionary(g => g.Key, g => (kos: g.Sum(x => x.k), deaths: g.Sum(x => x.d)));
+            // Per-team faint rollups for the KO differential, counted per GAME from each
+            // side's faints so an opponent's self-KO (Explosion, Final Gambit) still moves
+            // the differential. The KOs column stays the team's credited Kills, which the
+            // scraper withholds for a self-KO.
+            var killsByTeam = mons.GroupBy(m => m.teamId).ToDictionary(g => g.Key, g => g.Sum(x => x.k));
+            var played = await db.Matches
+                .Where(m => m.LeagueId == leagueId && m.Result != MatchResult.Pending
+                            && m.ReplayLog != null && m.ReplayHomeSide != null)
+                .Select(m => new { m.HomeTeamId, m.AwayTeamId, m.ReplayHomeSide, m.ReplayLog })
+                .ToListAsync(ct);
+
+            var koByTeam = new Dictionary<int, (int oppFaints, int faints)>();
+            void AddGame(int teamId, int oppFaints, int faints)
+            {
+                var t = koByTeam.GetValueOrDefault(teamId);
+                koByTeam[teamId] = (t.oppFaints + oppFaints, t.faints + faints);
+            }
+            foreach (var m in played)
+            {
+                var faints = ReplayScorer.FaintsBySide(m.ReplayLog!);
+                var homeFaints = faints.GetValueOrDefault(m.ReplayHomeSide!);
+                var awayFaints = faints.GetValueOrDefault(m.ReplayHomeSide == "p1" ? "p2" : "p1");
+                AddGame(m.HomeTeamId, awayFaints, homeFaints);
+                AddGame(m.AwayTeamId, homeFaints, awayFaints);
+            }
 
             // Each team's MVP: the mon with the best KO differential (k - d), same
             // measure the team-page MVP badge uses. Only teams that have played
@@ -445,9 +476,9 @@ public static class ScheduleApi
                         losses = t.Losses,
                         draws = t.Draws,
                         recordDiff = t.Wins - t.Losses,
-                        koDiff = ko.kos - ko.deaths,
-                        totalKos = ko.kos,
-                        totalFaints = ko.deaths,
+                        koDiff = ko.oppFaints - ko.faints,
+                        totalKos = killsByTeam.GetValueOrDefault(t.Id),
+                        totalFaints = ko.faints,
                         mvp = mvpByTeam.TryGetValue(t.Id, out var mv)
                             ? new { mv.pokemon, mv.sprite, mv.dex, mv.tier, mv.tera, kos = mv.k, faints = mv.d }
                             : null,
@@ -638,7 +669,7 @@ public static class ScheduleApi
             if (string.IsNullOrWhiteSpace(req.Log)) return Results.BadRequest();
 
             var report = await scorer.ReportAsync(req.Log, ct);
-            // Not a league game (teambuilder test, already recorded, unknown teams),
+            // Not a league game (scrims, teambuilder test, unknown teams),
             // acknowledge and move on rather than erroring.
             if (!report.Ok) return Results.Ok(new { recorded = false, reason = report.Reason });
 

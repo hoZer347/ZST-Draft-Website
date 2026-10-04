@@ -18,8 +18,9 @@
 // TeraPlayerAI + buildTeamWithTera), matching how the league plays C-tier tera.
 // Forced switches after a faint still happen.
 
-const { BattleStream, getPlayerStreams, Teams } = require('pokemon-showdown');
-const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
+const { requireEngine } = require('../lib/engine');
+const { BattleStream, getPlayerStreams, Teams } = requireEngine();
+const { RandomPlayerAI } = requireEngine('dist/sim/tools/random-player-ai');
 const { buildTeamWithTera, validateTeam } = require('../lib/random-team');
 
 // A RandomPlayerAI that takes the league's two gimmicks: it MEGA-EVOLVES a mon
@@ -92,12 +93,13 @@ class TeraPlayerAI extends RandomPlayerAI {
   }
 }
 
-// The ZST Season 4 format is National Dex DOUBLES. The headless sim uses a
-// doubles custom game (gen9's dex → megas usable; no tier banlist, so the draft
-// pool decides legality; no learnset validation for the random movesets). Endless
-// Battle Clause so a stall can't hang the run, it bans no moves, so it never
-// rejects a random team.
-const FORMAT = 'gen9doublescustomgame@@@Endless Battle Clause';
+// The league's own format, minus the draft-roster check a headless run has no coach
+// for (see "[Gen 9 Champions] NatDex ZST Sim" in showdown-config/custom-formats.js).
+// It shares the live format's ruleset, banlist, National Dex learnset hooks and
+// restored Terastallization objects, so a simulated season plays by the same rules and
+// the same Champions mechanics real games do. Team validation is a separate gate
+// below; `>start` itself validates nothing, so a random team is never rejected here.
+const FORMAT = 'gen9championsnatdexzstsim';
 const BRING = 6;        // straight doubles: bring 6, two active at a time (NOT VGC's bring-6-pick-4)
 const MAX_TURNS = 1000; // backstop in case a battle somehow never resolves
 
@@ -117,15 +119,15 @@ async function runBattle(match, megaImmediate) {
   const home = buildTeamWithTera(match.homeTeam || [], BRING);
   const away = buildTeamWithTera(match.awayTeam || [], BRING);
 
-  // Gate: every team we're about to battle must be a legal Nat Dex Doubles team (the
+  // Gate: every team we're about to battle must be legal by the league's own rules (the
   // build already legalises each set; this is the final "Validate button" check before
   // the game). A residual problem is a build-time bug we want surfaced, not silently
-  // battled, so warn to stderr (the .NET runner logs it) but still play, since the
-  // battle itself runs under a custom game that won't reject the team.
+  // battled, so warn to stderr (the .NET runner logs it) but still play, since `>start`
+  // does no validation of its own and won't reject the team.
   for (const [who, side] of [['home', home], ['away', away]]) {
     const problems = validateTeam(side.team);
     if (problems.length) {
-      console.error(`[simulate-season] ${who} team failed Nat Dex Doubles validation: ${problems.join(' | ')}`);
+      console.error(`[simulate-season] ${who} team failed ZST Sim validation: ${problems.join(' | ')}`);
     }
   }
 

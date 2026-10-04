@@ -22,7 +22,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function () {
   'use strict';
 
-  var FORMAT = 'gen9zstseason4';
+  var FORMAT = 'gen9championsnatdexzstseason4';
   var MATCHUP_FOLDER = 'ZST Season 4';
   var DEMO_FOLDER = 'Demo teams';
 

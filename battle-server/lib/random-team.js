@@ -3,19 +3,22 @@
 // Builds fully-random-but-LEGAL battle teams from a drafted roster, for the headless
 // test-season simulator. Every choice that can be made is made randomly:
 //   • a random nature (any of the 25),
-//   • a random legal EV spread (4-point blocks, each stat ≤ 252, total ≤ 510),
-//   • a random legal IV spread (each stat 0–31),
+//   • a random legal Champions spread (each stat ≤ 32 Stat Points, total ≤ 66),
+//   • a random legal IV spread (each stat 0–31; Champions ignores IVs, but the
+//     National Dex legality gate still reads them for Gen 1-2 VC moves),
 //   • a random ability from the species' legal set,
 //   • a random 4 moves from the species' movepool (own learnset + prevo chain),
 //   • a random held item, EXCEPT megas (which carry their form, not an item).
-// Then every set is run through Showdown's own TeamValidator against National Dex
-// Doubles, the exact engine behind the Teambuilder's "Validate" button, and anything
+// Then every set is run through Showdown's own TeamValidator against the league's own
+// format, the exact engine behind the Teambuilder's "Validate" button, and anything
 // it rejects (an unlearnable move, an incompatible move pair, a Gen 1-2 VC move that
 // needs perfect IVs) is repaired until it passes (see the "Legality gate" below). So a
-// synthetic team is a legal Nat Dex Doubles team, restricted just like a coach's real
-// one, not merely a random one. The result is a packed team string, what the sim accepts.
+// synthetic team is legal exactly where a coach's is, not merely a random one. The
+// result is a packed team string, what the sim accepts.
 
-const { Teams, Dex, toID, TeamValidator } = require('pokemon-showdown');
+// The same engine the battle server runs (lib/engine.js), because RESTRICTION_FORMAT
+// below is a champions-mod format that the npm package's dex doesn't have.
+const { Teams, Dex, toID, TeamValidator } = require('./engine').requireEngine();
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
@@ -34,19 +37,22 @@ const STATS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
 // Every nature the game has (25), by name; one is picked at random per set.
 const NATURES = Dex.natures.all().map((n) => n.name);
 
-// A random legal EV spread. EVs are handed out in 4-point blocks (the granularity
-// that actually moves a stat) across the stats in a random order, each capped at
-// 252 and the whole spread at 510. Most sets spend near the full 510, but which
-// stats get the investment, and how much, varies every game.
+// A random legal Champions spread. Champions replaced EVs with Stat Points: 66 per
+// mon, at most 32 in any one stat, and every point moves the stat (the mod's formula
+// is base + points + 75 HP / +20 other), so there are no 4-point blocks to respect.
+// Handed out across the stats in a random order, so which stats get the investment,
+// and how much, varies every game. Still written to set.evs, which is the field the
+// engine reads under either system.
+const MAX_POINTS = 66;
+const MAX_PER_STAT = 32;
 function randomEvs() {
   const evs = { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 };
-  let remaining = 510;
+  let remaining = MAX_POINTS;
   for (const s of sampleN(STATS, STATS.length)) {
-    if (remaining < 4) break;
-    const maxBlocks = Math.floor(Math.min(252, remaining) / 4);
-    const blocks = Math.floor(Math.random() * (maxBlocks + 1));
-    evs[s] = blocks * 4;
-    remaining -= blocks * 4;
+    if (remaining <= 0) break;
+    const cap = Math.min(MAX_PER_STAT, remaining);
+    evs[s] = Math.floor(Math.random() * (cap + 1));
+    remaining -= evs[s];
   }
   return evs;
 }
@@ -58,10 +64,12 @@ function randomIvs() {
   return ivs;
 }
 
-// The league's competitive format. The sim actually BATTLES under custom-game
-// (which bans nothing), so we apply this format's option-level restrictions here,
-// at team-build time, the same restrictions the Showdown team builder enforces.
-const RESTRICTION_FORMAT = 'gen9zstseason4';
+// The league's competitive format, read for its BANS only: we strip those options at
+// team-build time so a generated set can never carry something the format wouldn't let
+// a coach submit. (The live format itself can't be used as the validator here, since
+// its validateTeam demands a drafted roster for a logged-in coach; VALIDATION_FORMAT
+// below is its roster-free twin.)
+const RESTRICTION_FORMAT = 'gen9championsnatdexzstseason4';
 
 // Move / item / ability ids this format forbids, read straight from Showdown's own
 // rule table (evasion moves like Double Team & Minimize, Swagger, evasion items &
@@ -96,6 +104,14 @@ const USABLE_ITEMS = Dex.items.all()
     !i.megaStone && !i.onPrimal && !i.zMove && !i.forcedForme && !i.isPokeball && !i.itemUser)
   .map((i) => i.name);
 
+// Learnsets come from the gen-9 NATIONAL DEX dex, not the champions one. Champions
+// trimmed both the move list (~194 gen-9 moves are Past there) and per-species
+// learnsets (Archaludon lost Body Press, Garchomp lost Aqua Tail), but the league
+// format's NatDex hooks hand legality back to the National Dex validator, so those
+// moves ARE legal live. Drawing from the champions learnsets would quietly build sim
+// teams out of a smaller movepool than a coach actually has.
+const NatDex = Dex.mod('gen9');
+
 // A forme's learnset: its OWN if it has one, otherwise the base forme's. A regional
 // / alternate forme (Arcanine-Hisui, Tauros-Paldea-*, Zapdos-Galar, Ursaluna-Bloodmoon)
 // carries a complete own learnset and must NOT inherit the Kanto base's moves, doing so
@@ -107,7 +123,7 @@ function learnsetFor(species) {
   const seen = new Set();
   while (s && s.exists && !seen.has(s.id)) {
     seen.add(s.id);
-    const ls = Dex.data.Learnsets[s.id];
+    const ls = NatDex.data.Learnsets[s.id] || Dex.data.Learnsets[s.id];
     if (ls && ls.learnset) return ls.learnset;
     if (s.baseSpecies && s.baseSpecies !== s.name) s = Dex.species.get(s.baseSpecies);
     else return null;
@@ -130,7 +146,9 @@ function movePool(species) {
     cur = cur.prevo ? Dex.species.get(cur.prevo) : null;
   }
   return [...moves].filter((m) => {
-    const mv = Dex.moves.get(m);
+    // Judge the move by the National Dex too: "Past" in the champions dex only means
+    // Champions cut it, and NatDex Mod puts every Past move back.
+    const mv = NatDex.moves.get(m);
     return mv.exists && !mv.isNonstandard && mv.id !== 'struggle'
       && !RESTRICTIONS.moves.has(mv.id); // drop evasion / OHKO / other format-banned moves
   });
@@ -182,8 +200,8 @@ function randomSet(mon) {
     moves,
     nature: pick(NATURES),   // a random one of the 25
     gender: '',
-    level: 100,
-    evs: randomEvs(),        // random legal spread (≤252/stat, ≤510 total)
+    level: 50,               // Champions battles are level 50
+    evs: randomEvs(),        // random legal spread (≤32/stat, ≤66 total Stat Points)
     ivs: randomIvs(),        // random legal spread (0–31/stat)
   };
   if (teraType) set.teraType = teraType; // C-tier: teras to its drafted type
@@ -191,18 +209,22 @@ function randomSet(mon) {
 }
 
 // ── Legality gate ────────────────────────────────────────────────────────────
-// The sim battles under a custom game (no learnset checks), but the league plays
-// National Dex Doubles, so a synthetic team should be a LEGAL Nat Dex Doubles team,
-// not merely a random one. We validate every generated set with Showdown's own
-// TeamValidator, the exact engine behind the Teambuilder's "Validate" button, and
-// repair anything it rejects before the battle runs.
+// The sim battles under the league's own simulator format, so a synthetic team should
+// be legal by the same rules a coach's team is judged by, not merely random. We
+// validate every generated set with Showdown's own TeamValidator, the exact engine
+// behind the Teambuilder's "Validate" button, and repair anything it rejects before
+// the battle runs.
 //
 // The gate governs moves and builds/IVs only, NOT species membership: the DRAFT
-// decides which species are legal (the pool is hand-picked), so a drafted mon that
-// Standard NatDex would ban for being unreleased (Floette-Eternal) is unbanned per
-// roster below. The league's evasion/OHKO/gem/etc. option bans are already stripped
-// at build time (RESTRICTIONS), so they need no repeating here.
-const VALIDATION_FORMAT = 'gen9doublescustomgame@@@Standard NatDex';
+// decides which species are legal (the pool is hand-picked), so a drafted mon the
+// format would ban for being unreleased (Floette-Eternal) is unbanned per roster
+// below. The league's evasion/OHKO/gem/etc. option bans are already stripped at build
+// time (RESTRICTIONS), so they need no repeating here.
+//
+// ZST Sim, not ZST Season 4: the same mod, rules and National Dex learnset hooks (so a
+// move Champions cut but National Dex keeps, Archaludon's Body Press, still passes),
+// minus the draft-roster check a headless run has no coach for.
+const VALIDATION_FORMAT = 'gen9championsnatdexzstsim';
 
 // One TeamValidator per distinct unban set (usually the empty one). Built lazily and
 // cached, since a validator's rule table is a bit expensive to construct.
@@ -215,9 +237,21 @@ function validatorForSets(sets) {
     const it = Dex.items.get(set.item);
     if (it && it.exists && it.isNonstandard) { unbans.add('+pokemontag:custom'); unbans.add('+' + it.id); }
   }
-  const key = [...unbans].sort().join(',');
+  // Min Team Size = 6 is a rule about what a coach must BRING to a league game, not
+  // about whether a set is legal. The sim validates rosters of any size (the tests
+  // battle two mons a side), so relax it to the team actually in hand rather than
+  // warning about a shortfall the caller never promised to avoid. `!!` because Standard
+  // AG already set the value, and a plain restatement would not override it.
+  const rules = [...unbans].sort();
+  if (sets.length && sets.length < 6) rules.push(`!! Min Team Size = ${sets.length}`);
+  const key = rules.join(',');
   if (!_validatorCache.has(key)) {
-    _validatorCache.set(key, new TeamValidator(key ? `${VALIDATION_FORMAT},${key}` : VALIDATION_FORMAT));
+    // Custom rules hang off the format id after `@@@`, and are comma-separated after
+    // that. VALIDATION_FORMAT is a plain registered id (no rules of its own), so the
+    // first unban needs the `@@@`; appending with a comma would make the whole string
+    // an unknown format id, which the sim reports as "should be a 'Format'".
+    const sep = VALIDATION_FORMAT.includes('@@@') ? ',' : '@@@';
+    _validatorCache.set(key, new TeamValidator(key ? `${VALIDATION_FORMAT}${sep}${key}` : VALIDATION_FORMAT));
   }
   return _validatorCache.get(key);
 }
@@ -259,7 +293,7 @@ function legalizeSet(set, validator, rounds = 14) {
   return (validator.validateSet(set, {}) || []).length === 0;
 }
 
-// Validate a whole packed team (or set array) against the Nat Dex Doubles gate. Returns
+// Validate a whole packed team (or set array) against the ZST Sim gate. Returns
 // an array of problem strings, empty means legal. Used by the sim as the final check
 // before a battle (see simulate-season.js).
 function validateTeam(team) {
@@ -287,7 +321,7 @@ function chooseSets(mons, count) {
   const chosen = sampleN(valid, Math.min(count, valid.length));
   if (!chosen.length) throw new Error('roster has no Showdown-known species');
   const sets = chosen.map(randomSet);
-  // Legalise each set against Nat Dex Doubles rules (the Validate button's engine)
+  // Legalise each set against the league's own rules (the Validate button's engine)
   // before it ever reaches a battle, so the sim plays legal teams, not just random
   // ones. Most sets already pass; legalizeSet repairs the rest (see the gate above).
   // validateSet defaults a missing teraType to the species' primary type, which would
@@ -299,6 +333,7 @@ function chooseSets(mons, count) {
     legalizeSet(set, validator);
     if (tera) set.teraType = tera; else delete set.teraType;
   }
+  dedupeItems(sets);
   // Lead the mega. Team preview brings the packed team "default" (the first slots
   // are the leads), and the AI only mega-evolves a mon that is ACTUALLY on the
   // field; a mega stuck in the back that the random AI never switches in just sits
@@ -307,6 +342,30 @@ function chooseSets(mons, count) {
   // in and transform. A stable sort keeps everything else in its sampled order.
   sets.sort((a, b) => (isMegaStone(b.item) ? 1 : 0) - (isMegaStone(a.item) ? 1 : 0));
   return sets;
+}
+
+// Item Clause = 1: no two mons on a team may hold the same item. Random picks collide
+// now and then, so re-roll the later duplicate from the items nobody on the team is
+// already using. A FORCED item (a mega stone, an origin orb, anything the forme needs)
+// is never touched: two mons can't require the same one, so a clash always involves at
+// least one freely-picked item. Falls back to no item if the pool somehow runs dry.
+function dedupeItems(sets) {
+  const taken = new Set(sets.map((s) => toID(s.item)).filter(Boolean));
+  const forced = (set) => {
+    const sp = Dex.species.get(set.species);
+    if (sp.requiredItem || (sp.requiredItems && sp.requiredItems.length)) return true;
+    return isMegaStone(set.item);
+  };
+  const seen = new Set();
+  for (const set of sets) {
+    const id = toID(set.item);
+    if (!id) continue;
+    if (!seen.has(id)) { seen.add(id); continue; }
+    if (forced(set)) continue; // can't move it; the validator will say so
+    const free = USABLE_ITEMS.filter((n) => !taken.has(toID(n)));
+    set.item = free.length ? pick(free) : '';
+    if (set.item) { taken.add(toID(set.item)); seen.add(toID(set.item)); }
+  }
 }
 
 // The packed team string.

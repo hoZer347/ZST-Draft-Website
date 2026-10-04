@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Dex } = require('pokemon-showdown');
+const { Dex } = require('../lib/engine').requireEngine();
 const { rosterSpeciesIds, filterPokemonResults, tbID } = require('../lib/roster-teambuilder');
 const CUSTOM = require('../showdown-config/custom-megas.js');
 
@@ -133,4 +133,36 @@ test('a search matching no drafted mon yields nothing to pick', () => {
 test('no roster (null allowed) leaves results untouched', () => {
   const rows = [['pokemon', 'gardevoir'], ['ability', 'guts']];
   assert.strictEqual(filterPokemonResults(rows, null), rows);
+});
+
+// ── Move-triggered formes (Keldeo-Resolute) ─────────────────────────────────
+
+test('drafting Keldeo also unlocks Keldeo-Resolute, and the reverse', () => {
+  // Same stats/types/abilities, and Keldeo turns into it mid-battle via Secret Sword,
+  // so the two are one draft pick (the validator collapses them the same way).
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'keldeo' }])).sort(), ['keldeo', 'keldeoresolute']);
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'keldeo-resolute' }])).sort(), ['keldeo', 'keldeoresolute']);
+});
+
+test('a requiredMove forme that is battle-only does NOT unlock from its base', () => {
+  // Meloetta-Pirouette and Rayquaza-Mega need a move too, but they are battle-only
+  // formes: Pirouette is not a pick at all and the mega is drafted as itself.
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'meloetta' }])), ['meloetta']);
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'rayquaza' }])), ['rayquaza']);
+});
+
+// ── Type-item formes (the Silvally memories, Genesect drives, Arceus plates) ─
+
+test('drafting Silvally unlocks all 17 memory formes, and the reverse', () => {
+  const ids = idsFor([{ slug: 'silvally' }]);
+  assert.ok(ids.silvally && ids.silvallywater && ids.silvallyfairy, Object.keys(ids).join(','));
+  assert.strictEqual(Object.keys(ids).length, 18);
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'silvally-water' }])).sort(), Object.keys(ids).sort());
+});
+
+test('an item forme that is its own mon does not unlock its siblings', () => {
+  // Ogerpon's masks change ability and Giratina-Origin restats, so each is a
+  // separate draft pick rather than one family.
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'ogerpon' }])), ['ogerpon']);
+  assert.deepStrictEqual(Object.keys(idsFor([{ slug: 'giratina' }])), ['giratina']);
 });

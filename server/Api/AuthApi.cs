@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DraftLeague.Web.Api;
 
-public record ExchangeRequest(string Code, string CodeVerifier, string RedirectUri, string? DeviceLabel);
+public record ExchangeRequest(string Code, string CodeVerifier, string RedirectUri, string? DeviceLabel, string? Invite);
 public record RefreshRequest(string RefreshToken);
 public record AuthResponse(string AccessToken, string RefreshToken, DateTimeOffset ExpiresAt, MeResponse User);
 public record MeResponse(string DiscordId, string Username, string? AvatarUrl, bool IsAdmin, IEnumerable<TeamSummary> Teams);
@@ -50,6 +50,30 @@ public static class AuthApi
             });
         });
 
+        // Browse without signing in. The default way onto the site: the read
+        // endpoints all sit behind RequireAuthorization, so a reader still needs
+        // a token, and this is one that names nobody. See TokenService.IssueVisitor
+        // for why an identity-less token cannot write anything.
+        auth.MapPost("/visitor", (TokenService tokens) =>
+        {
+            var pair = tokens.IssueVisitor();
+            return Results.Ok(new
+            {
+                accessToken = pair.AccessToken,
+                accessExpiresAt = pair.AccessExpiresAt,
+                visitor = true,
+                user = new
+                {
+                    discordId = (string?)null,
+                    username = "Visitor",
+                    avatarUrl = (string?)null,
+                    isAdmin = false,
+                    visitor = true,
+                    teams = Array.Empty<TeamSummary>(),
+                },
+            });
+        });
+
         auth.MapPost("/discord", async (
             ExchangeRequest req, IDiscordAuth discord, TokenService tokens,
             AppDbContext db, IDraftNotifier notifier, IConfiguration config, CancellationToken ct) =>
@@ -69,6 +93,19 @@ public static class AuthApi
 
             var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == identity.Id, ct);
             var isNew = user is null;
+
+            // Joining the league is by invite: a Discord login on its own now
+            // lands you in the site as a visitor, and only an admin's invite link
+            // turns that into a player account. Existing accounts are never asked
+            // for one, so signing out and back in can't lock a coach out.
+            var requireInvite = config.GetValue("Invite:RequireForNewUsers", true);
+            if (isNew && requireInvite && !tokens.IsValidInvite(req.Invite))
+            {
+                return Results.Json(
+                    new { error = "This league is invite-only. Ask an admin for a player link, or keep browsing as a visitor." },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
             if (user is null)
             {
                 user = new User

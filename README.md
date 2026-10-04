@@ -14,8 +14,9 @@ server/         ASP.NET Core 9 (net9.0). REST API + SignalR hub + the draft
 web/            Static frontend (plain HTML/CSS/JS, no build step): the draft,
                 schedule, scoreboard, stats, and teambuilder tabs. Loaded by the
                 .NET server above.
-battle-server/  Node service wrapping the real pokemon-showdown package: a
-                custom-format battle server (:8787) and a static server (:8791)
+battle-server/  Node service wrapping a real Pokemon Showdown build (the
+                Champions-capable checkout under client/caches, see lib/engine.js):
+                a custom-format battle server (:8787) and a static server (:8791)
                 that hosts the Showdown client / Teambuilder. Auto-reports every
                 finished league game back to the .NET server.
 ```
@@ -36,6 +37,7 @@ tunnel maps them to public subdomains:
 | `dev.loomhozer.ca` / `zst.loomhozer.ca` | `:5211` | web app + REST API (same-origin, no CORS) |
 | `showdown.loomhozer.ca` | `:8787` | the Showdown battle server |
 | `play.loomhozer.ca` | `:8791` | the self-hosted Showdown client + Teambuilder |
+| `loomhozer.ca` / `www.loomhozer.ca` | `:8082` | the personal site (a separate repo, `Desktop\Website`) |
 
 A watchdog, [server/keep-server-up.ps1](server/keep-server-up.ps1), relaunches
 any of these (plus `cloudflared`) within a few seconds if it goes down, so the
@@ -64,6 +66,16 @@ pool, plus an empty draft. Teams and the snake order are built from whoever is
 signed in when an admin presses Start (there is no fixed coach roster). Open
 `http://localhost:5211`; `web/config.js` points the frontend at `localhost:5211`
 and `localhost:8787` automatically when served from localhost.
+
+On the dev machine the whole stack (server, Cloudflare tunnel, both Showdown
+servers) is kept alive by `server/keep-server-up.ps1`. `server/start-server.ps1`
+boots it: it clears a stale pause flag, starts the watchdog if none is running,
+then waits for `:5211` and reports what came up. It runs at boot, before anyone signs
+in (the `DraftLeagueBoot` task from `server/install-boot-task.ps1`, so a Windows
+Update restart doesn't leave the sites down), at logon (hidden, from
+`DraftLeagueServerWatchdog.vbs` in the user's Startup folder) and on demand from
+the `Start Draft League Server.cmd` desktop shortcut. Running it while the stack
+is already up is a no-op, it never starts a second watchdog.
 
 For live battles and the Teambuilder, also start the battle server:
 
@@ -126,46 +138,91 @@ Load-bearing rules, all covered by the test suite:
 Once a draft finishes the server lays down a round-robin schedule
 ([ScheduleApi](server/Api/ScheduleApi.cs)): a full single round-robin, byes for
 odd rosters, one game per pair. Coaches build their teams in the Teambuilder tab
-(the official Showdown client pointed at our custom `gen9zstseason4` format, EVs
-and IVs and all) and battle on the private server. That format's validator
+(the official Showdown client pointed at our custom `gen9championsnatdexzstseason4`
+format) and battle on the private server. That format's validator
 (`battle-server/showdown-config/custom-formats.js`) enforces the draft per coach:
 keyed by the logged-in Showdown name, it fetches the coach's roster from
 `/api/showdown/roster/{user}` at validation time and requires every mon to be
 drafted, form-changing items (mega stones, the origin orbs, Rusted Sword/Shield) to
 unlock only a battle forme the coach drafted, and C-tier picks to Terastallize to
-their drafted Tera type.
+their drafted Tera type. That Tera type is decided at draft time, so nobody picks it:
+the validator STAMPS it onto every C-tier set (`applyDraftedTera`) and the teambuilder
+does the same as you build (`battle-server/lib/roster-tera.js`), because a set that
+arrives without one would otherwise fall back to the species' primary type and be
+rejected (Aerodactyl drafted Tera Flying validating as Tera Rock).
+
+A forme a mon changes into mid-battle through a signature
+move (Keldeo-Resolute via Secret Sword) counts as the same pick as its base, so
+drafting one lets a coach bring either; so does a forme you get by choosing the
+base's signature ability in the teambuilder (Greninja + Battle Bond is
+Greninja-Bond, Rockruff + Own Tempo is Rockruff-Dusk). Battle Bond is the Gen 9
+version: +1 Attack, Sp. Atk and Speed the first time the holder KOes something, no
+Ash-Greninja form change. A whole type-item family is one pick too (Silvally + any
+memory, Genesect + any drive, Arceus + any plate): stats and abilities are the
+base's, so a drafted Silvally may be brought as any of its 17 formes. Item formes
+that restat or change ability stay separate picks (Giratina-Origin, Necrozma-Ultra,
+the Ogerpon masks).
 
 When a battle ends, the Showdown server POSTs its log to
 `/api/showdown/report` (shared-secret guarded). The server matches it to the
 pending fixture, scores it, updates standings, and folds per-mon battle stats
 (KOs, faints, damage dealt/taken, healing, presence, crits) into the Stats tab.
+Scrims games are never recorded, by any reporting path.
 [ReplayStatsScraper](server/Services/ReplayStatsScraper.cs) parses the log and
-attributes every effect to a source: direct hits, entry hazards, status chip,
-weather, Perish Song, bind moves, Destiny Bond, recoil and other self-damage,
-and absorb-ability healing.
+attributes every effect to a source: direct hits, delayed attacks (Future Sight,
+Doom Desire), entry hazards, status chip, weather, Perish Song, bind moves,
+Destiny Bond, recoil and other self-damage, and absorb-ability healing.
 
-**Custom megas.** The league runs "Champions"-style custom mega evolutions that
-vanilla Showdown doesn't ship. They are merged additively into the engine's dex
-as plain gen-9 mega data (see `battle-server/showdown-config/custom-megas.js` and
-`installCustomMegas` in `battle-server/scripts/showdown.js`), so the stock engine
-evolves them with no ruleset fork. Icons for megas without a Showdown sprite fall
-back through Serebii's Z-A artwork and PokeAPI (see [web/sprite.js](web/sprite.js)).
+A finished game stays spoiler-free on the Schedule tab: it renders collapsed, showing
+only the week, the two coaches and the replay link, so you can watch the battle before
+the score or the scoresheet reaches you. "Show result" opens one (including your own,
+which also collapses the moment it finishes), and which games you've opened is kept per
+league and viewer in localStorage, so a re-login brings the same cards back open.
+
+**The Champions mod.** Every league format runs on Pokemon Champions (Regulation
+M-B), so megas, including the ones vanilla Showdown never shipped, are native to
+the dex, and the league plays that game's mechanics: Stat Points instead of EVs
+(66 per mon, 32 per stat), no IVs, level 50, PP capped at 20. Champions turns
+Terastallization off; the league restores it (`actions.canTerastallize` in the
+format) because C-tier picks are drafted with a Tera type. Champions also CUT
+content: ~194 gen-9 moves are "Past" there and learnsets were trimmed (Archaludon
+lost Body Press, Garchomp lost Aqua Tail), and whole species were dropped. `NatDex
+Mod` plus the two National Dex hooks in the format put all of it back, deferring
+legality to the gen-9 National Dex validator, so the league's pool is the full
+National Dex with Champions mechanics on top. The npm
+`pokemon-showdown` package predates the mod, so the server runs the
+Champions-capable Showdown checkout the client build maintains, resolved by
+[battle-server/lib/engine.js](battle-server/lib/engine.js). Icons for megas without
+a Showdown sprite fall back through Serebii's Z-A artwork and PokeAPI (see
+[web/sprite.js](web/sprite.js)).
+
+Two build-artifact patches keep the vendored client in step, and both must be
+re-run after `cd client && node build`:
+`scripts/patch-client-tiers.js` writes the league's X/S/A/B/C/Z tiers into the
+teambuilder tables, and `scripts/patch-client-tera.js` puts back the Tera Type
+control the teambuilder hides for any format whose id says "champions".
 
 **Season simulation.** The dev "Simulate season" flow builds fully random teams
-(random natures, EVs, IVs, abilities, moves, items; see
+(random natures, Stat Point spreads, abilities, moves, items; see
 [battle-server/lib/random-team.js](battle-server/lib/random-team.js)), then runs each
-one through Showdown's own TeamValidator against National Dex Doubles (the engine
-behind the Teambuilder's "Validate" button) and repairs anything illegal, so a
-synthetic team is a legal Nat Dex Doubles team just like a coach's. It then plays a
+one through Showdown's own TeamValidator (the engine behind the Teambuilder's
+"Validate" button) and repairs anything illegal, so a synthetic team is legal exactly
+where a coach's is. Both the battles and that gate use
+`[Gen 9 Champions] NatDex ZST Sim`, which shares the live format's ruleset, banlist,
+National Dex hooks and restored Terastallization and drops only the draft-roster
+check a headless run has no coach for, so a simulated season plays by the rules real
+games do. It then plays a
 whole season of real Showdown battles headlessly and scrapes the results, so the
 schedule/scoreboard/stats tabs can be exercised without waiting on live games.
 
 ## Auth
 
-Sign-in is Discord OAuth (Authorization Code + PKCE). Every `/api` route is
-authenticated and the caller's identity comes from the token, never the request
-body. Setup, including the client secret (which must never be committed to this
-public repo), is in [AUTH_SETUP.md](AUTH_SETUP.md).
+Opening the site makes you a **visitor**: the whole league is readable with no
+Discord prompt. Becoming a **player** takes an invite link, which an admin copies
+from the draft tab. Sign-in itself is Discord OAuth (Authorization Code + PKCE).
+Every `/api` route is authenticated and the caller's identity comes from the
+token, never the request body. Setup, including the client secret (which must
+never be committed to this public repo), is in [AUTH_SETUP.md](AUTH_SETUP.md).
 
 ## Tests
 

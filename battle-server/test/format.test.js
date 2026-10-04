@@ -2,17 +2,17 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Dex } = require('pokemon-showdown');
+const { Dex } = require('../lib/engine').requireEngine();
 const { resolve, buildFormatId, DRAFT_RULES, DRAFT_FORMAT_ID, validateTeam } = require('../lib/format');
 const { packDraftTeam } = require('../lib/pack');
 
-test('DRAFT_FORMAT_ID is customgame plus the declared rules', () => {
-  assert.match(DRAFT_FORMAT_ID, /^gen9customgame@@@/);
+test('DRAFT_FORMAT_ID is the Champions doubles customgame plus the declared rules', () => {
+  assert.match(DRAFT_FORMAT_ID, /^gen9championsdoublescustomgame@@@/);
   for (const rule of DRAFT_RULES) assert.ok(DRAFT_FORMAT_ID.includes(rule), `missing ${rule}`);
 });
 
 test('buildFormatId with no rules is the bare base', () => {
-  assert.equal(buildFormatId([]), 'gen9customgame');
+  assert.equal(buildFormatId([]), 'gen9championsdoublescustomgame');
 });
 
 test('resolve() applies every declared rule to the rule table', () => {

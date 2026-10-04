@@ -1,8 +1,8 @@
 # Watchdog: keeps the local DraftLeague.Web dev server running.
 #
-# Runs as a logon scheduled task / Startup launcher (see the .vbs in the user
-# Startup folder). Every few seconds it relaunches the server if it isn't up,
-# unless the pause flag exists. During a rebuild the server must be stopped to
+# Launched at boot by the DraftLeagueBoot task (install-boot-task.ps1) and at
+# sign-in by the Startup-folder .vbs, both via start-server.ps1. Every few
+# seconds it relaunches the server if it isn't up, unless the pause flag exists. During a rebuild the server must be stopped to
 # unlock the exe, so the rebuild flow creates `.server-paused` before killing
 # the server and deletes it after, while that file exists the watchdog stands
 # down and relaunches nothing.
@@ -43,6 +43,15 @@ $cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 # Self-hosted Showdown server (battle-server), for the teambuilder's custom format.
 $node        = 'C:\Program Files\nodejs\node.exe'
 $showdownDir = 'C:\Users\3hoze\Desktop\Pokemon Draft League\battle-server'
+# Unrelated project, same box and same tunnel: the payments page on :8080,
+# public at justfuckingpayme.com. Kept alive here so there is one watchdog.
+$payDir      = 'C:\Users\3hoze\pay-page'
+$payEnv      = Join-Path $payDir '.env'
+# Unrelated project, same box and same tunnel: the personal site on :8082,
+# public at loomhozer.ca / www.loomhozer.ca. Serves its prebuilt dist/, so a
+# content change needs `npm run build` in that repo (no restart required).
+$siteDir     = 'C:\Users\3hoze\Desktop\Website'
+$siteScript  = Join-Path $siteDir 'serve-site.cjs'
 
 function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
 
@@ -101,6 +110,31 @@ while ($true) {
         if (-not $cl -and (Test-Path $node)) {
             Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
             Log "relaunched client server"
+        }
+
+        # Keep the pay-page server up (port 8080), a separate project served
+        # publicly through the same tunnel at justfuckingpayme.com. It reads
+        # .env once at start, so a config change needs the process killed.
+        # Its subscription scheduler is why this matters: if the process dies
+        # overnight, recurring charges silently stop firing and nobody gets an
+        # error saying so.
+        $pay = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue
+        if (-not $pay -and (Test-Path $node) -and (Test-Path $payEnv)) {
+            Start-Process -FilePath $node -ArgumentList "--env-file=$payEnv", 'server/index.js' `
+                -WorkingDirectory $payDir -WindowStyle Hidden `
+                -RedirectStandardOutput (Join-Path $payDir 'server.out.log') `
+                -RedirectStandardError  (Join-Path $payDir 'server.err.log')
+            Log "relaunched pay-page server"
+        }
+        # Keep the personal-site static server up (port 8082), a separate
+        # project served through the same tunnel at loomhozer.ca.
+        $site = Get-NetTCPConnection -LocalPort 8082 -State Listen -ErrorAction SilentlyContinue
+        if (-not $site -and (Test-Path $node) -and (Test-Path $siteScript)) {
+            Start-Process -FilePath $node -ArgumentList 'serve-site.cjs' `
+                -WorkingDirectory $siteDir -WindowStyle Hidden `
+                -RedirectStandardOutput (Join-Path $siteDir 'server.out.log') `
+                -RedirectStandardError  (Join-Path $siteDir 'server.err.log')
+            Log "relaunched site server"
         }
     } catch {
         Log "ERR: $($_.Exception.Message)"

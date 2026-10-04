@@ -21,6 +21,10 @@ const Auth = (() => {
   // While an admin is "viewing as" a dummy coach, their own session is stashed
   // here so they can pop straight back without re-logging-in.
   const IMPERSONATOR = 'draft.auth.impersonator';
+  // An admin's player-invite token, plucked out of ?invite= on arrival. Stored
+  // (not just held in memory) because signing in bounces through Discord, and
+  // the redirect back is a fresh page load.
+  const INVITE = 'draft.invite';
 
   const load = () => { try { return JSON.parse(localStorage.getItem(STORE)) ?? null; } catch { return null; } };
   const save = (v) => localStorage.setItem(STORE, JSON.stringify(v));
@@ -97,6 +101,62 @@ const Auth = (() => {
   /** Must exactly match a URI registered in the Discord portal AND in the
    *  server's Discord:RedirectUris. Discord compares it byte-for-byte. */
   const redirectUri = () => `${location.origin}/`;
+
+  // ── invites ──────────────────────────────────────────────────────────
+  // The site's default entry is a visitor pass, so an invite link is what tells
+  // this page to offer a Discord sign-in instead, and what the server checks
+  // before it will create a new player account.
+
+  /** Pull ?invite=… off the URL into storage, and strip it so a copy of the
+   *  address bar isn't itself an invite. Safe to call on every load. */
+  function captureInvite() {
+    const token = new URL(location.href).searchParams.get('invite');
+    if (!token) return storedInvite();
+    try { localStorage.setItem(INVITE, token); } catch { /* private mode */ }
+    const url = new URL(location.href);
+    url.searchParams.delete('invite');
+    history.replaceState({}, '', url.pathname + url.search + url.hash);
+    return token;
+  }
+
+  function storedInvite() {
+    try { return localStorage.getItem(INVITE); } catch { return null; }
+  }
+
+  function clearInvite() {
+    try { localStorage.removeItem(INVITE); } catch { /* private mode */ }
+  }
+
+  // ── visitor ──────────────────────────────────────────────────────────
+
+  /**
+   * A read-only pass, no Discord, no identity. The API's read endpoints are all
+   * behind authorization, so browsing still needs a token; this is one that names
+   * nobody, and every write path refuses it server-side.
+   */
+  async function visitorSignIn() {
+    const res = await fetch(`${apiBase}/api/auth/visitor`, { method: 'POST' });
+    if (!res.ok) throw new Error('Could not open the league as a visitor, try again in a moment.');
+    const body = await res.json();
+    save({
+      accessToken: body.accessToken,
+      refreshToken: null, // there is nothing to refresh: we just mint another
+      expiresAt: body.accessExpiresAt,
+      visitor: true,
+      user: body.user,
+    });
+  }
+
+  const isVisitor = () => !!load()?.visitor;
+
+  /**
+   * Drop a visitor pass and nothing else. Deliberately narrower than forget():
+   * someone can arrive on an invite link, browse first, and only then decide to
+   * sign in, so the invite has to survive giving up the pass.
+   */
+  function dropVisitor() {
+    if (isVisitor()) clear();
+  }
 
   // ── login / logout ───────────────────────────────────────────────────
 
@@ -201,6 +261,7 @@ const Auth = (() => {
 
   async function logout() {
     localStorage.removeItem(IMPERSONATOR);
+    clearInvite();
     const s = load();
     if (s?.refreshToken) {
       // Best-effort: the local session goes regardless.
@@ -250,10 +311,18 @@ const Auth = (() => {
         codeVerifier: verifier,
         redirectUri: redirectUri(),
         deviceLabel: 'Web',
+        invite: storedInvite(),
       }),
     });
-    if (!res.ok) throw new Error('Login failed, the server rejected the code');
+    if (!res.ok) {
+      // The invite-only refusal carries a message worth reading; anything else
+      // gets the generic line.
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? 'Login failed, the server rejected the code');
+    }
 
+    // Spent: the account exists now, so the link has done its job on this device.
+    clearInvite();
     save(await res.json());
     return true;
   }
@@ -270,8 +339,35 @@ const Auth = (() => {
   const isLoggedIn = () => !!load()?.accessToken;
   const accessToken = () => load()?.accessToken ?? null;
 
-  async function refresh() {
+  /** True when the stored access token is spent (or about to be, within 30s). */
+  function expired() {
     const s = load();
+    // A visitor pass has no refresh token by design, it is re-minted instead, so
+    // it is judged on its expiry alone.
+    if (!s?.accessToken || !(s.refreshToken || s.visitor)) return false;
+    const at = Date.parse(s.expiresAt ?? '');
+    return Number.isFinite(at) && at - Date.now() < 30_000;
+  }
+
+  // Refresh tokens are single-use (the server rotates them), so two refreshes
+  // running at once would race: the loser presents an already-rotated token and
+  // gets a 401, which clears the session and forces a Discord re-auth. A page
+  // load fires many authFetch calls in parallel, so that race was easy to hit.
+  // Everyone shares the one in-flight refresh instead.
+  let refreshing = null;
+
+  function refresh() {
+    if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+
+  async function doRefresh() {
+    const s = load();
+    // Visitors don't refresh, they get another pass. Failing here would clear a
+    // session that costs nothing to replace, so a hiccup just leaves the old one.
+    if (s?.visitor) {
+      try { await visitorSignIn(); return true; } catch { return false; }
+    }
     if (!s?.refreshToken) return false;
 
     let res;
@@ -304,6 +400,11 @@ const Auth = (() => {
    * during normal use, not just at the edges.
    */
   async function authFetch(path, options = {}, retry = true) {
+    // Renew a token we already know is spent rather than spending a 401 to find
+    // out. Without this, every call in a page load 401s at once after the 30
+    // minute access token lapses, and the retries all pile onto one refresh.
+    if (retry && expired()) await refresh();
+
     const token = accessToken();
     const headers = { ...(options.headers ?? {}) };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -318,15 +419,16 @@ const Auth = (() => {
 
   /**
    * Synchronously drop the stored session, no network call, unlike logout().
-   * Used by the hard-reload reset, which has to finish before the browser
-   * navigates away.
+   * Nothing in the UI calls this: it's the console escape hatch for a session
+   * that's somehow wedged (`Auth.forget()`, then reload).
    */
   function forget() {
     clear();
     localStorage.removeItem(IMPERSONATOR);
+    clearInvite();
     sessionStorage.removeItem(VERIFIER);
     sessionStorage.removeItem(STATE);
   }
 
-  return { login, devAccounts, devSignInAs, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch, loadDummies, impersonate, impersonator, stopImpersonating };
+  return { login, devAccounts, devSignInAs, logout, forget, handleRedirect, session, user, isLoggedIn, accessToken, refresh, authFetch, loadDummies, impersonate, impersonator, stopImpersonating, visitorSignIn, isVisitor, dropVisitor, captureInvite, storedInvite, clearInvite };
 })();

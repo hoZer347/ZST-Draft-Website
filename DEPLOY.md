@@ -11,6 +11,8 @@ that box and keep the processes up."
 | .NET server (web app + API + SignalR) | `:5211` | `dev.loomhozer.ca`, `zst.loomhozer.ca` |
 | Showdown battle server (`battle-server`) | `:8787` | `showdown.loomhozer.ca` |
 | Showdown client / Teambuilder | `:8791` | `play.loomhozer.ca` |
+| pay-page (unrelated project, `C:\Users\3hoze\pay-page`) | `:8080` | `justfuckingpayme.com`, `www.justfuckingpayme.com` |
+| personal site (unrelated project, `C:\Users\3hoze\Desktop\Website`) | `:8082` | `loomhozer.ca`, `www.loomhozer.ca` |
 
 The .NET server serves the web page and the API on the same origin, so production
 calls are relative (`/api/...`) with no CORS. `web/config.js` selects the API and
@@ -18,11 +20,23 @@ Showdown targets by hostname (localhost, `*.loomhozer.ca`, else legacy).
 
 ## Keeping it up
 
-`server/keep-server-up.ps1` is the watchdog (launched from the user Startup folder).
-Every ~5s it relaunches anything down: the .NET server, `cloudflared`, and both Node
-servers. It also enforces an always-awake power profile so the draft clock keeps
-firing while unattended. Manage it by its `.watchdog.pid` / `.watchdog.alive` files,
-never by matching command lines (a match would kill the watchdog itself).
+`server/keep-server-up.ps1` is the watchdog, launched at boot (before sign-in) by the
+`DraftLeagueBoot` scheduled task (install with `server/install-boot-task.ps1`) and at
+sign-in from the user Startup folder.
+Every ~5s it relaunches anything down: the .NET server, `cloudflared`, both Node
+servers, the pay-page server on :8080 and the personal-site server on :8082. It also enforces an always-awake power
+profile so the draft clock keeps firing while unattended. Manage it by its
+`.watchdog.pid` / `.watchdog.alive` files, never by matching command lines (a match
+would kill the watchdog itself).
+
+Relaunch it with the script path quoted, or the space in "Pokemon Draft League"
+splits the argument and PowerShell exits immediately (silently leaving nothing
+supervised):
+
+```powershell
+$s = 'C:\Users\3hoze\Desktop\Pokemon Draft League\server\keep-server-up.ps1'
+Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$s`"" -WindowStyle Hidden
+```
 
 Tunnel config lives in `%USERPROFILE%\.cloudflared\config.yml`.
 

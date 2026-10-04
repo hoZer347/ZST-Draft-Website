@@ -7,8 +7,9 @@
 //
 //   node scripts/simulate.js
 
-const { BattleStream, getPlayerStreams } = require('pokemon-showdown');
-const { RandomPlayerAI } = require('pokemon-showdown/dist/sim/tools/random-player-ai');
+const { requireEngine } = require('../lib/engine');
+const { BattleStream, getPlayerStreams } = requireEngine();
+const { RandomPlayerAI } = requireEngine('dist/sim/tools/random-player-ai');
 const { packDraftTeam } = require('../lib/pack');
 
 // Two sample "drafted" rosters, using our pool's species slugs.
@@ -18,7 +19,9 @@ const TEAM_B = ['venusaur-mega', 'charizard', 'wartortle', 'blastoise', 'chariza
 async function main() {
   const streams = getPlayerStreams(new BattleStream());
 
-  const spec = { formatid: 'gen9customgame' };
+  // The league's simulator format (see showdown-config/custom-formats.js), so this
+  // smoke test proves a battle under the mechanics real games use.
+  const spec = { formatid: 'gen9championsnatdexzstsim' };
   const p1spec = { name: 'Team Alpha', team: packDraftTeam(TEAM_A) };
   const p2spec = { name: 'Team Beta', team: packDraftTeam(TEAM_B) };
 

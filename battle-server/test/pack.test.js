@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Teams, toID } = require('pokemon-showdown');
+const { Teams, toID } = require('../lib/engine').requireEngine();
 const { packDraftTeam, FILLER_MOVES } = require('../lib/pack');
 
 test('packs a team of known species into a valid packed string', () => {

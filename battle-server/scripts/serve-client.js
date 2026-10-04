@@ -2,9 +2,13 @@
 
 // Static file server for our self-hosted Showdown client
 // (battle-server/client/play.pokemonshowdown.com), exposed at play.loomhozer.ca
-// through the Cloudflare tunnel. Sprites/dex data still load from the official
-// CDN (see Config.routes in client/config/config.js); we only serve the client
-// itself + our tier-patched data files.
+// through the Cloudflare tunnel. We serve the whole client: scripts, stylesheets and
+// dex data alike (see lib/client-shell.js for why hotlinking upstream broke every
+// battle, then the team buttons). Serving the stylesheets pulls their relative
+// url(../fx/...) backgrounds local with them. What stays remote: sprites and the fx
+// the client looks up through Dex.resourcePrefix (js/battledata.js) rather than CSS,
+// data/pokedex-mini.js, which our checkout does not carry, and clean-cookies.php,
+// which only the CDN can run as PHP.
 //
 // gzips compressible responses (the tier data is ~15 MB raw, ~1.7 MB gzipped)
 // and caches the compressed bytes in memory, so it stays fast over a home
@@ -16,6 +20,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const { rewriteCdnAssets } = require('../lib/client-shell');
 
 const ROOT = path.join(__dirname, '..', 'client', 'play.pokemonshowdown.com');
 const PORT = Number(process.env.PORT || 8791);
@@ -29,6 +34,7 @@ const MIME = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.png': 'image/png', '.gif': 'image/gif', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.map': 'application/json',
+  '.ttf': 'font/ttf', '.eot': 'application/vnd.ms-fontobject',
   '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.txt': 'text/plain; charset=utf-8',
 };
 const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '.txt']);
@@ -43,7 +49,10 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '
 //    script. The classic client strips the query string during init
 //    (history.replaceState in dispatchFragment); on our same-origin dev host that
 //    init now runs immediately, so a bottom-of-page read would find ?name already
-//    gone. Capturing it up top, into window + sessionStorage, beats that race.
+//    gone. Capturing it up top, into window + storage, beats that race. It also
+//    CACHES the name in localStorage and falls back to it, so a coach who never
+//    came through the draft app (a bookmark, a battle link, a reopened browser) is
+//    still signed in as themselves instead of an anonymous Guest who can't chat.
 //  - AUTOLOGIN runs LAST (appended after the client scripts, once `app` exists)
 //    and drives the login off the captured name.
 // The team-seeding logic lives in lib/seed-teams.js (pure + unit-tested). We inline
@@ -54,14 +63,32 @@ const SEED_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'seed-teams.j
 // Inlined into the page so the browser and the Node tests share the exact roster ->
 // buildable-species mapping (see ROSTER_RESTRICT below and test/roster-teambuilder.test.js).
 const ROSTER_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-teambuilder.js'), 'utf8');
+// Same deal for the C-tier Tera lock (see AUTO_TERA below and test/roster-tera.test.js).
+const TERA_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-tera.js'), 'utf8');
+
+// The remembered login, inlined into each injected script below so every one of them
+// resolves the coach's name the same way and none depends on another having run:
+// the captured ?name=, else this tab's copy, else the cross-tab localStorage cache.
+const LOGIN_NAME_FN = `
+  function readName(store) { try { return store.getItem('zst_name') || ''; } catch (e) { return ''; } }
+  function loginName() {
+    return window.__zstName || readName(sessionStorage) || readName(localStorage) || '';
+  }`;
 
 const CAPTURE_HEAD = `<script>
-(function () {
-  var q = new URLSearchParams(location.search);
-  try {
-    var n = q.get('name');
-    if (n) { window.__zstName = n; try { sessionStorage.setItem('zst_name', n); } catch (e) {} }
-  } catch (e) {}
+(function () {${LOGIN_NAME_FN}
+  var n = '';
+  try { n = new URLSearchParams(location.search).get('name') || ''; } catch (e) {}
+  // Remembered login. Without this a coach is only signed in on the tab the draft app
+  // opened with ?name=; anyone landing on the client directly (a bookmark, a battle
+  // link, a reopened browser) was an anonymous Guest, and a Guest can't chat at all.
+  // An explicit ?name= in THIS tab still wins over the cache.
+  if (!n) n = loginName();
+  if (n) {
+    window.__zstName = n;
+    try { sessionStorage.setItem('zst_name', n); } catch (e) {}
+    try { localStorage.setItem('zst_name', n); } catch (e) {}
+  }
 })();
 </script>
 <script>${SEED_LIB}</script>
@@ -85,10 +112,9 @@ const CAPTURE_HEAD = `<script>
 
 const AUTOLOGIN = `
 <script>
-(function () {
+(function () {${LOGIN_NAME_FN}
   try {
-    var name = window.__zstName;
-    if (!name) { try { name = sessionStorage.getItem('zst_name'); } catch (e) {} }
+    var name = loginName();
     if (!name) return;
     var clean = name.replace(/[|,;]+/g, '');
     var wantId = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -149,8 +175,8 @@ const LOCK_IDENTITY = `<style>.ps-popup button[name="logout"], .ps-popup button[
 // custom game) are defined in showdown-config/custom-formats.js; the self-hosted
 // client only surfaces our custom formats + random battles, so a built-in custom
 // game would never appear here. The teambuilder's own format list is unaffected.
-const FORMAT_ALLOW = ['gen9zstseason4', 'gen9scrims'];
-const FORMAT_DEFAULT = 'gen9zstseason4';
+const FORMAT_ALLOW = ['gen9championsnatdexzstseason4', 'gen9championsnatdexscrims'];
+const FORMAT_DEFAULT = 'gen9championsnatdexzstseason4';
 const FORMAT_FILTER = `<script>
 (function(){
   var ALLOW = ${JSON.stringify(FORMAT_ALLOW.reduce((o, id) => (o[id] = 1, o), {}))};
@@ -192,46 +218,87 @@ const FORMAT_FILTER = `<script>
 })();
 </script>`;
 
-// Auto-fill a C-tier pick's drafted Tera type in the teambuilder. Each coach draws
-// a fixed Tera type for their C-tier mons; picking one of those species in the
-// builder should load it in already teratyped. We fetch the coach's roster (by the
-// captured login name, via the same-origin /zst-roster proxy) into a species->tera
-// map, then wrap TeambuilderRoom.setPokemon so that right after it sets the species
-// (which resets teraType), we re-apply the drafted Tera and re-render. Non-C picks,
-// and species the coach didn't draft, are left untouched.
-const AUTO_TERA = `<script>
-(function () {
-  var TERA = {};
-  function id(s) { return ('' + (s || '')).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+// Stamp a C-tier pick's drafted Tera type onto every set in the teambuilder. Each coach
+// draws a fixed Tera type for their C-tier mons and the format's validator enforces it,
+// so there is no choice to make: any C-tier set the coach builds should already carry
+// its drafted type, however the set got there.
+//
+// We fetch the coach's roster (by the captured login name, via the same-origin
+// /zst-roster proxy) into a species -> tera map (draftedTeraMap, inlined from TERA_LIB),
+// then stamp it on at the three points a set can change: setPokemon (which DELETES
+// teraType when it swaps species), and the room's save + update, which every other route
+// funnels through (Import/Export, a pasted set, a sample set, a reorder). Non-C picks and
+// species the coach didn't draft are left untouched, and so are scrims teams, which have
+// no tera lock.
+const AUTO_TERA = `<script>${TERA_LIB}</script>
+<script>
+(function () {${LOGIN_NAME_FN}
+  var TERA = {};        // speciesid -> drafted Tera type, C-tier picks only
+  var loaded = false;   // nothing is stamped until the roster is actually in
+
   function load() {
-    var name = window.__zstName;
-    if (!name) { try { name = sessionStorage.getItem('zst_name'); } catch (e) {} }
+    var name = loginName();
     if (!name) return;
     fetch('/zst-roster?name=' + encodeURIComponent(name)).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.found || !d.mons) return;
-      d.mons.forEach(function (m) {
-        if (m.tier === 'C' && m.tera) { if (m.name) TERA[id(m.name)] = m.tera; if (m.slug) TERA[id(m.slug)] = m.tera; }
-      });
+      TERA = window.zstDraftedTeraMap(d.mons);
+      loaded = true;
+      refresh(); // a team opened before the roster landed still gets stamped
     }).catch(function () {});
   }
+
+  // Only the league's own formats lock tera. Scrims are open practice games with no
+  // roster check, so a coach may tera whatever they like there: leave those teams alone.
+  function isLeague(room) {
+    try { return !!(room && room.curTeam && room.curTeam.format && room.curTeam.format.indexOf('zst') >= 0); }
+    catch (e) { return false; }
+  }
+
+  // Returns the indices changed, so callers can skip a redraw when nothing moved.
+  function stamp(room) {
+    if (!loaded || !isLeague(room)) return [];
+    try { return window.zstApplyDraftedTera(room.curSetList, TERA); } catch (e) { return []; }
+  }
+
+  function refresh() {
+    try {
+      for (var id in app.rooms) {
+        var room = app.rooms[id];
+        if (!room || !room.curSetList) continue;
+        if (stamp(room).length) { room.save(); if (room.update) room.update(); }
+      }
+    } catch (e) {}
+  }
+
   function patch() {
     var R = window.TeambuilderRoom;
     if (!R || !R.prototype || typeof R.prototype.setPokemon !== 'function') return false;
     if (R.prototype.__zstAutoTera) return true;
-    var orig = R.prototype.setPokemon;
+
+    // setPokemon resets the set ("if (set.teraType) delete set.teraType"), so re-stamp
+    // right after it and redraw the set's summary line.
+    var setPokemon = R.prototype.setPokemon;
     R.prototype.setPokemon = function (val, selectNext) {
-      orig.call(this, val, selectNext);
-      try {
-        var set = this.curSet;
-        if (set && set.species) {
-          var t = TERA[id(set.species)];
-          if (t && set.teraType !== t) { set.teraType = t; this.updateSetTop(); this.save(); }
-        }
-      } catch (e) {}
+      setPokemon.call(this, val, selectNext);
+      if (stamp(this).length) { try { this.updateSetTop(); this.save(); } catch (e) {} }
     };
+
+    // Stamp BEFORE the original save/update runs: the team that gets persisted and the
+    // Tera type the coach reads off the screen are then both the drafted one, with no
+    // extra redraw and no re-entry.
+    ['save', 'update'].forEach(function (method) {
+      var orig = R.prototype[method];
+      if (typeof orig !== 'function') return;
+      R.prototype[method] = function () {
+        stamp(this);
+        return orig.apply(this, arguments);
+      };
+    });
+
     R.prototype.__zstAutoTera = true;
     return true;
   }
+
   load();
   var iv = setInterval(function () { if (patch()) clearInterval(iv); }, 150);
   setTimeout(function () { clearInterval(iv); }, 30000);
@@ -253,7 +320,7 @@ const AUTO_TERA = `<script>
 // mon at battle time regardless of the picker.
 const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
 <script>
-(function () {
+(function () {${LOGIN_NAME_FN}
   var TAG = '[zst-roster]';
   function dbg(msg) { try { console.log(TAG, msg); } catch (e) {} } // console breadcrumbs
   // Two allow-sets, chosen by the team's format in the search hook below:
@@ -270,8 +337,7 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
     // Whichever one the roster endpoint matches wins.
     var c = [];
     try { if (window.app && app.user && app.user.get) { var u = app.user.get('userid'), n = app.user.get('name'); if (!isGuest(u)) c.push(u); if (!isGuest(n)) c.push(n); } } catch (e) {}
-    if (window.__zstName) c.push(window.__zstName);
-    try { var s = sessionStorage.getItem('zst_name'); if (s) c.push(s); } catch (e) {}
+    var cached = loginName(); if (cached) c.push(cached);
     return c.filter(function (x, i) { return x && !isGuest(x) && c.indexOf(x) === i; });
   }
   function fetchRosters() {
@@ -452,16 +518,26 @@ async function computeMegaSprites() {
   }));
 
   const n = Object.keys(map).length;
-  // Patch the ModdedDex PROTOTYPE once (covers Dex and every modded dex, incl. the
-  // champions mod battles use). getSpriteData is a prototype method; wrap it so a custom
-  // mega's sprite (either facing) is the Z-A mega artwork, keeping the gen/cry/shiny
-  // fields the original computed and just overriding the image. 120x120 scales the 250px
-  // art down to a battle-field sprite; the <img> the scene builds scales it for us. The
-  // lookup keys off toID(speciesForme), so it matches whether or not the merge has landed.
+  // Two layers, both keyed off toID so a dashed spriteid ("raichu-megay") and an unmerged
+  // one ("raichumegay") both resolve:
+  //  1. A DOM-level safety net (installed first, no dependencies): ANY battle sprite <img>
+  //     that fails to load and whose slug is a custom mega is swapped to the Z-A mega art.
+  //     This is the guarantee, it catches every render path (front, back, mega-transform),
+  //     regardless of getSpriteData, and never falls to the base form.
+  //  2. getSpriteData override on the ModdedDex prototype (covers Dex + every modded dex):
+  //     serves the Z-A art up front so there's no broken-image flash before the net fires.
+  //     120x120 scales the 250px art to a battle-field size; the <img> the scene builds
+  //     scales it for us.
   MEGA_SPRITE_FIX = n === 0 ? '' : `<script>
-(function(){var MS=${JSON.stringify(map)};function ID(s){return(''+(s||'')).toLowerCase().replace(/[^a-z0-9]/g,'');}function patch(){var D=window.Dex;if(!D)return false;var pr=Object.getPrototypeOf(D);if(!pr||typeof pr.getSpriteData!=='function')return false;if(pr.__megaSpriteFix)return true;var orig=pr.getSpriteData;pr.getSpriteData=function(pokemon,isFront,options){try{var forme=(window.Pokemon&&pokemon instanceof window.Pokemon)?pokemon.getSpeciesForme():pokemon;var m=MS[ID(forme)];if(m){var data=orig.call(this,pokemon,isFront,options);data.url=m.url;data.w=120;data.h=120;data.pixelated=false;data.isFrontSprite=!!isFront;return data;}}catch(e){}return orig.call(this,pokemon,isFront,options);};pr.__megaSpriteFix=true;return true;}var iv=setInterval(function(){if(patch())clearInterval(iv);},150);setTimeout(function(){clearInterval(iv);},30000);})();
+(function(){
+  var MS=${JSON.stringify(map)};
+  function ID(s){return(''+(s||'')).toLowerCase().replace(/[^a-z0-9]/g,'');}
+  try{document.addEventListener('error',function(e){var img=e.target;if(!img||img.tagName!=='IMG'||img.__megaFixed)return;var mm=/\\/sprites\\/[a-z0-9-]*\\/([a-z0-9-]+)\\.(?:gif|png)/.exec(img.src||'');if(!mm)return;var m=MS[ID(mm[1])];if(m){img.__megaFixed=1;img.src=m.url;img.removeAttribute('srcset');}},true);}catch(e){}
+  function patch(){var D=window.Dex;if(!D)return false;var pr=Object.getPrototypeOf(D);if(!pr||typeof pr.getSpriteData!=='function')return false;if(pr.__megaSpriteFix)return true;var orig=pr.getSpriteData;pr.getSpriteData=function(pokemon,isFront,options){try{var forme=(window.Pokemon&&pokemon instanceof window.Pokemon)?pokemon.getSpeciesForme():pokemon;var m=MS[ID(forme)];if(m){var data=orig.call(this,pokemon,isFront,options);data.url=m.url;data.w=120;data.h=120;data.pixelated=false;data.isFrontSprite=!!isFront;return data;}}catch(e){}return orig.call(this,pokemon,isFront,options);};pr.__megaSpriteFix=true;return true;}
+  var iv=setInterval(function(){if(patch())clearInterval(iv);},150);setTimeout(function(){clearInterval(iv);},30000);
+})();
 </script>`;
-  console.log(`[serve-client] custom-mega sprite fix: ${n} mega(s) using Legends Z-A mega artwork`);
+  console.log(`[serve-client] custom-mega sprite fix: ${n} mega(s) using Legends Z-A mega artwork (override + DOM error net)`);
 }
 
 // path -> { mtimeMs, raw, gz }, files don't change at runtime, so cache the
@@ -496,20 +572,27 @@ function load(file) {
       try { return `/data/${name}.js?v=${Math.floor(fs.statSync(path.join(ROOT, 'data', `${name}.js`)).mtimeMs)}`; }
       catch { return whole; }
     });
+    html = rewriteCdnAssets(html, (p) => fs.existsSync(path.join(ROOT, p)));
     raw = Buffer.from(html, 'utf8');
   }
   const gz = COMPRESSIBLE.has(ext) ? zlib.gzipSync(raw, { level: 6 }) : null;
   const entry = { mtimeMs: stat.mtimeMs, raw, gz, ext };
+  // The shell is the one file we REWRITE, and both rewrites above read OTHER files:
+  // the patched data files' mtimes, and which scripts exist on disk. A client rebuild
+  // changes those without touching index-old.html, so a cached shell would keep
+  // pointing browsers at a stale ?v= or at a script the rebuild deleted. It is 60 KB,
+  // so rebuild it per request rather than cache a copy that can go wrong. Everything
+  // else, including the 15 MB tier data this cache exists for, still caches.
+  if (path.basename(file) === 'index-old.html') return entry;
   cache.set(file, entry);
   return entry;
 }
 
-// Probe the CDN for each custom mega's best sprite, then drop the cached shell so the
-// next request re-injects the patch with the resolved map. Best-effort and off the hot
-// path, the server starts serving immediately.
+// Probe the CDN for each custom mega's best sprite. The shell is built per request, so
+// the resolved map lands in the next one on its own. Best-effort and off the hot path,
+// the server starts serving immediately.
 computeMegaSprites()
-  .catch((e) => console.warn('[serve-client] mega sprite fix failed:', e.message))
-  .finally(() => cache.delete(path.join(ROOT, 'index-old.html')));
+  .catch((e) => console.warn('[serve-client] mega sprite fix failed:', e.message));
 
 http.createServer((req, res) => {
   let url = decodeURIComponent((req.url || '/').split('?')[0]);

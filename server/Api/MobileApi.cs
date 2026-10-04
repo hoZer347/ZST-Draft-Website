@@ -547,6 +547,25 @@ public static class MobileApi
             return Results.Ok();
         });
 
+        // Re-pull the pool from the source sheet, so an admin can land sheet edits
+        // (new mons, retiers, bans) and check the tier list. Allowed in ANY draft
+        // state: PokedexSync only touches the Pokemon pool, and it spares every
+        // drafted and currently-offered mon, so a refresh never alters the draft's
+        // state, clock, picks or the options on the clock (see PokedexSync.RefreshAsync).
+        admin.MapPost("/drafts/{id:int}/sync-pokedex", async (int id, ClaimsPrincipal me, PokedexSync sync, AppDbContext db, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            var draft = await db.Drafts.FirstOrDefaultAsync(d => d.Id == id, ct);
+            if (draft is null) return Results.NotFound();
+
+            var r = await sync.RefreshAsync(draft.LeagueId, ct);
+            if (!r.Ok) return Results.BadRequest(new { error = r.Error ?? "Pokédex sync failed" });
+
+            var total = await db.Pokemon.CountAsync(p => p.LeagueId == draft.LeagueId, ct);
+            return Results.Ok(new { changed = r.Changed, total });
+        });
+
         admin.MapPost("/drafts/{id:int}/rollback", async (int id, ClaimsPrincipal me, DraftEngine e, AppDbContext db, CancellationToken ct) =>
         {
             if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
@@ -657,6 +676,31 @@ public static class MobileApi
                 .ExecuteDeleteAsync(ct);
             if (removed > 0) await notifier.ReadyChangedAsync(draftId, ct);
             return Results.Ok();
+        });
+
+        // Mint a player invite link. Everyone who opens the site is a visitor; this
+        // is the only way to become a player, so it is the admin's one hand-out.
+        // The link is a signed token in a query string, no invite table, see
+        // TokenService.IssueInvite. It expires, and it can be used more than once
+        // before then: it is an invite, not a seat.
+        admin.MapPost("/invite", async (
+            HttpContext http, ClaimsPrincipal me, TokenService tokens,
+            AppDbContext db, IConfiguration config, CancellationToken ct) =>
+        {
+            if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+
+            var days = config.GetValue("Invite:ValidDays", 14);
+            var token = tokens.IssueInvite(days);
+            // Built from the request's own origin so the link points at whichever
+            // host the admin is actually on (localhost, dev., or zst.).
+            var origin = $"{http.Request.Scheme}://{http.Request.Host}";
+            return Results.Ok(new
+            {
+                token,
+                url = $"{origin}/?invite={Uri.EscapeDataString(token)}",
+                expiresAt = DateTimeOffset.UtcNow.AddDays(days),
+                days,
+            });
         });
 
         // The users an admin may view as: everyone in the league roster (the same

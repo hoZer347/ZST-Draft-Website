@@ -14,6 +14,8 @@ namespace DraftLeague.Web.Services;
 /// to whoever set it, a Perish Song counter to whoever cast it, and contact/bind
 /// effects (Rocky Helmet, Rough Skin, Leech Seed) to the [of] mon, and a faint
 /// from any of these is a kill for that source, even after it has left the field.
+/// A delayed attack (Future Sight, Doom Desire) is its user's direct damage and
+/// KO, however long ago it was used.
 ///
 /// HP in the log is a fraction, own side shows real HP (200/281), the opponent
 /// shows a percent (88/100), so working in "% of max" keeps both consistent.
@@ -114,6 +116,9 @@ public static class ReplayStatsScraper
         (Pick pick, string side)? weather = null;           // who set the current damaging weather, and their side
         string? weatherKind = null;                          // the active weather's id, to tell a genuine set from a bare re-announce
         var perishOwner = new Dictionary<string, (Pick pick, string side)>(); // slot with a perish counter → who cast it (and their side)
+        string? moveTarget = null;                          // target slot of the move currently resolving
+        var futureOwner = new Dictionary<string, (Pick? pick, string side)>(); // slot a Future Sight / Doom Desire is aimed at → its user (and side). Showdown keeps it as a slot condition, so it survives switches
+        (string slot, Pick? pick, string side)? futureHit = null; // a future attack landing now: its bare -damage/-crit on that slot belong to its user, not the stale mover
         var turns = 0;
 
         foreach (var rawLine in log.Split('\n'))
@@ -155,7 +160,7 @@ public static class ReplayStatsScraper
                 case "swap":
                 {
                     // Ally Switch trades the two active mons on a side (…a ↔ …b).
-                    // Every per-slot fact must follow the mon to its new slot, or
+                    // Every per-slot fact about the occupant must follow it to its new slot, or
                     // damage/heal after the switch is credited to the wrong Pick.
                     if (parts.Length < 3) break;
                     var side = SideOf(SlotId(parts[2]));
@@ -166,6 +171,7 @@ public static class ReplayStatsScraper
                     SwapKeys(residualSource, slotA, slotB);
                     SwapKeys(perishOwner, slotA, slotB);
                     // statusSource/statusSelf are mon-keyed, so Ally Switch needs no fixup.
+                    // futureOwner stays: Showdown's slot condition doesn't move with Ally Switch.
                     break;
                 }
 
@@ -195,10 +201,16 @@ public static class ReplayStatsScraper
                 case "move":
                     attacker = parts.Length > 2 ? SlotId(parts[2]) : null;
                     if (attacker is not null && parts.Length > 3) lastMove[attacker] = ToId(parts[3]);
+                    moveTarget = parts.Length > 4 && parts[4].Length > 0 ? SlotId(parts[4]) : null;
+                    futureHit = null;
                     break;
 
                 case "-crit":
-                    if (attacker is not null && slots.TryGetValue(attacker, out var a) && a.Pick is not null)
+                    if (futureHit is { } fc && parts.Length > 2 && fc.slot == SlotId(parts[2]))
+                    {
+                        if (fc.pick is not null) Stat(fc.pick).Crits++;
+                    }
+                    else if (attacker is not null && slots.TryGetValue(attacker, out var a) && a.Pick is not null)
                         Stat(a.Pick).Crits++;
                     break;
 
@@ -347,7 +359,13 @@ public static class ReplayStatsScraper
                     if (parts.Length < 4) break;
                     var pslot = SlotId(parts[2]);
                     var pname = ToId(parts[3]);
-                    if (pname == "perish3")
+                    if (IsFutureMove(parts[3]))
+                    {
+                        // |-start|user|move: Future Sight| names only the user; the slot it
+                        // will hit is the target on the |move| line just before.
+                        if (moveTarget is not null) futureOwner[moveTarget] = (PickAt(pslot), SideOf(pslot));
+                    }
+                    else if (pname == "perish3")
                     {
                         var pOwner = PickAt(attacker);
                         if (pOwner is not null && attacker is not null) perishOwner[pslot] = (pOwner, SideOf(attacker));
@@ -404,7 +422,15 @@ public static class ReplayStatsScraper
                     // tell ally from enemy.
                     var direct = from is null;
                     Pick? dealer; string? dealerSlot; bool self;
-                    if (direct)
+                    if (direct && futureHit is { } fh && fh.slot == sid)
+                    {
+                        // A future attack's hit, credited to its user even if it has since
+                        // left the field. The side sentinel keeps an ally-targeted one friendly fire.
+                        dealer = fh.pick; dealerSlot = fh.side + "a";
+                        self = ReferenceEquals(dealer, slot.Pick);
+                        futureHit = null;
+                    }
+                    else if (direct)
                     {
                         dealer = PickAt(attacker); dealerSlot = attacker;
                         self = ReferenceEquals(dealer, slot.Pick); // a move's HP cost / crash on the user
@@ -593,6 +619,13 @@ public static class ReplayStatsScraper
                     break;
                 }
 
+                case "-end":
+                    // |-end|target|move: Future Sight| announces the delayed hit; the bare
+                    // -damage (and any -crit) that follows is it, not the last mover's move.
+                    if (parts.Length > 3 && IsFutureMove(parts[3]) && futureOwner.Remove(SlotId(parts[2]), out var fo))
+                        futureHit = (SlotId(parts[2]), fo.pick, fo.side);
+                    break;
+
                 case "-sethp":
                     if (parts.Length > 3) Slot(SlotId(parts[2])).Hp = ParseHp(parts[3]);
                     break;
@@ -778,6 +811,10 @@ public static class ReplayStatsScraper
     /// </summary>
     private static bool IsResidual(string from) => from is
         "Curse" or "Nightmare" or "Salt Cure" or "trapped";
+
+    /// <summary>Delayed attacks that land two turns later on the targeted slot. Doom
+    /// Desire's -start is bare ("Doom Desire"), its -end and Future Sight's carry "move: ".</summary>
+    private static bool IsFutureMove(string effect) => ToId(CondName(effect)) is "futuresight" or "doomdesire";
 
     /// <summary>"p1a: Nickname" | "p1: Alice" | "p1a" → the side "p1"/"p2".</summary>
     private static string SideOf(string s) { var id = SlotId(s); return id.Length >= 2 ? id[..2] : id; }

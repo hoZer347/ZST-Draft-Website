@@ -47,6 +47,29 @@ kill the process and let the watchdog relaunch it, or old code keeps serving:
 (same for 8787). Confirm a client-server edit landed:
 `curl -s http://127.0.0.1:8791/teambuilder | grep <new-token>`.
 
+## The Showdown engine lives in the client cache
+
+The league's formats need the `champions` mod, which the npm `pokemon-showdown`
+package doesn't ship, so `battle-server/lib/engine.js` resolves the engine to
+`battle-server/client/caches/pokemon-showdown` (the checkout the client build clones
+and compiles) and everything in `battle-server/` requires Showdown through it, never
+by package name. Consequences: **stop :8787 before rebuilding the client**, since the
+rebuild git-pulls and recompiles the directory the server is running out of; and after
+a `cd client && node build`, re-run BOTH `node scripts/patch-client-tiers.js` (league
+tiers) and `node scripts/patch-client-tera.js` (the Tera Type control, which the
+teambuilder hides for any format whose id contains "champions"). `SHOWDOWN_DIR`
+overrides the choice.
+
+Both patch scripts are load-bearing now: `serve-client.js` rewrites the shell so every
+script we have on disk is served from OUR copy instead of hotlinked from
+play.pokemonshowdown.com (see `lib/client-shell.js`). Upstream's CDN is their live
+deploy, and a `data/graphics.js` they shipped against a newer `battledata.js` than ours
+threw `eHTML is not defined` inside `new Battle()`, so no battle room ever opened for
+anyone, players or spectators, while the server sat waiting at team preview. The same
+rewrite covers the stylesheets, because their CSS drifts too: deleting the
+`.select.teamselect` rules our pinned client's team buttons rely on left the team icons
+wrapping out of the challenge box.
+
 ## Verify on an isolated instance, never live :5211
 
 Hitting :5211 mutates real dev data (starts drafts, reseeds the DB). Test ad-hoc

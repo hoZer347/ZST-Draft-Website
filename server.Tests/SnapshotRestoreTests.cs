@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DraftLeague.Web.Data;
 using DraftLeague.Web.Models;
 using DraftLeague.Web.Services;
@@ -264,6 +265,26 @@ public class SnapshotRestoreTests : IAsyncLifetime
 
         var afterStats = Norm(await admin.GetFromJsonAsync<JsonElement>($"/api/leagues/{leagueId}/draft-stats"));
         Assert.Equal(beforeStats, afterStats);
+    }
+
+    [Fact]
+    public async Task Restore_brings_a_scrims_result_back_unplayed()
+    {
+        var leagueId = await SeedAsync(matchCount: 1, played: 1);
+        var admin = await AdminAsync();
+        var snap = JsonNode.Parse(await admin.GetStringAsync($"/api/leagues/{leagueId}/snapshot"))!;
+        snap["matches"]![0]!["replayLog"] = "|tier|[Gen 9 Champions] NatDex Scrims\n" + BattleLog;
+
+        var r = await RestoreAsync(admin, leagueId, JsonSerializer.SerializeToElement(snap));
+        Assert.Equal(0, r.GetProperty("recorded").GetInt32());
+
+        var facts = await DbFactsAsync(leagueId);
+        Assert.Equal((0, 0, 0, 0), (facts.PlayedMatches, facts.HomeWins, facts.Crits, facts.PikachuKills));
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var match = await db.Matches.SingleAsync(m => m.LeagueId == leagueId);
+        Assert.Null(match.ReplayLog);
+        Assert.Null(match.HomeTeamExport);
     }
 
     [Fact]

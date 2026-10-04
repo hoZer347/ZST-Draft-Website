@@ -4,7 +4,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
-const { Teams, Dex, TeamValidator, toID } = require('pokemon-showdown');
+// The same engine lib/random-team.js uses: RESTRICTION_FORMAT is a champions-mod
+// format, which the npm package's dex has never heard of.
+const { Teams, Dex, TeamValidator, toID } = require('../lib/engine').requireEngine();
 const { buildRandomTeam, buildTeamWithTera, randomSet, movePool, legalizeSet,
   validateTeam, validatorForSets, RESTRICTIONS, RESTRICTION_FORMAT } = require('../lib/random-team');
 
@@ -40,27 +42,28 @@ test('a non-mega keeps its own species and gets a held item', () => {
   assert.ok(set.item && set.item.length > 0, 'a non-mega carries a random item');
 });
 
-test('sets carry a random-but-legal nature, EV spread, and IV spread', () => {
+test('sets carry a random-but-legal nature, Stat Point spread, and IV spread', () => {
   const stats = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
   const natureNames = new Set(Dex.natures.all().map((n) => n.name));
   const seenNatures = new Set();
-  // Sample many sets so the legality checks and the "not all Hardy/84/31" variety
-  // claims are exercised across the random space, not one lucky draw.
+  // Sample many sets so the legality checks and the "not all Hardy" variety claims are
+  // exercised across the random space, not one lucky draw. Champions replaced EVs with
+  // Stat Points: 66 per mon, at most 32 in a stat, and no 4-point granularity.
   for (let i = 0; i < 300; i++) {
     const set = randomSet('garchomp');
     assert.ok(natureNames.has(set.nature), `nature ${set.nature} is a real nature`);
     seenNatures.add(set.nature);
+    assert.equal(set.level, 50, 'Champions battles are level 50');
 
     let total = 0;
     for (const s of stats) {
       const ev = set.evs[s];
-      assert.ok(Number.isInteger(ev) && ev >= 0 && ev <= 252, `EV ${s}=${ev} in 0..252`);
-      assert.equal(ev % 4, 0, `EV ${s}=${ev} is a multiple of 4`);
+      assert.ok(Number.isInteger(ev) && ev >= 0 && ev <= 32, `Stat Points ${s}=${ev} in 0..32`);
       total += ev;
       const iv = set.ivs[s];
       assert.ok(Number.isInteger(iv) && iv >= 0 && iv <= 31, `IV ${s}=${iv} in 0..31`);
     }
-    assert.ok(total <= 510, `EV total ${total} <= 510`);
+    assert.ok(total <= 66, `Stat Point total ${total} <= 66`);
   }
   // Randomness actually varies the nature (not pinned to one value).
   assert.ok(seenNatures.size > 5, `saw ${seenNatures.size} distinct natures over 300 sets`);
@@ -180,7 +183,9 @@ test('Showdown refuses to submit a team that carries an evasion move', () => {
 test('a generated set passes the format\'s evasion / OHKO / swagger clauses', () => {
   // Our built teams carry none of the restricted options, so a validator running
   // exactly those clauses accepts them (no evasion/OHKO/swagger complaint).
-  const validator = new TeamValidator('gen9doublescustomgame@@@Evasion Clause, OHKO Clause, Swagger Clause');
+  // -Swagger, not 'Swagger Clause': the engine dropped that rule, so the league format
+  // bans the move directly (see showdown-config/custom-formats.js).
+  const validator = new TeamValidator('gen9doublescustomgame@@@Evasion Clause, OHKO Clause, -Swagger');
   const team = ['garchomp', 'dragonite', 'tyranitar'].map(randomSet);
   const errors = validator.validateTeam(team) || [];
   assert.ok(!errors.some((e) => /evasion|OHKO|swagger/i.test(e)), `unexpected clause error: ${errors}`);
@@ -266,15 +271,19 @@ test('custom-megas.js is well-formed: string-format stones mapping base <-> a li
 
 const MEGA_ENGINE = Dex.species.get('malamarmega').exists
   ? false
-  : 'custom megas not merged into node_modules, start the battle server (scripts/showdown.js) once';
+  : 'engine has no Malamar-Mega: build the client once (it produces the champions engine), or start the battle server so the custom megas get merged';
 
-test('a merged custom mega is a real mega species its string stone evolves', { skip: MEGA_ENGINE }, () => {
+test('a league mega is a real mega species its stone evolves', { skip: MEGA_ENGINE }, () => {
   const sp = Dex.species.get('malamarmega');
   assert.ok(sp.isMega, 'Malamar-Mega is a mega');
   assert.equal(sp.baseSpecies, 'Malamar');
   const stone = Dex.items.get(sp.requiredItem);
-  assert.equal(stone.megaEvolves, 'Malamar');
-  assert.equal(stone.megaStone, 'Malamar-Mega');
+  // Two shapes: the champions engine maps {baseSpecies: megaForme}, and the older
+  // engine (with showdown-config/custom-megas.js merged in) names the mega directly.
+  assert.deepEqual(
+    typeof stone.megaStone === 'string' ? stone.megaStone : stone.megaStone['Malamar'],
+    'Malamar-Mega'
+  );
 });
 
 test('a custom mega slug is fielded as its BASE form holding its stone', { skip: MEGA_ENGINE }, () => {

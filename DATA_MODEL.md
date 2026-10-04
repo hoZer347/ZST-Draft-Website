@@ -101,6 +101,10 @@ stateDiagram-v2
    and steps `CurrentIndex` back. Allowed for an admin **or** the coach who made it.
 8. **Abort** (admin, `POST /api/admin/drafts/{id}/abort`): undoes every pick, restores
    the pool, clears the clock, returns to `NotStarted`.
+9. **Refresh the pool** (admin, `POST /api/admin/drafts/{id}/sync-pokedex`): re-pulls
+   the pool from the source sheet without starting anything. Readied players, teams
+   and draft state are untouched. `NotStarted` only, since a re-sync deletes undrafted
+   mons the sheet no longer lists.
 
 All mutations serialize on one process-wide lock, so a coach's pick and the clock's
 auto-pick can never both burn the same turn.
@@ -113,6 +117,7 @@ auto-pick can never both burn the same turn.
 | POST | `/api/drafts/{id}/offer` , `/pick` | on-clock coach |
 | POST | `/api/drafts/{id}/rollback` | admin or last picker |
 | POST | `/api/admin/drafts/{id}/start` , `/abort` | admin |
+| POST | `/api/admin/drafts/{id}/sync-pokedex` | admin, `NotStarted` only |
 
 Live updates arrive on the `/hubs/draft` SignalR hub (`turnChanged`, `pickMade`,
 `optionsOffered`, `pickSkipped`, `pickRolledBack`, `draftStateChanged`); the client

@@ -1,8 +1,8 @@
 'use strict';
 
-const { Teams, Dex } = require('pokemon-showdown');
+const { Teams, Dex } = require('./engine').requireEngine();
 
-// Four broadly-useful coverage moves. In gen9customgame movesets aren't
+// Four broadly-useful coverage moves. In a custom game movesets aren't
 // validated, so this lets any drafted species battle without per-species
 // learnset wrangling. Real matches will use each coach's own teambuilder
 // export instead of these filler sets, this is only for headless proofs and
@@ -28,8 +28,11 @@ function packDraftTeam(speciesKeys) {
       nature: 'Hardy',
       gender: '',
       item: '',
-      level: 100,
-      evs: { hp: 84, atk: 84, def: 84, spa: 84, spd: 84, spe: 84 },
+      // Champions numbers: battles are level 50, and a mon gets 66 Stat Points
+      // (max 32 per stat) rather than 510 EVs, so spread 11 across the six. IVs
+      // don't exist in Champions; its stat formula never reads them.
+      level: 50,
+      evs: { hp: 11, atk: 11, def: 11, spa: 11, spd: 11, spe: 11 },
       ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 },
     };
   });

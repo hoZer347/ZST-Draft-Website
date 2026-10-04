@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 namespace DraftLeague.Web.Tests;
 
@@ -81,9 +82,13 @@ public class AuthTests(DraftLeagueFactory factory) : IClassFixture<DraftLeagueFa
     }
 
     [Fact]
-    public async Task Refresh_rotates_and_the_old_token_dies()
+    public async Task Refresh_rotates_and_the_old_token_dies_once_the_grace_window_passes()
     {
-        var client = factory.CreateClient();
+        // Jwt:RefreshGraceSeconds = 0 is strict single use, which is what the
+        // stolen-token case looks like: the replay is nowhere near the rotation.
+        using var strict = factory.WithWebHostBuilder(b => b.ConfigureAppConfiguration((_, cfg) =>
+            cfg.AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:RefreshGraceSeconds"] = "0" })));
+        var client = strict.CreateClient();
 
         var issued = await (await client.PostAsync("/dev/token/coach-2", null))
             .Content.ReadFromJsonAsync<DraftLeagueFactory.DevToken>();
@@ -91,9 +96,36 @@ public class AuthTests(DraftLeagueFactory factory) : IClassFixture<DraftLeagueFa
         var first = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = issued!.RefreshToken });
         first.EnsureSuccessStatusCode();
 
-        // Replaying the spent token is the stolen-token case: it must fail.
         var replay = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = issued.RefreshToken });
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+    }
+
+    // Two tabs share one stored refresh token and can present it at the same
+    // instant. Failing the second one used to clear the session and bounce the
+    // user through Discord again, so inside the grace window it still works.
+    [Fact]
+    public async Task Racing_refreshes_with_the_same_token_both_succeed()
+    {
+        var client = factory.CreateClient();
+
+        var issued = await (await client.PostAsync("/dev/token/coach-3", null))
+            .Content.ReadFromJsonAsync<DraftLeagueFactory.DevToken>();
+
+        var first = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = issued!.RefreshToken });
+        first.EnsureSuccessStatusCode();
+
+        var second = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken = issued.RefreshToken });
+        second.EnsureSuccessStatusCode();
+
+        // Same user on both, and the pairs are distinct sessions.
+        var a = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var b = await second.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(
+            a.GetProperty("user").GetProperty("discordId").GetString(),
+            b.GetProperty("user").GetProperty("discordId").GetString());
+        Assert.NotEqual(
+            a.GetProperty("refreshToken").GetString(),
+            b.GetProperty("refreshToken").GetString());
     }
 
     [Fact]

@@ -362,8 +362,8 @@ if (app.Environment.IsDevelopment())
         if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
         var draft = await db.Drafts.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
         if (draft is null) return Results.NotFound();
-        var changed = await sync.RefreshAsync(draft.LeagueId, ct);
-        return Results.Ok(new { changed });
+        var r = await sync.RefreshAsync(draft.LeagueId, ct);
+        return Results.Ok(new { changed = r.Changed, ok = r.Ok, error = r.Error });
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
     // Shortens the clock so auto-pick and warnings can be exercised without

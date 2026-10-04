@@ -5,9 +5,8 @@
 // On every finished battle, POST the full battle log to the .NET league server,
 // which works out which scheduled match it was (by mapping each side's mons to
 // the team that drafted them) and records the result + standings + stats. Games
-// that aren't league matches (teambuilder test battles, already-reported matches)
-// are acknowledged and ignored server-side, so this fires harmlessly for all
-// battles.
+// that aren't league matches (scrims, teambuilder test battles) are acknowledged
+// and ignored server-side, so this fires harmlessly for all battles.
 //
 // Installed into the bundled server's dist/server/chat-plugins/ on start by
 // scripts/showdown.js (which also sets DRAFT_REPORT_URL and the secret-file env),

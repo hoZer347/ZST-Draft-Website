@@ -261,6 +261,10 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
             HomeScore = homeScore,
             AwayScore = awayScore,
             ReplayUrl = url,
+            // Kept so the game can be backed out later, and so the scoreboard can count
+            // its faints per side.
+            ReplayLog = battleLog,
+            ReplayHomeSide = "p1",
             ReportedAt = DateTimeOffset.UtcNow,
             ScheduledFor = null,
         });
@@ -281,8 +285,12 @@ public class SeasonSimulator(AppDbContext db, HttpClient http, ILogger<SeasonSim
         {
             if (!statByPick.TryGetValue(pick.Id, out var st)) continue;
             st.GamesPlayed++;
+            st.Starts += gs.Started ? 1 : 0;
+            st.Finishes += gs.Finished ? 1 : 0;
             st.Kills += gs.Kills;
             st.Deaths += gs.Deaths;
+            st.AlliesKoed += gs.AlliesKoed;
+            st.SelfKos += gs.SelfKos;
             st.Crits += gs.Crits;
             st.ActiveTurns += gs.ActiveTurns;
             st.PlayedTurns += scraped.Turns; // this game's turns count toward usage presence

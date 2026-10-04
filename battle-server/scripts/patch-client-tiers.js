@@ -32,6 +32,39 @@ const { BattleTeambuilderTable: T } = require(tablePath);
 const ORDER = ['S', 'A', 'B', 'C', 'X', 'Z'];
 const HEADER = { X: 'Banned (X)', S: 'S', A: 'A', B: 'B', C: 'C', Z: 'Bad (Z)' };
 
+// Formes that are the SAME draft pick as their base, so the picker must offer them
+// alongside it: a move-triggered forme (Keldeo-Resolute via Secret Sword) and a
+// type-item forme (Silvally + a memory, Genesect + a drive, Arceus + a plate). The
+// roster validator collapses both onto the base, so a coach who drafted Silvally may
+// bring Silvally-Water (baseFormeId in showdown-config/custom-formats.js). The sheet
+// only lists the base, so tiers.json never carries the forme, and an unlisted mon is
+// Illegal in the teambuilder: give each one its base's tier here. Read from the
+// client's own dex, the same data the teambuilder resolves species with.
+//
+// An item forme counts only when its stats AND abilities are the base's, which is what
+// keeps Giratina-Origin, Necrozma-Ultra, Zygarde-Mega, the Ogerpon masks and
+// Venomicon-Epilogue out: those are separate draft picks with their own tier row.
+const toID = (x) => ('' + (x || '')).toLowerCase().replace(/[^a-z0-9]/g, '');
+const SHARED_FORMES = (() => {
+  const { BattlePokedex } = require(path.join(ROOT, 'client', 'play.pokemonshowdown.com', 'data', 'pokedex.js'));
+  const sameMap = (a, b) => {
+    const ka = Object.keys(a || {});
+    return ka.length === Object.keys(b || {}).length && ka.every((k) => a[k] === b[k]);
+  };
+  const byBase = {};
+  for (const id of Object.keys(BattlePokedex || {})) {
+    const sp = BattlePokedex[id];
+    if (!sp || !sp.changesFrom || typeof sp.battleOnly === 'string') continue;
+    const base = BattlePokedex[toID(sp.changesFrom)];
+    const hasItem = sp.requiredItem || (sp.requiredItems && sp.requiredItems.length);
+    const shared = sp.requiredMove ||
+      (hasItem && base && sameMap(sp.baseStats, base.baseStats) && sameMap(sp.abilities, base.abilities));
+    if (!shared) continue;
+    (byBase[toID(sp.changesFrom)] = byBase[toID(sp.changesFrom)] || []).push(id);
+  }
+  return byBase;
+})();
+
 function patchTable(tbl) {
   if (!tbl || !Array.isArray(tbl.tiers)) return null;
 
@@ -68,6 +101,21 @@ function patchTable(tbl) {
     added++;
   }
 
+  // Formes that share a draft pick inherit their base's tier (see SHARED_FORMES above),
+  // so the teambuilder offers them alongside it instead of greying them out as Illegal.
+  let formes = 0;
+  for (const base of Object.keys(SHARED_FORMES)) {
+    const t = tiers[base];
+    if (!t || !ORDER.includes(t)) continue;
+    for (const id of SHARED_FORMES[base]) {
+      if (seen.has(id)) continue;
+      groups[t].push(id);
+      override[id] = t;
+      seen.add(id);
+      formes++;
+    }
+  }
+
   const newTiers = [];
   for (const t of ORDER) {
     if (!groups[t].length) continue;
@@ -88,14 +136,16 @@ function patchTable(tbl) {
   const END = 1e9;
   tbl.formatSlices = { AG: 0, Uber: 0, OU: 0, UU: END, DUber: 0, DOU: 0, DUU: END };
 
-  return { ...Object.fromEntries(ORDER.map((t) => [t, groups[t].length])), Illegal: illegal, Added: added };
+  return { ...Object.fromEntries(ORDER.map((t) => [t, groups[t].length])), Illegal: illegal, Added: added, SharedFormes: formes };
 }
 
 // Patch the top-level table (gen9 singles) plus the gen9 doubles/natdex tables,
 // so whichever one the client resolves our custom format to shows our tiers.
+// `natdexchampions` / `champions` are the tables an id containing "champions"
+// resolves to (battle-dex-search.ts), which is what both league formats now are.
 const report = {};
 report['(top-level)'] = patchTable(T);
-for (const k of ['gen9doubles', 'gen9natdex', 'gen9natdexdoubles']) {
+for (const k of ['gen9doubles', 'gen9natdex', 'gen9natdexdoubles', 'natdexchampions', 'champions']) {
   if (T[k]) report[k] = patchTable(T[k]);
 }
 

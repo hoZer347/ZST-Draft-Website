@@ -17,9 +17,15 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { engineDir, hasChampions, installCustomFormats } = require('../lib/engine');
 
-const psDir = path.dirname(require.resolve('pokemon-showdown/package.json'));
+// The league's formats run on the `champions` mod, which the npm pokemon-showdown
+// package doesn't ship; lib/engine.js picks the Champions-capable checkout (and says
+// how to get one if it's missing) rather than starting a server that would silently
+// drop both formats.
+const psDir = engineDir({ requireChampions: true });
 const port = String(process.env.PORT || 8787);
+console.log('[showdown] engine:', psDir);
 
 // Local-dev config: allow same-IP matchmaking. Showdown's ladder refuses to
 // pair two searchers from the same IP (anti-self-laddering), so on one machine
@@ -85,40 +91,38 @@ function ensureLocalDevConfig() {
 
 ensureLocalDevConfig();
 
-// Install our custom formats into the bundled server. Showdown loads them from
+// Install our custom formats into the engine. Showdown loads them from
 // dist/config/custom-formats.js (the --skip-build server runs from dist) and
 // merges them into the format list the teambuilder + ladder show. We copy our
 // repo file over it on every start, so this repo stays the source of truth and
-// the format survives an `npm install` that resets node_modules.
-function installCustomFormats() {
-  const src = path.join(__dirname, '..', 'showdown-config', 'custom-formats.js');
-  const dest = path.join(psDir, 'dist', 'config', 'custom-formats.js');
-  try {
-    fs.copyFileSync(src, dest);
-    console.log('[showdown] installed custom formats → dist/config/custom-formats.js');
-  } catch (e) {
-    console.warn('[showdown] could not install custom formats:', e.message);
+// the formats survive a rebuild of the engine. engineDir() above has already done
+// this; the explicit call is what makes it visible here, and it logs.
+console.log(installCustomFormats(psDir)
+  ? '[showdown] installed custom formats -> dist/config/custom-formats.js'
+  : '[showdown] custom formats already up to date');
+
+// Install our chat plugins. The bundled server only loads plugins from
+// dist/server/chat-plugins/, so (like the custom formats) we copy every file in
+// showdown-config/chat-plugins/ in on every start, keeping this repo the source of
+// truth. Currently:
+//   draft-report.js - POSTs each finished battle's log to the .NET league server,
+//                     which records the scheduled match.
+//   draft-chat.js   - lets any named coach chat in battle rooms and PMs without a
+//                     registered account (we run no login server).
+function installChatPlugins() {
+  const srcDir = path.join(__dirname, '..', 'showdown-config', 'chat-plugins');
+  const destDir = path.join(psDir, 'dist', 'server', 'chat-plugins');
+  for (const file of fs.readdirSync(srcDir).filter(f => f.endsWith('.js'))) {
+    try {
+      fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+      console.log(`[showdown] installed ${file} → dist/server/chat-plugins/`);
+    } catch (e) {
+      console.warn(`[showdown] could not install ${file}:`, e.message);
+    }
   }
 }
 
-installCustomFormats();
-
-// Install our auto-report chat plugin. On every finished battle it POSTs the log
-// to the .NET league server, which records the scheduled match. The bundled
-// server only loads plugins from dist/server/chat-plugins/, so (like the custom
-// formats) we copy our repo file in on every start.
-function installReportPlugin() {
-  const src = path.join(__dirname, '..', 'showdown-config', 'chat-plugins', 'draft-report.js');
-  const dest = path.join(psDir, 'dist', 'server', 'chat-plugins', 'draft-report.js');
-  try {
-    fs.copyFileSync(src, dest);
-    console.log('[showdown] installed draft-report plugin → dist/server/chat-plugins/');
-  } catch (e) {
-    console.warn('[showdown] could not install draft-report plugin:', e.message);
-  }
-}
-
-installReportPlugin();
+installChatPlugins();
 
 // Merge the league's custom "megas" (ChampionsRegMA content) into the bundled
 // engine's dex. They're PLAIN gen-9 mega data, species + string-format stones +
@@ -128,6 +132,12 @@ installReportPlugin();
 // additive approach doesn't). We copy the data file in and append an idempotent
 // Object.assign to the three compiled data modules, re-merging after an `npm
 // install` resets node_modules, exactly like the custom formats above.
+//
+// DEAD ON A CHAMPIONS ENGINE, and skipped there: that build ships all of these megas
+// natively (Barbaracle, Dragalge, Eelektross, Falinks and the rest), with their real
+// Champions abilities, and merging our generated copies over the top would only
+// downgrade the few whose custom ability effect this file never ported. Kept for a
+// fallback engine that has no champions mod.
 //
 // NOTE the target is `module.exports`, not `exports`: the data modules are esbuild
 // output ending in `module.exports = __toCommonJS(...)`, so the CJS `exports` we'd
@@ -160,7 +170,11 @@ function installCustomMegas() {
   }
 }
 
-installCustomMegas();
+if (hasChampions(psDir)) {
+  console.log('[showdown] champions engine: skipping the custom-mega merge (native megas)');
+} else {
+  installCustomMegas();
+}
 
 // The bundled server has optional chat plugins (youtube, mafia, seasons, …) that
 // persist JSON into config/chat-plugins/. That dir doesn't ship, so they log

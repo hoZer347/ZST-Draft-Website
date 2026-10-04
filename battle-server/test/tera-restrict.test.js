@@ -7,10 +7,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Dex } = require('pokemon-showdown');
+const { Dex } = require('../lib/engine').requireEngine();
 const { teraAllowedBaseIds, applyTeraRestriction } = require('../showdown-config/custom-formats');
 
-const dex = Dex.mod('gen9');
+const dex = Dex.mod('champions');
 
 // A roster with one of every relevant case. Megas/Shedinja are Tera-barred at draft, so
 // their `tera` is null (that is what makes them fall out, not any special-casing here).

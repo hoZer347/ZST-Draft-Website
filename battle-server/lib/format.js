@@ -1,17 +1,17 @@
 'use strict';
 
-const { Dex, TeamValidator, Teams } = require('pokemon-showdown');
+const { Dex, TeamValidator, Teams } = require('./engine').requireEngine();
 
 /**
  * The draft league's battle format.
  *
- * We don't ship a format file into the pokemon-showdown package; instead we
- * build on the sim's built-in `gen9customgame` and layer our own rules on with
+ * We don't ship a format file into the engine for this one; instead we
+ * build on its built-in Champions doubles custom game and layer our own rules on with
  * the `base@@@rule,rule,...` custom-rules syntax the sim already understands.
  * That keeps the format as plain, reviewable data right here, the one place to
  * develop the league's rules.
  *
- * Why customgame as the base (not gen9ou etc.): our pool is a hand-picked draft
+ * Why customgame as the base (not the league format itself): our pool is a hand-picked draft
  * list, so we do NOT want a tier-based banlist. We start from "anything goes"
  * and add back only the competitive-integrity clauses we actually want.
  *
@@ -24,7 +24,11 @@ const { Dex, TeamValidator, Teams } = require('pokemon-showdown');
  * not. Develop the rule list through that guard, never around it.
  */
 
-const BASE_FORMAT = 'gen9customgame';
+// The Champions DOUBLES custom game: the same mod and game type the league plays
+// (see showdown-config/custom-formats.js), so a headless battle uses the real
+// mechanics, but still a custom game, which validates no learnsets. That matters
+// here: lib/pack.js builds filler movesets that no species actually learns.
+const BASE_FORMAT = 'gen9championsdoublescustomgame';
 
 /**
  * The league ruleset. Each entry is a sim rule name or a ban/unban token, and
@@ -39,7 +43,7 @@ const BASE_FORMAT = 'gen9customgame';
  *   - `-Mega`: megas are drafted from our pool, so they stay legal.
  */
 const DRAFT_RULES = [
-  // Team Preview is intentionally omitted, gen9customgame already includes it,
+  // Team Preview is intentionally omitted, the customgame base already includes it,
   // and re-declaring it is a duplicate rule that trips the silent-null (above).
   'Species Clause',        // no two of the same species (dex#) on a team
   'Nickname Clause',       // no misleading nicknames

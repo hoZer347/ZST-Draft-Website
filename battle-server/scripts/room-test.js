@@ -30,7 +30,7 @@ function autoPlay(room, side) {
 async function main() {
   const room = new BattleRoom({
     id: 'match-test',
-    format: 'gen9customgame',
+    format: 'gen9championsdoublescustomgame',
     p1: { name: 'Team Alpha', team: packDraftTeam(TEAM_A) },
     p2: { name: 'Team Beta', team: packDraftTeam(TEAM_B) },
   });

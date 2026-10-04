@@ -255,6 +255,28 @@ public class ShowdownReportTests : DraftScenarioBase
     }
 
     [Fact]
+    public async Task A_scrims_rematch_leaves_the_recorded_league_game_alone()
+    {
+        var seed = await SeedAsync();
+        (await ReportAsync(Log, AliceBuildV1, BobBuildV1)).EnsureSuccessStatusCode();   // Alice wins 2-1
+        var scrim = await ReportAsync("|tier|[Gen 9 Champions] NatDex Scrims\n" + LogBobWins, AliceBuildV2, BobBuildV2);
+        scrim.EnsureSuccessStatusCode();
+        Assert.False((await scrim.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("recorded").GetBoolean());
+
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var match = await db.Matches.FirstAsync(m => m.Id == seed.Match.Id);
+        Assert.Equal(MatchResult.HomeWin, match.Result);
+        Assert.Equal(AliceBuildV1, match.HomeTeamExport);
+        var home = await db.Teams.FirstAsync(t => t.Id == seed.Home.Id);
+        Assert.Equal(1, home.Wins);
+        Assert.Equal(0, home.Losses);
+        var gengar = await db.PokemonStats.SingleAsync(s => s.PickId == seed.Picks["gengar"].Id);
+        Assert.Equal(0, gengar.Kills);
+    }
+
+    [Fact]
     public async Task A_server_rebattle_redoes_the_recorded_match_and_refreshes_builds()
     {
         var seed = await SeedAsync();

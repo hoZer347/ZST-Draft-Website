@@ -81,6 +81,8 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
     public async Task<Result> ScoreLogAsync(Match match, string log, CancellationToken ct = default)
     {
         var parsed = ParseLog(log);
+        if (IsScrims(parsed))
+            return new(false, "Scrims are practice games, so they aren't recorded as league results.");
         if (parsed.Winner is null && !parsed.Tie)
             return new(false, "The replay doesn't look finished, no winner is recorded.");
 
@@ -138,10 +140,10 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
     /// <summary>
     /// Given a finished battle's log (from our own Showdown server), works out which
     /// scheduled match it is by mapping each side's revealed species to the team that
-    /// drafted them, then finds the still-pending match between those two teams and
-    /// scores it. Returns Ok=false (with a reason) for anything that isn't a league
-    /// game, teambuilder test battles, already-reported matches, etc., so the caller
-    /// can ignore it quietly.
+    /// drafted them, then finds the pending match between those two teams, or the
+    /// latest recorded one as a redo, and scores it. Returns Ok=false (with a reason)
+    /// for anything that isn't a league game, scrims, teambuilder test battles, etc.,
+    /// so the caller can ignore it quietly.
     /// </summary>
     public async Task<AutoReport> ReportAsync(string log, CancellationToken ct = default)
     {
@@ -217,9 +219,20 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         return ids;
     }
 
+    /// <summary>How many mons each Showdown side ("p1"/"p2") lost in a stored battle log.</summary>
+    public static Dictionary<string, int> FaintsBySide(string log) => ParseLog(log).Faints;
+
+    /// <summary>Whether a battle log is a Scrims practice game, which is never a league result.</summary>
+    public static bool IsScrims(string log) => IsScrims(ParseLog(log));
+
+    private static bool IsScrims(Parsed parsed) =>
+        parsed.Format?.Contains("scrims", StringComparison.OrdinalIgnoreCase) == true;
+
     // ── log parsing ──────────────────────────────────────────────────────
 
     private record Parsed(
+        // The |tier| line's format name, e.g. "[Gen 9 Champions] NatDex Scrims".
+        string? Format,
         string? Winner,
         bool Tie,
         Dictionary<string, string> Players,
@@ -232,9 +245,9 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         Dictionary<string, int> Sizes);
 
     /// <summary>
-    /// Walks the pipe-delimited battle log. Collects the two players, the species
-    /// each side revealed (team-preview <c>|poke|</c> plus any <c>|switch|/|drag|</c>),
-    /// each side's faint count, and the winner.
+    /// Walks the pipe-delimited battle log. Collects the format, the two players, the
+    /// species each side revealed (team-preview <c>|poke|</c> plus any
+    /// <c>|switch|/|drag|</c>), each side's faint count, and the winner.
     /// </summary>
     private static Parsed ParseLog(string log)
     {
@@ -243,6 +256,7 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var faints = new Dictionary<string, int>();
         var sizes = new Dictionary<string, int>();     // |teamsize| (authoritative roster count)
         var pokeCount = new Dictionary<string, int>(); // |poke| line count, a fallback
+        string? format = null;
         string? winner = null;
         var tie = false;
 
@@ -279,6 +293,10 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
                     faints[side] = faints.GetValueOrDefault(side) + 1;
                     break;
 
+                case "tier" when parts.Length >= 3:
+                    format = parts[2].Trim();
+                    break;
+
                 case "win" when parts.Length >= 3:
                     winner = parts[2].Trim();
                     break;
@@ -294,7 +312,7 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         foreach (var (side, n) in pokeCount)
             if (!sizes.ContainsKey(side)) sizes[side] = n;
 
-        return new Parsed(winner, tie, players, brought, faints, sizes);
+        return new Parsed(format, winner, tie, players, brought, faints, sizes);
     }
 
     /// <summary>Species out of a "Charizard-Mega-Y, L50, M" detail string.</summary>

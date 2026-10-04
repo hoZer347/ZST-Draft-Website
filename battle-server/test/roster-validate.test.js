@@ -3,15 +3,16 @@
 // Unit tests for the ZST Season 4 draft-roster validator (checkRoster in
 // showdown-config/custom-formats.js): every mon must be drafted, mega stones must
 // sit on the species they evolve AND be a mega the coach drafted, and C-tier picks
-// are locked to their drafted Tera type. Uses the stock Dex (stock megas only, since
-// the custom megas are merged into node_modules at server start, not in tests).
+// are locked to their drafted Tera type. Runs against the champions dex the live
+// format uses, so the Champions-only megas and its megaStone MAP format (rather
+// than the older plain-string one) are exercised for real.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Dex } = require('pokemon-showdown');
-const { checkRoster } = require('../showdown-config/custom-formats');
+const { Dex } = require('../lib/engine').requireEngine();
+const { checkRoster, restoreTeraTypes, baseFormeId } = require('../showdown-config/custom-formats');
 
-const dex = Dex.mod('gen9');
+const dex = Dex.mod('champions');
 
 // A drafted roster: base mons, one mega (Charizard-Mega-Y), a C-tier with a fixed
 // Tera type. slug is the sprite slug the .NET endpoint returns.
@@ -165,6 +166,39 @@ test('the drafted origin forme is allowed', () => {
   assert.deepEqual(checkRoster([set({ species: 'Giratina-Origin', item: 'Griseous Core' })], roster, dex), []);
 });
 
+// ── Champions megas: native to the mod, and their stones map base -> mega ──
+
+test('a Champions-only mega is allowed on its base holding the stone', () => {
+  const roster = { found: true, mons: [{ slug: 'falinks-mega', tier: 'B', tera: null }] };
+  assert.deepEqual(checkRoster([set({ species: 'Falinks', item: 'Falinksite' })], roster, dex), []);
+});
+
+test("a Champions mega's stone on the wrong species is flagged", () => {
+  const roster = { found: true, mons: [{ slug: 'garchomp', tier: 'A', tera: null }] };
+  const problems = checkRoster([set({ species: 'Garchomp', item: 'Falinksite' })], roster, dex);
+  assert.ok(problems.some((p) => /belongs to Falinks/i.test(p)), problems.join(' | '));
+});
+
+// ── restoreTeraTypes: Champions strips teraType, the league puts it back ────
+
+test('restoreTeraTypes puts a declared Tera type back on the set', () => {
+  const team = [set({ species: 'Gengar' })]; // the base validation deleted teraType
+  assert.deepEqual(restoreTeraTypes(team, ['Ghost'], dex), []);
+  assert.equal(team[0].teraType, 'Ghost');
+});
+
+test('restoreTeraTypes defaults an undeclared type to the species primary type', () => {
+  const team = [set({ species: 'Garchomp' })];
+  assert.deepEqual(restoreTeraTypes(team, [undefined], dex), []);
+  assert.equal(team[0].teraType, 'Dragon');
+});
+
+test('restoreTeraTypes rejects a type that does not exist', () => {
+  const team = [set({ species: 'Gengar' })];
+  const problems = restoreTeraTypes(team, ['Sound'], dex);
+  assert.ok(problems.some((p) => /Terastal type \(Sound\) is invalid/i.test(p)), problems.join(' | '));
+});
+
 test('a roster entry with no slug falls back to matching by name', () => {
   // The .NET endpoint returns slug = PokemonEntry.Sprite, which can be null; the
   // validator then keys off the pokemon name instead.
@@ -172,4 +206,101 @@ test('a roster entry with no slug falls back to matching by name', () => {
   assert.deepEqual(checkRoster([set({ species: 'Snorlax' })], roster, dex), []);
   const problems = checkRoster([set({ species: 'Gengar' })], roster, dex);
   assert.ok(problems.some((p) => /Gengar is not on your drafted team/i.test(p)), problems.join(' | '));
+});
+
+// ── Move-triggered formes: Keldeo-Resolute is the same pick as Keldeo ────────
+
+test('a drafted Keldeo may be brought as Keldeo-Resolute', () => {
+  const roster = { found: true, mons: [{ slug: 'keldeo', tier: 'A', tera: null }] };
+  assert.deepEqual(checkRoster([set({ species: 'Keldeo-Resolute' })], roster, dex), []);
+  assert.deepEqual(checkRoster([set({ species: 'Keldeo' })], roster, dex), []);
+});
+
+test('a C-tier Keldeo keeps its drafted Tera type in Resolute forme', () => {
+  const roster = { found: true, mons: [{ slug: 'keldeo', tier: 'C', tera: 'Water' }] };
+  assert.deepEqual(checkRoster([set({ species: 'Keldeo-Resolute', teraType: 'Water' })], roster, dex), []);
+  const problems = checkRoster([set({ species: 'Keldeo-Resolute', teraType: 'Fairy' })], roster, dex);
+  assert.ok(problems.some((p) => /must use its drafted Tera type Water/i.test(p)), problems.join(' | '));
+});
+
+test('Keldeo-Resolute is still blocked for a coach who drafted neither forme', () => {
+  const problems = checkRoster([set({ species: 'Keldeo-Resolute' })], ROSTER, dex);
+  assert.ok(problems.some((p) => /Keldeo-Resolute is not on your drafted team/i.test(p)), problems.join(' | '));
+});
+
+test('only move-triggered formes collapse: Meloetta and Rayquaza-Mega are unaffected', () => {
+  // Meloetta-Pirouette and Rayquaza-Mega also have a requiredMove, but they are
+  // battle-only formes, so they keep collapsing via battleOnly, not the move rule,
+  // and a distinct-forme pick (Landorus-Therian) stays its own draft pick.
+  assert.equal(baseFormeId(dex, 'Meloetta-Pirouette'), 'meloetta');
+  assert.equal(baseFormeId(dex, 'Rayquaza-Mega'), 'rayquaza');
+  assert.equal(baseFormeId(dex, 'Landorus-Therian'), 'landorustherian');
+  assert.equal(baseFormeId(dex, 'Keldeo-Resolute'), 'keldeo');
+});
+
+// ── Type-item formes: every Silvally memory is the same pick as Silvally ────
+
+test('a drafted Silvally may be brought as any memory forme', () => {
+  const roster = { found: true, mons: [{ slug: 'silvally', tier: 'B', tera: null }] };
+  const team = [set({ species: 'Silvally-Water', item: 'Water Memory' })];
+  assert.deepEqual(checkRoster(team, roster, dex), []);
+  assert.deepEqual(checkRoster([set({ species: 'Silvally' })], roster, dex), []);
+  assert.deepEqual(checkRoster([set({ species: 'Silvally-Fairy', item: 'Fairy Memory' })], roster, dex), []);
+});
+
+test('a Genesect drive forme and an Arceus plate forme collapse the same way', () => {
+  assert.equal(baseFormeId(dex, 'Genesect-Douse'), 'genesect');
+  assert.equal(baseFormeId(dex, 'Arceus-Water'), 'arceus');
+  assert.equal(baseFormeId(dex, 'Silvally-Water'), 'silvally');
+});
+
+test('item formes that are their own mon stay distinct picks', () => {
+  // Restatted (Origin, Ultra, Zygarde-Mega) or re-abilitied (Ogerpon masks,
+  // Venomicon-Epilogue): a different mon, drafted on its own row.
+  assert.equal(baseFormeId(dex, 'Giratina-Origin'), 'giratinaorigin');
+  assert.equal(baseFormeId(dex, 'Necrozma-Ultra'), 'necrozmaultra');
+  assert.equal(baseFormeId(dex, 'Ogerpon-Wellspring'), 'ogerponwellspring');
+});
+
+test('a Silvally forme is still blocked for a coach who did not draft Silvally', () => {
+  const problems = checkRoster([set({ species: 'Silvally-Water', item: 'Water Memory' })], ROSTER, dex);
+  assert.ok(problems.some((p) => /Silvally-Water is not on your drafted team/i.test(p)), problems.join(' | '));
+});
+
+// ── Signature-ability formes (Greninja-Bond, Rockruff-Dusk) ─────────────────
+// A coach builds base Greninja and picks Battle Bond out of the teambuilder's
+// "Special Event Ability" slot; Showdown's own validator then rewrites the set to
+// Greninja-Bond (the only species the ability's +1 Atk/SpA/Spe on a KO fires for),
+// so checkRoster sees a species the coach never literally drafted. It is the same
+// pick, so it must pass.
+
+test('Battle Bond Greninja is the same draft pick as Greninja', () => {
+  const roster = { found: true, mons: [{ slug: 'greninja', tier: 'B', tera: null }] };
+  assert.deepEqual(checkRoster([set({ species: 'Greninja-Bond' })], roster, dex), []);
+  assert.deepEqual(checkRoster([set({ species: 'Greninja' })], roster, dex), []);
+});
+
+test('a C-tier Greninja keeps its drafted Tera type in Bond forme', () => {
+  const roster = { found: true, mons: [{ slug: 'greninja', tier: 'C', tera: 'Water' }] };
+  assert.deepEqual(checkRoster([set({ species: 'Greninja-Bond', teraType: 'Water' })], roster, dex), []);
+  const problems = checkRoster([set({ species: 'Greninja-Bond', teraType: 'Dark' })], roster, dex);
+  assert.ok(problems.some((p) => /must use its drafted Tera type Water/i.test(p)), problems.join(' | '));
+});
+
+test('Greninja-Bond is still blocked for a coach who drafted neither forme', () => {
+  const problems = checkRoster([set({ species: 'Greninja-Bond' })], ROSTER, dex);
+  assert.ok(problems.some((p) => /Greninja-Bond is not on your drafted team/i.test(p)), problems.join(' | '));
+});
+
+test('only signature-ability formes collapse, and only onto their own base', () => {
+  assert.equal(baseFormeId(dex, 'Greninja-Bond'), 'greninja');
+  assert.equal(baseFormeId(dex, 'Rockruff-Dusk'), 'rockruff');
+  // Greninja-Ash is the gen-7 Battle Bond form change, a battle-only forme the league
+  // never fields; it collapses via battleOnly, not this rule.
+  assert.equal(baseFormeId(dex, 'Greninja-Ash'), 'greninja');
+  // Zygarde-Complete's only ability is Zygarde's S slot too, but it is a battle-only
+  // forme of BOTH Zygarde and Zygarde-10%, so it must not be folded onto either.
+  assert.equal(baseFormeId(dex, 'Zygarde-Complete'), 'zygardecomplete');
+  // A plain alternate forme with its own ability set stays its own pick.
+  assert.equal(baseFormeId(dex, 'Rotom-Wash'), 'rotomwash');
 });

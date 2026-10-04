@@ -6,7 +6,7 @@
 //
 //   node scripts/format-check.js
 
-const { Dex } = require('pokemon-showdown');
+const { Dex } = require('../lib/engine').requireEngine();
 const { DRAFT_FORMAT_ID, DRAFT_RULES, resolve } = require('../lib/format');
 
 function main() {

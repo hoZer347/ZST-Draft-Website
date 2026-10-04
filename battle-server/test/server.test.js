@@ -53,7 +53,7 @@ test('/health reports ok and the active draft format', async () => {
   try {
     const body = await (await fetch(`${http}/health`)).json();
     assert.equal(body.ok, true);
-    assert.match(body.format, /^gen9customgame@@@/);
+    assert.match(body.format, /^gen9championsdoublescustomgame@@@/);
   } finally { await server.close(); }
 });
 
