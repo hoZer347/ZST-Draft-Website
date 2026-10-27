@@ -110,7 +110,7 @@ public class SnapshotRestoreTests : IAsyncLifetime
                 match.ReplayUrl = $"/api/matches/{match.Id}/replay";
                 match.HomeTeamExport = "Pikachu\nAbility: Static\n- Thunderbolt\n";
                 match.AwayTeamExport = "Gengar\nAbility: Levitate\n- Shadow Ball\n";
-                MatchReporting.ApplyToStandings(home, away, MatchResult.HomeWin, +1);
+                MatchReporting.ApplyToStandings(match, MatchResult.HomeWin, +1);
                 await recorder.ApplyAsync(match, "p1", BattleLog, MatchResult.HomeWin, +1, default);
                 await db.SaveChangesAsync(); // persist between games so stats accumulate, not duplicate
             }

@@ -8,9 +8,11 @@
 // Whatever origin serves this page must also appear in the server's
 // Cors:Origins config, or the browser will block every request.
 window.DRAFT_CONFIG = {
+  // A page on localhost is served by the .NET server it talks to (live :5211 or a
+  // throwaway test instance), except from the static dev host on :8000.
   apiBase:
     location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-      ? 'http://localhost:5211'
+      ? (location.port === '8000' ? 'http://localhost:5211' : '')
       // Self-hosted at loomhozer.ca: the same .NET server serves this page AND
       // the API, so calls are same-origin (relative "/api/..."). No CORS.
       : location.hostname.endsWith('loomhozer.ca')

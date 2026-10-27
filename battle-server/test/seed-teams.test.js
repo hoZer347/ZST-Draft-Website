@@ -38,6 +38,11 @@ test('matchup weeks seed one BLANK team per matchup', () => {
   ]);
 });
 
+test('a playoff matchup goes by its round, not its week', () => {
+  const res = seedTeams('', { matchups: [{ w: 9, l: 'Quarterfinals', o: 'Alice' }] });
+  assert.deepEqual(linesOf(res).map(parse).map((l) => l.key), [`${MATCHUP_FOLDER}/Quarterfinals vs Alice`]);
+});
+
 test('re-seeding the same matchups is idempotent (no dupes, no change)', () => {
   const matchups = [{ w: 1, o: 'Alice' }];
   const first = seedTeams('', { matchups });

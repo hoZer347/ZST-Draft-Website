@@ -14,10 +14,10 @@ exception: it holds operational habits, not user-facing docs.
 
 ## Keep the dev server running
 
-The .NET API + web app runs at **http://localhost:5211** (web `config.js` and the
-Cloudflare tunnels `dev.loomhozer.ca` / `zst.loomhozer.ca` all point there). The
-watchdog `server/keep-server-up.ps1` relaunches it (plus cloudflared and the Showdown
-servers) within ~5s of any going down.
+The .NET API + web app runs at **http://localhost:5211** (the Cloudflare tunnels
+`dev.loomhozer.ca` / `zst.loomhozer.ca` point there). The watchdog
+`server/keep-server-up.ps1` relaunches it (plus cloudflared and the Showdown servers)
+within ~5s of any going down.
 
 **After any change, restart the server and leave it up; never end a turn with :5211
 down.** Health check: `curl -s -o /dev/null -w "%{http_code}" http://localhost:5211/`
@@ -33,8 +33,8 @@ down.** Health check: `curl -s -o /dev/null -w "%{http_code}" http://localhost:5
 
 **Never leave `server/.server-paused` behind** (it silently keeps the server down); if
 :5211 is off, delete any stale one first. Config/appsettings-only changes still need
-`deploy-run.ps1` (config lives in `run/` too) but no rebuild. No schema change means
-don't recreate the DB.
+`deploy-run.ps1` (config lives in `run/` too) but no rebuild. Never recreate the DB:
+it holds the live season. New columns go in `server/Data/SchemaUpgrade.cs`.
 
 ## Restart the battle servers after editing their scripts
 

@@ -20,8 +20,9 @@ namespace DraftLeague.Web.Services;
 /// invents is the choices themselves (which tier, pick vs skip, which option) and the
 /// Showdown battle teams; every match is a real headless battle whose log is recorded
 /// through the built-in report pipeline (<see cref="ReplayScorer"/> +
-/// <see cref="MatchReporting"/>) that maps a game to its scheduled match. Without
-/// battles the schedule just stays Pending.
+/// <see cref="MatchReporting"/>) that maps a game to its scheduled match, and the
+/// playoffs are then played out the same way. Without battles the schedule just stays
+/// Pending.
 ///
 /// The counterpart to <see cref="SeasonSimulator"/> (which imports real Showdown
 /// replays). Use it to exercise the schedule / standings / stats / team pages end to
@@ -176,8 +177,7 @@ public class RandomSeasonSimulator(
         // ── battles: real headless Showdown games off random teams (the one allowed
         // fabrication), recorded through the built-in "detect the game, put it in the
         // schedule" pipeline. Without battles the schedule simply stays Pending. ──
-        var rosterByTeam = (await db.Picks.Include(p => p.PokemonEntry).Where(p => p.DraftId == draftId).ToListAsync(ct))
-            .GroupBy(p => p.TeamId).ToDictionary(g => g.Key, g => g.ToList());
+        var rosterByTeam = await RostersAsync(draftId, ct);
         var matches = await db.Matches
             .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
             .Where(m => m.LeagueId == leagueId).ToListAsync(ct);
@@ -187,11 +187,42 @@ public class RandomSeasonSimulator(
         var skipCount = await db.DraftSkips.CountAsync(s => s.DraftId == draftId, ct);
 
         var real = realBattles && await RunRealBattlesAsync(matches, rosterByTeam, ct);
+        if (real) await PlayPlayoffsAsync(leagueId, rosterByTeam, ct);
 
         log.LogInformation("Random season for league {League}: {Teams} teams, {Picks} picks, {Skips} skips, {Matches} matches (real battles: {Real})",
             leagueId, teamsCount, pickCount, skipCount, matches.Count, real);
         return new SimResult(teamsCount, pickCount, matches.Count, real, skipCount);
     }
+
+    /// <summary>
+    /// Finishes the league as it stands: every unplayed regular-season match, then the
+    /// playoffs, as real headless battles through the same report pipeline. Teams, rosters
+    /// and recorded results are kept, so a copy of a live league plays out from where it is.
+    /// Returns how many games were recorded.
+    /// </summary>
+    public async Task<int> PlayOutAsync(int draftId, CancellationToken ct = default)
+    {
+        var leagueId = await db.Drafts.Where(d => d.Id == draftId).Select(d => d.LeagueId).FirstAsync(ct);
+        Task<int> PlayedAsync() => db.Matches.CountAsync(m => m.LeagueId == leagueId && m.Result != MatchResult.Pending, ct);
+        var before = await PlayedAsync();
+
+        var rosterByTeam = await RostersAsync(draftId, ct);
+        var regular = await db.Matches
+            .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
+            .Where(m => m.LeagueId == leagueId && m.PlayoffRound == null && m.Result == MatchResult.Pending)
+            .ToListAsync(ct);
+        if (regular.Count > 0) await RunRealBattlesAsync(regular, rosterByTeam, ct);
+        await Playoffs.SyncAsync(db, leagueId, ct);
+        await PlayPlayoffsAsync(leagueId, rosterByTeam, ct);
+
+        var recorded = await PlayedAsync() - before;
+        log.LogInformation("Played out league {League}: {Recorded} games recorded", leagueId, recorded);
+        return recorded;
+    }
+
+    private async Task<Dictionary<int, List<Pick>>> RostersAsync(int draftId, CancellationToken ct) =>
+        (await db.Picks.Include(p => p.PokemonEntry).Where(p => p.DraftId == draftId).ToListAsync(ct))
+            .GroupBy(p => p.TeamId).ToDictionary(g => g.Key, g => g.ToList());
 
     // The pool slug the battle runner keys on, the Showdown sprite slug, falling
     // back to the name for the odd mon without one (Node skips anything Showdown
@@ -200,6 +231,23 @@ public class RandomSeasonSimulator(
         !string.IsNullOrWhiteSpace(p.PokemonEntry.Sprite) && !p.PokemonEntry.Sprite.StartsWith("http")
             ? p.PokemonEntry.Sprite
             : p.PokemonEntry.Name;
+
+    /// <summary>
+    /// Plays the playoffs out the same way. Recording a game is what creates the next one
+    /// (the series' next game, or the next round's first), so each pass battles whatever
+    /// is unplayed until nothing is, or a pass records nothing.
+    /// </summary>
+    private async Task PlayPlayoffsAsync(int leagueId, Dictionary<int, List<Pick>> rosterByTeam, CancellationToken ct)
+    {
+        while (true)
+        {
+            var unplayed = await db.Matches
+                .Include(m => m.HomeTeam).Include(m => m.AwayTeam)
+                .Where(m => m.LeagueId == leagueId && m.PlayoffRound != null && m.Result == MatchResult.Pending)
+                .ToListAsync(ct);
+            if (unplayed.Count == 0 || !await RunRealBattlesAsync(unplayed, rosterByTeam, ct)) return;
+        }
+    }
 
     /// <summary>
     /// Plays every match as a real headless Showdown battle, then records each battle

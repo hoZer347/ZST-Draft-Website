@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Draft League</title>
-  <link rel="icon" href="favicon.ico?v=331">
-  <link rel="stylesheet" href="style.css?v=331">
+  <link rel="icon" href="favicon.ico?v=339">
+  <link rel="stylesheet" href="style.css?v=339">
 </head>
 <body>
   <header>
@@ -26,6 +26,7 @@
       <button class="tab active" data-view="draft">Draft</button>
       <button class="tab" data-view="teams">Teams</button>
       <button class="tab" data-view="schedule">Schedule</button>
+      <button class="tab" data-view="playoffs">Playoffs</button>
       <button class="tab" data-view="stats">Stats</button>
       <button class="tab" data-view="draftstats">Draft Stats</button>
       <button class="tab" data-view="tierlist">Tier list</button>
@@ -237,6 +238,12 @@
         </div>
       </div>
 
+      <div id="view-playoffs" class="view playoffs-view" hidden>
+        <div id="po-projected" class="po-projected label" hidden>Projected</div>
+        <div id="po-bracket" class="po-bracket"><p class="muted">Loading…</p></div>
+        <dialog id="po-series" class="po-series" aria-label="Series"></dialog>
+      </div>
+
       <div id="view-stats" class="view stats-view" hidden>
         <div class="stats-head">
           <div id="stats-summary" class="label"></div>
@@ -315,14 +322,15 @@
     </div>
   </main>
 
-  <script src="config.js?v=331"></script>
-  <script src="auth-logic.js?v=331"></script>
-  <script src="auth.js?v=331"></script>
+  <script src="config.js?v=339"></script>
+  <script src="auth-logic.js?v=339"></script>
+  <script src="auth.js?v=339"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
-  <script src="pool-logic.js?v=331"></script>
-  <script src="sprite.js?v=331"></script>
-  <script src="teambuilder.js?v=331"></script>
-  <script src="landing.js?v=331"></script>
-  <script src="app.js?v=331"></script>
+  <script src="pool-logic.js?v=339"></script>
+  <script src="sprite.js?v=339"></script>
+  <script src="teambuilder.js?v=339"></script>
+  <script src="landing.js?v=339"></script>
+  <script src="playoff-logic.js?v=339"></script>
+  <script src="app.js?v=339"></script>
 </body>
 </html>

@@ -1750,6 +1750,141 @@ body.team-open header { position: fixed; top: 0; left: 0; right: 0; z-index: 60;
   .pick-others { grid-area: others; justify-self: center; }
 }
 
+/* ── playoffs ────────────────────────────────────────────────────────────
+   One column per round. Each pair of games shares a bracket line into the next
+   round's game, which sits level with the pair's midpoint. */
+.po-projected { margin-bottom: 8px; }
+.po-bracket {
+  --po-gap: 28px;
+  display: flex;
+  gap: var(--po-gap);
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.po-round { display: flex; flex-direction: column; flex: none; width: 220px; }
+.po-slots { flex: 1; display: flex; flex-direction: column; }
+.po-pair {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 10px;
+  padding: 5px 0;
+}
+.po-pair::after {
+  content: '';
+  position: absolute;
+  top: 25%; bottom: 25%; right: calc(var(--po-gap) / -2);
+  width: calc(var(--po-gap) / 2);
+  border: 2px solid var(--line);
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+}
+.po-round:last-child .po-pair::after { display: none; }
+.po-round + .po-round .po-node::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: calc(var(--po-gap) / -2 - 1px);
+  width: calc(var(--po-gap) / 2);
+  border-top: 2px solid var(--line);
+}
+
+.po-node {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+.po-node:has(button.po-sides:hover) { border-color: var(--accent); }
+.po-sides {
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.po-sides { cursor: pointer; }
+.po-node--mine { border-left: 4px solid var(--accent); }
+.po-node--bye { opacity: 0.55; }
+
+.po-side {
+  display: grid;
+  grid-template-columns: 18px 28px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.po-side + .po-side { border-top: 1px solid var(--line); }
+.po-seed { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.match-team-avatar.po-avatar { width: 28px; height: 28px; }
+.po-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.po-score { font-weight: 700; font-variant-numeric: tabular-nums; }
+.po-side.won .po-name, .po-side.won .po-score { color: var(--ok); }
+.po-side.lost { color: var(--muted); }
+.po-games {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+}
+.po-game {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--line);
+  color: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+a.po-game:hover { background: var(--accent); color: #fff; }
+.po-game--next { background: none; border: 1px dashed var(--line); color: var(--muted); }
+
+/* A series opens in a dialog: a centred card on desktop, a bottom sheet on phones. */
+.po-series {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
+.po-series::backdrop { background: rgba(0, 0, 0, .45); }
+.po-series-panel { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px; }
+.po-series-head { display: flex; align-items: center; justify-content: space-between; }
+.po-series-close {
+  width: 32px; height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.po-series-close:hover { background: var(--line); color: var(--text); }
+.po-series-panel > .po-sides { border: 1px solid var(--line); background: var(--card); }
+.po-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.po-tab { padding: 4px 12px; border: 1px solid transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.po-tab:hover { border-color: var(--accent); }
+.po-tab[aria-selected="true"] { background: var(--accent); color: #fff; }
+@media (max-width: 720px) {
+  .po-round { width: 180px; }
+  .po-series {
+    width: 100vw; max-width: 100vw;
+    max-height: 85vh;
+    margin: auto 0 0;
+    border-radius: 14px 14px 0 0;
+  }
+  .po-series-panel { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+}
+
 /* ── scoreboard ─────────────────────────────────────────────────────────── */
 
 /* The standings card and the leaders grid stack with the same gap the leader

@@ -6,9 +6,10 @@
 //   • unit-tested headlessly by the Node runner (test/seed-teams.test.js).
 //
 // The rule it enforces (do not "fix" without updating the tests):
-//   • Matchup weeks ("ZST Season 4 / Week N vs <opp>") are seeded BLANK, one empty
-//     team per matchup, for the coach to fill. Never pre-filled. Existing entries
-//     (a team the coach already edited) are left untouched.
+//   • Matchup weeks ("ZST Season 4 / Week N vs <opp>", or the round name for a
+//     playoff game) are seeded BLANK, one empty team per matchup, for the coach to
+//     fill. Never pre-filled. Existing entries (a team the coach already edited) are
+//     left untouched.
 //   • Demo teams ("Demo teams / <player>") are FILLED, one packed team per player,
 //     seeded only when demo data is passed. Re-seeding OVERWRITES (they're
 //     regeneratable examples), so a stale entry from an older build can't linger.
@@ -59,7 +60,7 @@
     // ── matchup weeks: ensure-exists, always BLANK, never overwrite ──
     for (var j = 0; j < matchups.length; j++) {
       var opp = clean(matchups[j].o) || 'TBD';
-      var key = MATCHUP_FOLDER + '/' + 'Week ' + matchups[j].w + ' vs ' + opp;
+      var key = MATCHUP_FOLDER + '/' + (matchups[j].l || 'Week ' + matchups[j].w) + ' vs ' + opp;
       if (Object.prototype.hasOwnProperty.call(idx, key)) continue; // leave coach edits alone
       idx[key] = lines.length;
       lines.push(FORMAT + ']' + key + '|'); // trailing '|' + nothing = a blank team

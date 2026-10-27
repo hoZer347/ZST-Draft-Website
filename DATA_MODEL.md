@@ -128,7 +128,11 @@ drops.
 
 Once a draft completes, the season adds more entities and endpoints (see
 [server/Api/ScheduleApi.cs](server/Api/ScheduleApi.cs)): a **Match** per round-robin
-fixture, per-mon **PokemonStat** aggregates, and stored replay logs. Battles are
+fixture, per-mon **PokemonStat** aggregates, and stored replay logs. Playoffs add
+`Team.PlayoffSeed` (frozen once the regular season is complete) and
+`Match.PlayoffRound`/`PlayoffSlot` (null for regular-season games; a best-of-three
+series is the slot's games in Id order), see
+[server/Services/Playoffs.cs](server/Services/Playoffs.cs). Battles are
 auto-reported from the Showdown server to `/api/showdown/report`, scored, and scraped
 into stats by [ReplayStatsScraper](server/Services/ReplayStatsScraper.cs). See the
 README for that pipeline.

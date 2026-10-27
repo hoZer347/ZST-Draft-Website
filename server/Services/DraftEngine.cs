@@ -390,8 +390,8 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
             // about to re-draft.
             await db.Matches.Where(m => m.LeagueId == draft.LeagueId).ExecuteDeleteAsync(ct);
 
-            // Reset everything the season fed into: skip allowance, standings, and
-            // the battle-turn totals behind Presence.
+            // Reset everything the season fed into: skip allowance, standings, playoff
+            // seeds and the battle-turn totals behind Presence.
             await db.Teams
                 .Where(t => t.LeagueId == draft.LeagueId)
                 .ExecuteUpdateAsync(s => s
@@ -399,7 +399,8 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                     .SetProperty(t => t.Wins, 0)
                     .SetProperty(t => t.Losses, 0)
                     .SetProperty(t => t.Draws, 0)
-                    .SetProperty(t => t.BattleTurns, 0), ct);
+                    .SetProperty(t => t.BattleTurns, 0)
+                    .SetProperty(t => t.PlayoffSeed, (int?)null), ct);
 
             await db.SaveChangesAsync(ct);
             await notifier.DraftStateChangedAsync(draft.Id, DraftState.NotStarted, ct);
@@ -519,14 +520,16 @@ public class DraftEngine(AppDbContext db, IDraftNotifier notifier, ILogger<Draft
                 await db.Teams.Where(t => staleIds.Contains(t.Id)).ExecuteDeleteAsync(ct);
             }
 
-            // Fresh season: zero the standings + battle-turn totals the old schedule fed.
+            // Fresh season: clear the standings, playoff seeds and battle-turn totals the
+            // old schedule fed.
             await db.Teams
                 .Where(t => rosterIds.Contains(t.Id))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(t => t.Wins, 0)
                     .SetProperty(t => t.Losses, 0)
                     .SetProperty(t => t.Draws, 0)
-                    .SetProperty(t => t.BattleTurns, 0), ct);
+                    .SetProperty(t => t.BattleTurns, 0)
+                    .SetProperty(t => t.PlayoffSeed, (int?)null), ct);
 
             await notifier.DraftStateChangedAsync(draft.Id, DraftState.Running, ct);
             await AnnounceTurnAsync(draft, ct);

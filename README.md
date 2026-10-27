@@ -12,7 +12,7 @@ server/         ASP.NET Core 9 (net9.0). REST API + SignalR hub + the draft
                 the site and the API are same-origin in production. EF Core over
                 SQLite (draftleague.db).
 web/            Static frontend (plain HTML/CSS/JS, no build step): the draft,
-                schedule, scoreboard, stats, and teambuilder tabs. Loaded by the
+                schedule, playoffs, scoreboard, stats, and teambuilder tabs. Loaded by the
                 .NET server above.
 battle-server/  Node service wrapping a real Pokemon Showdown build (the
                 Champions-capable checkout under client/caches, see lib/engine.js):
@@ -64,8 +64,11 @@ On first run it creates `draftleague.db` (SQLite, via `EnsureCreated`) and, in
 Development, seeds a "Test Season 1" league: the tier rules and the full Pokedex
 pool, plus an empty draft. Teams and the snake order are built from whoever is
 signed in when an admin presses Start (there is no fixed coach roster). Open
-`http://localhost:5211`; `web/config.js` points the frontend at `localhost:5211`
-and `localhost:8787` automatically when served from localhost.
+`http://localhost:5211`. A page served from localhost calls the server that served
+it (`web/config.js`; only the static host on :8000 goes to `localhost:5211`) and
+Showdown at `localhost:8787`. `EnsureCreated` never alters an existing database, so a
+new column goes in [SchemaUpgrade](server/Data/SchemaUpgrade.cs), which adds it at
+startup; the database is never recreated for a schema change.
 
 On the dev machine the whole stack (server, Cloudflare tunnel, both Showdown
 servers) is kept alive by `server/keep-server-up.ps1`. `server/start-server.ps1`
@@ -95,6 +98,7 @@ These are auth bypasses and exist **only in Development**:
 | `GET /dev/accounts` | Lists seeded/known accounts |
 | `POST /dev/drafts/{id}/expire` | Forces the pick clock to expire, triggering auto-pick |
 | `POST /dev/simulate-season` / `POST /dev/simulate-random-season` | Seeds and plays a full test season (real Showdown battles), then scrapes stats from the replays |
+| `POST /dev/play-out-season` | Battles every unplayed regular-season game, then the playoffs, keeping the league's teams, rosters and results |
 | `POST /dev/sync-pokedex` | Re-syncs the pool from the source Pokedex sheet |
 | `POST /dev/snapshot-now` | Takes a season snapshot immediately |
 
@@ -179,6 +183,17 @@ the score or the scoresheet reaches you. "Show result" opens one (including your
 which also collapses the moment it finishes), and which games you've opened is kept per
 league and viewer in localStorage, so a re-login brings the same cards back open.
 
+**Playoffs.** Once every regular-season game is played, the top 12 by standings are
+seeded into a single-elimination bracket ([Playoffs](server/Services/Playoffs.cs)),
+padded to 16 so seeds 1-4 get first-round byes. Every matchup is a best-of-three
+series. Each game is an ordinary Match, created once the one before it is played and
+both teams are known, a week after the round before; it is reported, scored and
+scraped like any other, keeping its replay and both teams' pastes, and counts toward
+per-mon stats and KO totals but not the win/loss record. A drawn game counts for
+neither side, so the series gets another game. Results stand once the next round is
+played. Before seeding, the Playoffs tab shows the bracket the current standings
+would make, marked Projected.
+
 **The Champions mod.** Every league format runs on Pokemon Champions (Regulation
 M-B), so megas, including the ones vanilla Showdown never shipped, are native to
 the dex, and the league plays that game's mechanics: Stat Points instead of EVs
@@ -212,8 +227,9 @@ where a coach's is. Both the battles and that gate use
 National Dex hooks and restored Terastallization and drops only the draft-roster
 check a headless run has no coach for, so a simulated season plays by the rules real
 games do. It then plays a
-whole season of real Showdown battles headlessly and scrapes the results, so the
-schedule/scoreboard/stats tabs can be exercised without waiting on live games.
+whole season of real Showdown battles headlessly, playoffs included, and scrapes the
+results, so the schedule/scoreboard/stats/playoffs tabs can be exercised without
+waiting on live games.
 
 ## Auth
 

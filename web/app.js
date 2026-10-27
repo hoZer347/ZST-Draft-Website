@@ -39,6 +39,7 @@ const el = {
   tlFilters: $('tl-filters'), tlFilterOpen: $('tl-filter-open'), tlDone: $('tl-done'),
   // schedule
   schedScroll: $('sched-scroll'), schedFilterbar: $('sched-filterbar'), schedMine: $('sched-mine'),
+  poBracket: $('po-bracket'), poSeries: $('po-series'), poProjected: $('po-projected'),
 };
 
 // ── session ────────────────────────────────────────────────────────────
@@ -314,7 +315,7 @@ async function renderTeamTabs(activeId) {
     nb.type = 'button';
     nb.className = 'team-tab team-tab--next' + (nextMatchupOpp.coachId === activeId ? ' active' : '');
     nb.textContent = '⚔ Next matchup';
-    nb.title = `Scout ${nextMatchupOpp.name}'s team (Week ${nextMatchupOpp.week})`;
+    nb.title = `Scout ${nextMatchupOpp.name}'s team (${nextMatchupOpp.when})`;
     nb.onclick = () => openTeam(nextMatchupOpp.coachId, nextMatchupOpp.name);
     tabs.push(nb);
   }
@@ -380,7 +381,7 @@ async function refreshNextMatchup() {
       if (next) {
         const oppId = next.homeTeamId === data.myTeamId ? next.awayTeamId : next.homeTeamId;
         const opp = (data.teams || []).find((t) => t.id === oppId);
-        if (opp) nextMatchupOpp = { coachId: opp.coachId, name: opp.coachName || opp.name, week: next.week };
+        if (opp) nextMatchupOpp = { coachId: opp.coachId, name: opp.coachName || opp.name, when: next.round ?? `Week ${next.week}` };
       }
     }
   }
@@ -743,6 +744,7 @@ function teardownDraft() {
   myTeamId = null;
   deadline = null;
   scheduleData = null;
+  playoffsData = null;
   renderedPicks = 0; // force a clean rebuild of the feed for the next draft
 }
 
@@ -1221,6 +1223,7 @@ async function connect() {
     // now only if the scoreboard is the view being looked at.
     scoreboardData = null;
     if (!$('view-scoreboard')?.hidden) ensureScoreboard();
+    if (!$('view-playoffs')?.hidden) ensurePlayoffs();
   });
 
   conn.onreconnected(async () => { setConn(true); await conn.invoke('JoinDraft', draftId); await loadPlayers(); await refreshDraft(); });
@@ -1465,6 +1468,7 @@ async function ensureSchedule() {
     return;
   }
   renderSchedule();
+  if (playoffsData) renderPlayoffs();
   refreshNextMatchup(); // fresh schedule → keep the header "Next matchup" button current
 }
 
@@ -1518,10 +1522,11 @@ function renderSchedule() {
   const canFilter = data.myTeamId != null;
   if (el.schedFilterbar) el.schedFilterbar.hidden = !canFilter;
 
-  let matches = data.matches ?? [];
+  const all = data.matches ?? [];
   // Prune against every match, not the filtered view, so the "only my battles"
   // toggle can't drop the open state of everyone else's games.
-  schedOpenPrune(new Set(matches.filter((m) => m.played).map((m) => m.id)));
+  schedOpenPrune(new Set(all.filter((m) => m.played).map((m) => m.id)));
+  let matches = all.filter((m) => m.playoffRound == null);
   if (schedMineOnly && canFilter) matches = matches.filter((m) => m.mine);
   if (!matches.length) {
     // Empty either because the draft hasn't begun, or the "my battles" filter
@@ -1619,7 +1624,7 @@ function matchCard(m, size) {
   head.className = 'match-head';
   const wk = document.createElement('span');
   wk.className = 'match-week';
-  wk.textContent = `Week ${m.week}`;
+  wk.textContent = m.round ? `${m.round}, Game ${m.game}` : `Week ${m.week}`;
   head.append(wk);
   if (m.scheduledFor) {
     const when = document.createElement('span');
@@ -1655,12 +1660,14 @@ function matchCard(m, size) {
 }
 
 // Flip one finished game between hidden and revealed, remember the choice, and swap
-// the card for a freshly built one in the same slot.
+// the card for a freshly built one in the same slot. A playoff game redraws the
+// bracket instead, whose scores and later rounds follow what has been revealed.
 function reopenMatchCard(card, m, size) {
   const open = schedOpenSet();
   if (open.has(m.id)) open.delete(m.id); else open.add(m.id);
   schedOpenSave();
-  card.replaceWith(matchCard(m, size));
+  if (m.playoffRound != null) renderPlayoffs();
+  else card.replaceWith(matchCard(m, size));
 }
 
 // Under a played match's score: a per-mon stat table for each team (home left, away
@@ -1886,8 +1893,8 @@ function matchMiddle(m, card, canEdit, collapsed, onToggle) {
       actions.append(watch);
     }
 
-    // Show/hide the result. Always present on a finished game, so a spoiled card
-    // can be closed again as easily as a hidden one is opened.
+    // Show/hide the result. Present on every finished game, so a spoiled card can
+    // be closed again as easily as a hidden one is opened.
     const reveal = document.createElement('button');
     reveal.type = 'button';
     reveal.className = 'match-replay-btn match-reveal-btn';
@@ -1991,6 +1998,191 @@ function replayForm(m, opts = {}) {
   return form;
 }
 
+// ── playoffs ─────────────────────────────────────────────────────────────
+// The single-elimination bracket (see Playoffs.cs), one column per round. Byes stay
+// in round 1 as dimmed nodes so every later series sits level with its two feeders.
+// Each node shows the series score with a chip per game linking its replay; clicking
+// the matchup opens it in a dialog with a tab per game holding that game's schedule card.
+// Results stay hidden game by game, sharing the schedule's reveal set, and the bracket
+// shows only what the revealed games give away (see visibleBracket).
+
+let playoffsData = null;
+let playoffsView = null;
+let playoffsOpen = null;
+let playoffsGame = null;
+
+const schedIsOpen = (id) => schedOpenSet().has(id);
+
+el.poSeries.onclose = () => { playoffsOpen = null; };
+el.poSeries.onclick = (e) => { if (e.target === el.poSeries) el.poSeries.close(); };
+
+async function ensurePlayoffs() {
+  if (leagueId == null) {
+    el.poBracket.replaceChildren(muted('No league yet.'));
+    return;
+  }
+  if (!playoffsData) el.poBracket.replaceChildren(muted('Loading…'));
+  try {
+    // The detail card comes from the schedule; ensureSchedule keeps a cached copy fresh.
+    const [po, sched] = await Promise.all([
+      Auth.authFetch(`/api/leagues/${leagueId}/playoffs`),
+      scheduleData ? null : Auth.authFetch(`/api/leagues/${leagueId}/schedule`),
+    ]);
+    if (!po.ok) throw new Error(`Failed (${po.status})`);
+    if (sched && !sched.ok) throw new Error(`Failed (${sched.status})`);
+    playoffsData = await po.json();
+    if (sched) scheduleData = await sched.json();
+  } catch (e) {
+    el.poBracket.replaceChildren(muted(`Couldn't load the playoffs, ${e.message}`));
+    return;
+  }
+  renderPlayoffs();
+}
+
+function renderPlayoffs() {
+  const data = playoffsData;
+  if (!data) return;
+  el.poProjected.hidden = !data.projected;
+  if (!data.rounds.length) {
+    el.poBracket.replaceChildren(muted('No playoff bracket yet.'));
+    renderSeries();
+    return;
+  }
+
+  playoffsView = visibleBracket(data.rounds, schedIsOpen);
+  const frag = document.createDocumentFragment();
+  for (const r of data.rounds) {
+    const col = document.createElement('div');
+    col.className = 'po-round';
+    const slots = document.createElement('div');
+    slots.className = 'po-slots';
+    for (let i = 0; i < r.slots.length; i += 2) {
+      const pair = document.createElement('div');
+      pair.className = 'po-pair';
+      pair.append(...r.slots.slice(i, i + 2).map((s) => playoffNode(playoffsView.get(seriesKey(r.round, s.index)), data.myTeamId)));
+      slots.append(pair);
+    }
+    col.append(schedHeading(r.name), slots);
+    frag.append(col);
+  }
+  el.poBracket.replaceChildren(frag);
+  renderSeries();
+}
+
+function openSeries(key) {
+  playoffsOpen = key;
+  playoffsGame = null;
+  renderSeries();
+  if (!el.poSeries.open) el.poSeries.showModal();
+}
+
+// The open series' dialog: both sides with the series score, a tab per game, and
+// the picked game's schedule card. Closes itself once the series is gone.
+function renderSeries() {
+  const v = playoffsView?.get(playoffsOpen);
+  if (!v?.games.length) {
+    if (el.poSeries.open) el.poSeries.close();
+    return;
+  }
+  const myTeamId = playoffsData.myTeamId;
+  const game = pickGame(v.games, playoffsGame, schedIsOpen);
+  playoffsGame = game.game;
+
+  const head = document.createElement('div');
+  head.className = 'po-series-head';
+  const close = Object.assign(document.createElement('button'), {
+    type: 'button', className: 'po-series-close', textContent: '×', title: 'Close',
+  });
+  close.onclick = () => el.poSeries.close();
+  head.append(Object.assign(document.createElement('div'), { className: 'label', textContent: v.round.name }), close);
+
+  const sides = document.createElement('div');
+  sides.className = 'po-sides';
+  sides.append(
+    playoffSide(v.home, 'TBD', v.homeWins, v.winnerTeamId, myTeamId),
+    playoffSide(v.away, 'TBD', v.awayWins, v.winnerTeamId, myTeamId),
+  );
+
+  const tabs = document.createElement('div');
+  tabs.className = 'po-tabs';
+  tabs.setAttribute('role', 'tablist');
+  for (const g of v.games) {
+    const tab = Object.assign(document.createElement('button'), {
+      type: 'button',
+      className: 'po-game po-tab' + (g.result === 'Pending' ? ' po-game--next' : ''),
+      textContent: gameLabel(g, schedIsOpen(g.matchId)),
+    });
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(g === game));
+    tab.onclick = () => { playoffsGame = g.game; renderSeries(); };
+    tabs.append(tab);
+  }
+
+  const m = scheduleData?.matches?.find((x) => x.id === game.matchId);
+  const body = document.createElement('div');
+  body.className = 'po-series-body';
+  body.setAttribute('role', 'tabpanel');
+  if (m) body.append(matchCard(m, m.mine ? 'mine' : 'normal'));
+
+  const panel = document.createElement('div');
+  panel.className = 'po-series-panel';
+  panel.append(head, sides, tabs, body);
+  el.poSeries.replaceChildren(panel);
+}
+
+function playoffNode(v, myTeamId) {
+  const node = document.createElement('div');
+  const mine = myTeamId != null && (v.home?.teamId === myTeamId || v.away?.teamId === myTeamId);
+  node.className = 'po-node' + (v.series.bye ? ' po-node--bye' : '') + (mine ? ' po-node--mine' : '');
+  const sides = document.createElement(v.games.length ? 'button' : 'div');
+  sides.className = 'po-sides';
+  sides.append(
+    playoffSide(v.home, 'TBD', v.homeWins, v.winnerTeamId, myTeamId),
+    playoffSide(v.away, v.series.bye ? 'Bye' : 'TBD', v.awayWins, v.winnerTeamId, myTeamId),
+  );
+  node.append(sides);
+  if (v.games.length) {
+    sides.type = 'button';
+    sides.onclick = () => openSeries(seriesKey(v.round.round, v.index));
+    node.append(playoffGames(v.games));
+  }
+  return node;
+}
+
+function playoffGames(games) {
+  const strip = document.createElement('div');
+  strip.className = 'po-games';
+  for (const g of games) {
+    const link = g.result !== 'Pending' && g.replayUrl;
+    const chip = document.createElement(link ? 'a' : 'span');
+    chip.className = 'po-game' + (g.result === 'Pending' ? ' po-game--next' : '');
+    chip.textContent = gameLabel(g, schedIsOpen(g.matchId));
+    if (link) {
+      chip.href = g.replayUrl;
+      chip.target = '_blank';
+      chip.rel = 'noopener';
+      chip.title = `Watch game ${g.game}`;
+    }
+    strip.append(chip);
+  }
+  return strip;
+}
+
+function playoffSide(e, placeholder, wins, winnerTeamId, myTeamId) {
+  const row = document.createElement('div');
+  const won = e != null && e.teamId === winnerTeamId;
+  row.className = 'po-side' + (won ? ' won' : winnerTeamId != null ? ' lost' : '')
+    + (e != null && e.teamId === myTeamId ? ' me' : '');
+  const seed = Object.assign(document.createElement('span'), { className: 'po-seed', textContent: e?.seed ?? '' });
+  const av = avatarBubble(e?.avatar, 'match-team-avatar');
+  av.classList.add('po-avatar');
+  if (!e) av.style.visibility = 'hidden';
+  const name = Object.assign(document.createElement('span'), { className: 'po-name', textContent: e?.name ?? placeholder });
+  const sc = Object.assign(document.createElement('span'), { className: 'po-score', textContent: wins ?? '' });
+  row.append(seed, av, name, sc);
+  return row;
+}
+
 function showView(name) {
   closeTeam(); // a view switch drops the team overlay
   closeTierFilters(); // and the mobile filter panel, so it doesn't linger open
@@ -2003,6 +2195,7 @@ function showView(name) {
   try { localStorage.setItem('activeTab', name); } catch { /* private mode */ } // remember for next login
   if (name === 'tierlist') ensureTierList();
   if (name === 'schedule') ensureSchedule();
+  if (name === 'playoffs') ensurePlayoffs();
   if (name === 'stats') ensureStats();
   if (name === 'scoreboard') ensureScoreboard();
   if (name === 'draftstats') ensureDraftStats();
@@ -2250,7 +2443,7 @@ function myMatchupsFromCache() {
   return d.matches
     .filter((m) => m.mine)
     .sort((a, b) => a.week - b.week)
-    .map((m) => ({ w: m.week, o: m.homeTeamId === d.myTeamId ? m.awayName : m.homeName }));
+    .map((m) => ({ w: m.week, l: m.round, o: m.homeTeamId === d.myTeamId ? m.awayName : m.homeName }));
 }
 
 // Ensure the schedule is cached, then return the matchups. Fired in the

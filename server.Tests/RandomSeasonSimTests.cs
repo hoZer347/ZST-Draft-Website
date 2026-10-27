@@ -2,8 +2,11 @@ using System.Text.Json;
 using DraftLeague.Web.Data;
 using DraftLeague.Web.Models;
 using DraftLeague.Web.Services;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace DraftLeague.Web.Tests;
 
@@ -12,7 +15,8 @@ namespace DraftLeague.Web.Tests;
 /// through the real <see cref="DraftEngine"/> (offer a tier, then pick/skip). With
 /// realBattles:false it builds the draft + schedule but plays no games, so
 /// results/stats come only from real battles (or later-added replays), the matches
-/// stay Pending, with no scores and no stats. These assert that structure.
+/// stay Pending, with no scores and no stats. These assert that structure, and that
+/// playing the league out (with a stub battle runner) keeps what was already there.
 /// </summary>
 public class RandomSeasonSimTests : DraftScenarioBase
 {
@@ -82,6 +86,62 @@ public class RandomSeasonSimTests : DraftScenarioBase
 
         Assert.Empty(await db.PokemonStats.Include(s => s.Pick)
             .Where(s => s.Pick.DraftId == draftId).ToListAsync());
+    }
+
+    // Stands in for the Node runner: the home coach wins every game, revealing both
+    // drafted rosters, so the real report pipeline can attribute and record it.
+    private sealed class HomeWinsBattles(IHostEnvironment env, ILogger<NodeBattleSimulator> log)
+        : NodeBattleSimulator(env, log)
+    {
+        public override Task<IReadOnlyList<BattleResult>?> RunAsync(IReadOnlyList<MatchSpec> matches, CancellationToken ct = default)
+        {
+            static string Side(string side, IEnumerable<TeamMon> team) =>
+                string.Concat(team.Select(m => $"|poke|{side}|{m.Slug}|\n"));
+            return Task.FromResult<IReadOnlyList<BattleResult>?>(matches.Select(m => new BattleResult(
+                m.HomeName, 1,
+                $"|player|p1|{m.HomeName}|1|\n|player|p2|{m.AwayName}|2|\n"
+                    + Side("p1", m.HomeTeam) + Side("p2", m.AwayTeam) + $"|start\n|turn|1\n|win|{m.HomeName}\n",
+                $"{m.HomeName} build", $"{m.AwayName} build")).ToList());
+        }
+    }
+
+    [Fact]
+    public async Task Playing_out_finishes_the_league_and_keeps_teams_rosters_and_results()
+    {
+        var draftId = await DraftIdAsync();
+        await using var factory = Factory.WithWebHostBuilder(b =>
+            b.ConfigureTestServices(s => s.AddScoped<NodeBattleSimulator, HomeWinsBattles>()));
+        int kept, recorded;
+        List<int> teamIds, pickIds;
+        using (var scope = factory.Services.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<RandomSeasonSimulator>()
+                .SimulateAsync(draftId, teamCount: 4, seed: 5, realBattles: false);
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var first = await db.Matches.OrderBy(m => m.Id).FirstAsync();
+            first.Result = MatchResult.HomeWin;
+            first.HomeScore = 3;
+            first.AwayScore = 0;
+            await db.SaveChangesAsync();
+            kept = first.Id;
+            teamIds = await db.Teams.OrderBy(t => t.Id).Select(t => t.Id).ToListAsync();
+            pickIds = await db.Picks.OrderBy(p => p.Id).Select(p => p.Id).ToListAsync();
+        }
+
+        using (var scope = factory.Services.CreateScope())
+            recorded = await scope.ServiceProvider.GetRequiredService<RandomSeasonSimulator>().PlayOutAsync(draftId);
+
+        using var read = factory.Services.CreateScope();
+        var check = read.ServiceProvider.GetRequiredService<AppDbContext>();
+        var matches = await check.Matches.ToListAsync();
+        Assert.True(recorded > 0);
+        Assert.Equal(recorded + 1, matches.Count(m => m.Result != MatchResult.Pending));
+        Assert.DoesNotContain(matches, m => m.Result == MatchResult.Pending);
+        Assert.Contains(matches, m => m.PlayoffRound != null);
+        Assert.Equal(teamIds, await check.Teams.OrderBy(t => t.Id).Select(t => t.Id).ToListAsync());
+        Assert.Equal(pickIds, await check.Picks.OrderBy(p => p.Id).Select(p => p.Id).ToListAsync());
+        var same = matches.Single(m => m.Id == kept);
+        Assert.Equal((MatchResult.HomeWin, 3, 0), (same.Result, same.HomeScore, same.AwayScore));
     }
 
     [Fact]

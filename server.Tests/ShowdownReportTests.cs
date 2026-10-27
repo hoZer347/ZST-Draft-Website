@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using DraftLeague.Web.Data;
 using DraftLeague.Web.Models;
+using DraftLeague.Web.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -73,9 +74,17 @@ public class ShowdownReportTests : DraftScenarioBase
     {
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await SeasonSeed.SeasonAsync(db,
+        var seed = await SeasonSeed.SeasonAsync(db,
             ("alice", "Alice"), ["Pikachu", "Snorlax"],
             ("bob", "Bob"), ["Gengar", "Blissey"]);
+
+        // An unplayed game elsewhere keeps the regular season open, so a re-battle
+        // redoes Alice v Bob instead of landing in a playoff final between them.
+        var carol = new Team { LeagueId = seed.League.Id, Name = "Carol", CoachName = "Carol", CoachId = "carol" };
+        var dave = new Team { LeagueId = seed.League.Id, Name = "Dave", CoachName = "Dave", CoachId = "dave" };
+        db.Matches.Add(new Match { LeagueId = seed.League.Id, Week = 1, HomeTeam = carol, AwayTeam = dave });
+        await db.SaveChangesAsync();
+        return seed;
     }
 
     [Fact]
@@ -274,6 +283,99 @@ public class ShowdownReportTests : DraftScenarioBase
         Assert.Equal(0, home.Losses);
         var gengar = await db.PokemonStats.SingleAsync(s => s.PickId == seed.Picks["gengar"].Id);
         Assert.Equal(0, gengar.Kills);
+    }
+
+    [Fact]
+    public async Task Recording_the_last_regular_game_opens_the_playoffs()
+    {
+        var seed = await SeedAsync();
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var other = await db.Matches.SingleAsync(m => m.LeagueId == seed.League.Id && m.Id != seed.Match.Id);
+            other.Result = MatchResult.HomeWin;
+            await db.SaveChangesAsync();
+        }
+
+        (await ReportAsync(Log, AliceBuildV1, BobBuildV1)).EnsureSuccessStatusCode();
+
+        using var check = Factory.Services.CreateScope();
+        var games = await check.ServiceProvider.GetRequiredService<AppDbContext>().Matches
+            .Where(m => m.LeagueId == seed.League.Id && m.PlayoffRound != null).ToListAsync();
+        Assert.Equal(2, games.Count);
+        Assert.All(games, g => Assert.Equal((1, MatchResult.Pending, 2), (g.PlayoffRound!.Value, g.Result, g.Week)));
+    }
+
+    [Fact]
+    public async Task Successive_reports_fill_a_best_of_three_series_in_order()
+    {
+        var seed = await SeedAsync();
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Matches.Where(m => m.LeagueId == seed.League.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.Result, MatchResult.HomeWin));
+            await db.Teams.Where(t => t.Id == seed.Home.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.PlayoffSeed, 1));
+            await db.Teams.Where(t => t.Id == seed.Away.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.PlayoffSeed, 2));
+            await Playoffs.SyncAsync(db, seed.League.Id);
+        }
+
+        async Task<List<Match>> FinalAsync()
+        {
+            using var scope = Factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<AppDbContext>().Matches
+                .Where(m => m.LeagueId == seed.League.Id && m.PlayoffRound != null).OrderBy(m => m.Id).ToListAsync();
+        }
+
+        (await ReportAsync(Log, AliceBuildV1, BobBuildV1)).EnsureSuccessStatusCode();
+        (await ReportAsync(LogBobWins, AliceBuildV2, BobBuildV2)).EnsureSuccessStatusCode();
+        Assert.Equal([MatchResult.HomeWin, MatchResult.AwayWin, MatchResult.Pending], (await FinalAsync()).Select(g => g.Result));
+
+        (await ReportAsync(Log, AliceBuildV1, BobBuildV2)).EnsureSuccessStatusCode();
+        var games = await FinalAsync();
+        Assert.Equal([MatchResult.HomeWin, MatchResult.AwayWin, MatchResult.HomeWin], games.Select(g => g.Result));
+        Assert.All(games, g => Assert.Equal((seed.Home.Id, seed.Away.Id), (g.HomeTeamId, g.AwayTeamId)));
+        Assert.Equal([(AliceBuildV1, BobBuildV1), (AliceBuildV2, BobBuildV2), (AliceBuildV1, BobBuildV2)],
+            games.Select(g => (g.HomeTeamExport, g.AwayTeamExport)));
+
+        // A decided series has no next game, so another report redoes its latest one.
+        (await ReportAsync(LogBobWins, AliceBuildV2, BobBuildV1)).EnsureSuccessStatusCode();
+        games = await FinalAsync();
+        Assert.Equal([MatchResult.HomeWin, MatchResult.AwayWin, MatchResult.AwayWin], games.Select(g => g.Result));
+        Assert.Equal((AliceBuildV2, BobBuildV1), (games[2].HomeTeamExport, games[2].AwayTeamExport));
+    }
+
+    [Fact]
+    public async Task A_rebattle_leaves_a_playoff_game_alone_once_the_next_round_is_played()
+    {
+        var seed = await SeedAsync();
+        (await ReportAsync(Log, AliceBuildV1, BobBuildV1)).EnsureSuccessStatusCode();
+
+        int firstRoundId;
+        using (var scope = Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var carol = await db.Teams.SingleAsync(t => t.LeagueId == seed.League.Id && t.CoachId == "carol");
+            var firstRound = new Match
+            {
+                LeagueId = seed.League.Id, Week = 2, PlayoffRound = 1, PlayoffSlot = 0,
+                HomeTeamId = seed.Home.Id, AwayTeamId = seed.Away.Id, Result = MatchResult.HomeWin,
+            };
+            db.Matches.AddRange(firstRound, new Match
+            {
+                LeagueId = seed.League.Id, Week = 3, PlayoffRound = 2, PlayoffSlot = 0,
+                HomeTeamId = seed.Home.Id, AwayTeamId = carol.Id, Result = MatchResult.HomeWin,
+            });
+            await db.SaveChangesAsync();
+            firstRoundId = firstRound.Id;
+        }
+
+        var redo = await ReportAsync(LogBobWins, AliceBuildV2, BobBuildV2);
+        Assert.False((await redo.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("recorded").GetBoolean());
+
+        using var check = Factory.Services.CreateScope();
+        var matches = check.ServiceProvider.GetRequiredService<AppDbContext>().Matches;
+        Assert.Equal(MatchResult.HomeWin, (await matches.SingleAsync(m => m.Id == firstRoundId)).Result);
     }
 
     [Fact]

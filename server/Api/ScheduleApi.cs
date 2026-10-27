@@ -13,13 +13,14 @@ public record ShowdownReportRequest(string Log, string? P1Export = null, string?
 
 // Shapes of a season snapshot (see the GET .../snapshot endpoint), for restoring one.
 public record SnapshotDto(SnapTeam[] Teams, SnapPick[] Picks, SnapMatch[] Matches);
-public record SnapTeam(int Id, string CoachId, string CoachName);
+public record SnapTeam(int Id, string CoachId, string CoachName, int? PlayoffSeed = null);
 public record SnapPick(int TeamId, int PickNumber, string Tier, string? TeraType, string Pokemon, string? Sprite, int DexNumber,
     string? OtherOptions = null, bool WasAutoPick = false);
 public record SnapMatch(
     int Id, int Week, DateTimeOffset? ScheduledFor, int HomeTeamId, int AwayTeamId,
     string Result, int? HomeScore, int? AwayScore, string? ReplayUrl, string? ReplayLog,
-    string? ReplayHomeSide, string? HomeTeamExport, string? AwayTeamExport);
+    string? ReplayHomeSide, string? HomeTeamExport, string? AwayTeamExport,
+    int? PlayoffRound = null, int? PlayoffSlot = null);
 
 /// <summary>
 /// The season schedule: a round-robin between the league's teams, and the loop
@@ -82,7 +83,7 @@ public static class ScheduleApi
         app.MapGet("/matches/{matchId:int}/teams", async (int matchId, string? team, AppDbContext db, CancellationToken ct) =>
         {
             var m = await db.Matches.Where(x => x.Id == matchId)
-                .Select(x => new { x.LeagueId, x.Week, x.HomeTeamExport, x.AwayTeamExport, x.HomeTeamId, x.AwayTeamId })
+                .Select(x => new { x.LeagueId, x.Week, x.PlayoffRound, x.HomeTeamExport, x.AwayTeamExport, x.HomeTeamId, x.AwayTeamId })
                 .FirstOrDefaultAsync(ct);
             if (m is null) return Results.NotFound();
 
@@ -117,15 +118,18 @@ public static class ScheduleApi
                     BuildPageRenderer.Parse(m.AwayTeamExport, SpriteOf), m.AwayTeamExport.Trim()));
             if (views.Count == 0) return Results.NotFound();
 
-            // Title mirrors the coach's teambuilder team name for this match, "Week N
-            // vs <opponent>" for a single side, or the full matchup for both.
+            // Title mirrors the coach's teambuilder team name for this match, "<Week N
+            // or round> vs <opponent>" for a single side, or the full matchup for both.
             var home = names.GetValueOrDefault(m.HomeTeamId, "Home");
             var away = names.GetValueOrDefault(m.AwayTeamId, "Away");
+            var when = m.PlayoffRound is int round
+                ? Playoffs.RoundName(round, await Playoffs.RoundCountAsync(db, m.LeagueId, ct))
+                : $"Week {m.Week}";
             var title = (wantHome, wantAway) switch
             {
-                (true, false) => $"Week {m.Week} vs {away}",
-                (false, true) => $"Week {m.Week} vs {home}",
-                _ => $"Week {m.Week}: {home} vs {away}",
+                (true, false) => $"{when} vs {away}",
+                (false, true) => $"{when} vs {home}",
+                _ => $"{when}: {home} vs {away}",
             };
             return Results.Content(BuildPageRenderer.Render(title, views), "text/html; charset=utf-8");
         });
@@ -140,26 +144,15 @@ public static class ScheduleApi
 
             var teams = await db.Teams
                 .Where(t => t.LeagueId == leagueId)
-                .Select(t => new { t.Id, t.Name, t.CoachId, t.CoachName, t.Wins, t.Losses, t.Draws })
+                .Select(t => new { t.Id, t.Name, t.CoachId, t.CoachName, t.Wins, t.Losses, t.Draws, t.PlayoffSeed })
                 .ToListAsync(ct);
             // Teams are shown by their coach's username / dummy name, the league
             // doesn't use separate team names.
             var teamName = teams.ToDictionary(t => t.Id, t => t.CoachName);
 
-            // Each coach's Discord avatar (for the outer edge of their match-card
-            // side). Synthetic coaches (dummies / sim) and anyone without an avatar
-            // won't be in the map, so their side just shows no icon.
-            var coachIds = teams.Select(t => t.CoachId).ToList();
-            var avatarByCoach = (await db.Users
-                    .Where(u => coachIds.Contains(u.DiscordId) && u.AvatarHash != null)
-                    .Select(u => new { u.DiscordId, u.AvatarHash })
-                    .ToListAsync(ct))
-                .ToDictionary(u => u.DiscordId, u => u.AvatarHash!);
-            var teamAvatar = teams.ToDictionary(
-                t => t.Id,
-                t => avatarByCoach.TryGetValue(t.CoachId, out var hash)
-                    ? $"https://cdn.discordapp.com/avatars/{t.CoachId}/{hash}.png"
-                    : (string?)null);
+            // Each coach's Discord avatar, for the outer edge of their match-card side.
+            var teamAvatar = await TeamAvatarsAsync(db, teams.Select(t => (t.Id, t.CoachId)), ct);
+            var playoffRounds = Playoffs.RoundCount(teams.Count(t => t.PlayoffSeed != null));
 
             var myDiscordId = me.DiscordId();
             var myTeamId = teams.FirstOrDefault(t => t.CoachId == myDiscordId)?.Id;
@@ -169,7 +162,7 @@ public static class ScheduleApi
                 .OrderBy(m => m.Week).ThenBy(m => m.Id)
                 .Select(m => new
                 {
-                    m.Id, m.Week, m.ScheduledFor,
+                    m.Id, m.Week, m.PlayoffRound, m.PlayoffSlot, m.ScheduledFor,
                     m.HomeTeamId, m.AwayTeamId,
                     result = m.Result.ToString(),
                     m.HomeScore, m.AwayScore, m.ReplayUrl,
@@ -190,6 +183,12 @@ public static class ScheduleApi
             // log, for the compact strip under each score. Every brought mon gets a
             // row (team preview seeds even benched ones); a mon that never touched
             // the field reads as "did not participate" (played=false).
+            var gameNumbers = Playoffs.GameNumbers(matches.Select(m => new Match
+            {
+                Id = m.Id, PlayoffRound = m.PlayoffRound, PlayoffSlot = m.PlayoffSlot,
+                HomeTeamId = m.HomeTeamId, AwayTeamId = m.AwayTeamId,
+            }));
+
             var statsByMatch = await BattleStatsAsync(db, leagueId, teams.Select(t => t.Id).ToList(), matches
                 .Where(m => m.result != nameof(MatchResult.Pending)).Select(m => m.Id).ToList(), ct);
 
@@ -201,7 +200,9 @@ public static class ScheduleApi
                 teams,
                 matches = matches.Select(m => new
                 {
-                    m.Id, m.Week, m.ScheduledFor,
+                    m.Id, m.Week, m.ScheduledFor, m.PlayoffRound,
+                    round = m.PlayoffRound is int r ? Playoffs.RoundName(r, playoffRounds) : null,
+                    game = gameNumbers.TryGetValue(m.Id, out var n) ? n : (int?)null,
                     m.HomeTeamId, homeName = teamName.GetValueOrDefault(m.HomeTeamId, $"Team {m.HomeTeamId}"),
                     homeAvatar = teamAvatar.GetValueOrDefault(m.HomeTeamId),
                     m.AwayTeamId, awayName = teamName.GetValueOrDefault(m.AwayTeamId, $"Team {m.AwayTeamId}"),
@@ -270,7 +271,11 @@ public static class ScheduleApi
             var teamMap = new Dictionary<int, Team>();
             foreach (var t in snap.Teams)
             {
-                var team = new Team { LeagueId = leagueId, Name = t.CoachName, CoachId = t.CoachId, CoachName = t.CoachName };
+                var team = new Team
+                {
+                    LeagueId = leagueId, Name = t.CoachName, CoachId = t.CoachId, CoachName = t.CoachName,
+                    PlayoffSeed = t.PlayoffSeed,
+                };
                 db.Teams.Add(team);
                 teamMap[t.Id] = team;
             }
@@ -319,6 +324,7 @@ public static class ScheduleApi
                 var match = new Match
                 {
                     LeagueId = leagueId, Week = sm.Week, ScheduledFor = sm.ScheduledFor,
+                    PlayoffRound = sm.PlayoffRound, PlayoffSlot = sm.PlayoffSlot,
                     HomeTeamId = home.Id, AwayTeamId = away.Id, HomeTeam = home, AwayTeam = away,
                     HomeScore = sm.HomeScore, AwayScore = sm.AwayScore,
                     ReplayLog = sm.ReplayLog, ReplayHomeSide = sm.ReplayHomeSide,
@@ -339,7 +345,7 @@ public static class ScheduleApi
                 match.ReplayUrl = !string.IsNullOrEmpty(sm.ReplayLog) ? $"/api/matches/{match.Id}/replay" : sm.ReplayUrl;
                 if (!Enum.TryParse<MatchResult>(sm.Result, out var result) || result == MatchResult.Pending) continue;
                 match.Result = result;
-                MatchReporting.ApplyToStandings(match.HomeTeam, match.AwayTeam, result, +1);
+                MatchReporting.ApplyToStandings(match, result, +1);
                 if (!string.IsNullOrEmpty(sm.ReplayLog) && sm.ReplayHomeSide is not null)
                 {
                     await recorder.ApplyAsync(match, sm.ReplayHomeSide, sm.ReplayLog, result, +1, ct);
@@ -357,6 +363,7 @@ public static class ScheduleApi
             draft.CurrentIndex = 0;
 
             await db.SaveChangesAsync(ct);
+            await Playoffs.SyncAsync(db, leagueId, ct);
             await notifier.DraftStateChangedAsync(draft.Id, DraftState.Complete, ct);
             await notifier.PlayersChangedAsync(ct);
             await notifier.ScheduleChangedAsync(leagueId, ct);
@@ -373,25 +380,15 @@ public static class ScheduleApi
             var league = await db.Leagues.FirstOrDefaultAsync(l => l.Id == leagueId, ct);
             if (league is null) return Results.NotFound();
 
-            // Every team in the league, with its authoritative match record.
             var teams = await db.Teams
                 .Where(t => t.LeagueId == leagueId)
-                .Select(t => new { t.Id, t.CoachId, t.CoachName, t.Wins, t.Losses, t.Draws })
-                .ToListAsync(ct);
+                .Select(t => new { t.Id, t.CoachId, t.CoachName })
+                .ToDictionaryAsync(t => t.Id, ct);
 
             // The caller's own team, so the client can highlight their standings row
             // and their mons in the leaderboards.
-            var myTeamId = teams.FirstOrDefault(t => t.CoachId == me.DiscordId())?.Id;
-
-            // Discord avatar hashes for the coaches that have one, synthetic coaches
-            // (dummies / sim) and anyone without an avatar simply won't be in here, so
-            // the scoreboard shows an empty slot for them.
-            var coachIds = teams.Select(t => t.CoachId).ToList();
-            var avatarByCoach = (await db.Users
-                    .Where(u => coachIds.Contains(u.DiscordId) && u.AvatarHash != null)
-                    .Select(u => new { u.DiscordId, u.AvatarHash })
-                    .ToListAsync(ct))
-                .ToDictionary(u => u.DiscordId, u => u.AvatarHash!);
+            var myTeamId = teams.Values.FirstOrDefault(t => t.CoachId == me.DiscordId())?.Id;
+            var avatars = await TeamAvatarsAsync(db, teams.Values.Select(t => (t.Id, t.CoachId)), ct);
 
             // Every played mon in the league, with the raw fields the leaderboards and
             // each team's MVP are built from. Mirrors /api/stats.
@@ -421,32 +418,6 @@ public static class ScheduleApi
                 })
                 .ToListAsync(ct);
 
-            // Per-team faint rollups for the KO differential, counted per GAME from each
-            // side's faints so an opponent's self-KO (Explosion, Final Gambit) still moves
-            // the differential. The KOs column stays the team's credited Kills, which the
-            // scraper withholds for a self-KO.
-            var killsByTeam = mons.GroupBy(m => m.teamId).ToDictionary(g => g.Key, g => g.Sum(x => x.k));
-            var played = await db.Matches
-                .Where(m => m.LeagueId == leagueId && m.Result != MatchResult.Pending
-                            && m.ReplayLog != null && m.ReplayHomeSide != null)
-                .Select(m => new { m.HomeTeamId, m.AwayTeamId, m.ReplayHomeSide, m.ReplayLog })
-                .ToListAsync(ct);
-
-            var koByTeam = new Dictionary<int, (int oppFaints, int faints)>();
-            void AddGame(int teamId, int oppFaints, int faints)
-            {
-                var t = koByTeam.GetValueOrDefault(teamId);
-                koByTeam[teamId] = (t.oppFaints + oppFaints, t.faints + faints);
-            }
-            foreach (var m in played)
-            {
-                var faints = ReplayScorer.FaintsBySide(m.ReplayLog!);
-                var homeFaints = faints.GetValueOrDefault(m.ReplayHomeSide!);
-                var awayFaints = faints.GetValueOrDefault(m.ReplayHomeSide == "p1" ? "p2" : "p1");
-                AddGame(m.HomeTeamId, awayFaints, homeFaints);
-                AddGame(m.AwayTeamId, homeFaints, awayFaints);
-            }
-
             // Each team's MVP: the mon with the best KO differential (k - d), same
             // measure the team-page MVP badge uses. Only teams that have played
             // appear here; others get no MVP.
@@ -456,39 +427,25 @@ public static class ScheduleApi
                     .OrderByDescending(x => x.k - x.d).ThenByDescending(x => x.k).ThenBy(x => x.pokemon)
                     .First());
 
-            // Standings: every team, sorted by record differential (W - L), then
-            // KO differential, then total wins, then total KOs. A team with no
-            // games played still appears (all zeros), sorted to the bottom. Team id
-            // is the final, stable tiebreak so the order is deterministic.
-            var standings = teams
-                .Select(t =>
+            // Standings: every team, games played or not, in Standings order.
+            var standings = (await Standings.ComputeAsync(db, leagueId, ct))
+                .Select(r => new
                 {
-                    var ko = koByTeam.GetValueOrDefault(t.Id);
-                    return new
-                    {
-                        teamId = t.Id,
-                        discordId = t.CoachId,
-                        avatarUrl = avatarByCoach.TryGetValue(t.CoachId, out var hash)
-                            ? $"https://cdn.discordapp.com/avatars/{t.CoachId}/{hash}.png"
-                            : null,
-                        trainer = t.CoachName,
-                        wins = t.Wins,
-                        losses = t.Losses,
-                        draws = t.Draws,
-                        recordDiff = t.Wins - t.Losses,
-                        koDiff = ko.oppFaints - ko.faints,
-                        totalKos = killsByTeam.GetValueOrDefault(t.Id),
-                        totalFaints = ko.faints,
-                        mvp = mvpByTeam.TryGetValue(t.Id, out var mv)
-                            ? new { mv.pokemon, mv.sprite, mv.dex, mv.tier, mv.tera, kos = mv.k, faints = mv.d }
-                            : null,
-                    };
+                    teamId = r.TeamId,
+                    discordId = teams[r.TeamId].CoachId,
+                    avatarUrl = avatars[r.TeamId],
+                    trainer = teams[r.TeamId].CoachName,
+                    wins = r.Wins,
+                    losses = r.Losses,
+                    draws = r.Draws,
+                    recordDiff = r.RecordDiff,
+                    koDiff = r.KoDiff,
+                    totalKos = r.TotalKos,
+                    totalFaints = r.TotalFaints,
+                    mvp = mvpByTeam.TryGetValue(r.TeamId, out var mv)
+                        ? new { mv.pokemon, mv.sprite, mv.dex, mv.tier, mv.tera, kos = mv.k, faints = mv.d }
+                        : null,
                 })
-                .OrderByDescending(s => s.recordDiff)
-                .ThenByDescending(s => s.koDiff)
-                .ThenByDescending(s => s.wins)
-                .ThenByDescending(s => s.totalKos)
-                .ThenBy(s => s.teamId)
                 .ToList();
 
             // Leaderboards: up to the top 5 mons in each category, each with its
@@ -560,13 +517,15 @@ public static class ScheduleApi
             var isPlayer = myId is not null && (match.HomeTeam.CoachId == myId || match.AwayTeam.CoachId == myId);
             if (!isPlayer && !await me.IsAdminAsync(db, ct)) return Results.Forbid();
 
+            if (await Playoffs.IsLockedAsync(db, match, ct)) return Results.Conflict(new { error = Playoffs.LockedError });
+
             var score = await scorer.ScoreAsync(match, req.ReplayUrl, ct);
             if (!score.Ok) return Results.BadRequest(new { error = score.Error });
 
             // Re-reporting is allowed (a corrected replay): back the current result
             // out of standings + stats first, from the STORED log, no re-fetch, then
             // apply the new one.
-            await BackOutAsync(recorder, match, ct);
+            await MatchReporting.BackOutAsync(recorder, match, ct);
 
             match.Result = score.Outcome;
             match.HomeScore = score.HomeScore;
@@ -576,7 +535,7 @@ public static class ScheduleApi
             match.ReplayHomeSide = score.HomeSide;
             match.ReportedByCoachId = myId;
             match.ReportedAt = DateTimeOffset.UtcNow;
-            MatchReporting.ApplyToStandings(match.HomeTeam, match.AwayTeam, match.Result, +1);
+            MatchReporting.ApplyToStandings(match, match.Result, +1);
 
             // Fold this replay's per-mon stats into the stats page. The scorer
             // already fetched and side-assigned the log, so no second fetch.
@@ -584,6 +543,7 @@ public static class ScheduleApi
                 await recorder.ApplyAsync(match, score.HomeSide, score.Log, score.Outcome, +1, ct);
 
             await db.SaveChangesAsync(ct);
+            await Playoffs.SyncAsync(db, match.LeagueId, ct);
             await hub.Clients.All.SendAsync("scheduleChanged", new { leagueId = match.LeagueId }, ct);
             return Results.Ok(new
             {
@@ -607,9 +567,11 @@ public static class ScheduleApi
             var isPlayer = myId is not null && (match.HomeTeam.CoachId == myId || match.AwayTeam.CoachId == myId);
             if (!isPlayer && !await me.IsAdminAsync(db, ct)) return Results.Forbid();
 
+            if (await Playoffs.IsLockedAsync(db, match, ct)) return Results.Conflict(new { error = Playoffs.LockedError });
+
             if (match.Result != MatchResult.Pending)
             {
-                await BackOutAsync(recorder, match, ct);
+                await MatchReporting.BackOutAsync(recorder, match, ct);
                 match.Result = MatchResult.Pending;
                 match.HomeScore = null;
                 match.AwayScore = null;
@@ -619,6 +581,7 @@ public static class ScheduleApi
                 match.ReportedByCoachId = null;
                 match.ReportedAt = null;
                 await db.SaveChangesAsync(ct);
+                await Playoffs.SyncAsync(db, match.LeagueId, ct);
                 await hub.Clients.All.SendAsync("scheduleChanged", new { leagueId = match.LeagueId }, ct);
             }
             return Results.Ok(new { match.Id, result = match.Result.ToString() });
@@ -939,15 +902,24 @@ public static class ScheduleApi
         MatchReporting.RecordReportAsync(db, recorder, hub, match, report, replayUrl, reporterId, ct, p1Export, p2Export);
 
     /// <summary>
-    /// Backs a match's currently-recorded result out of the standings and the stats
-    /// page, using its STORED log (no re-fetch). No-op if the match is Pending.
+    /// Each team's coach Discord avatar URL, by team id. Synthetic coaches (dummies /
+    /// sim) and anyone without an avatar map to null, so their side shows no icon.
     /// </summary>
-    private static async Task BackOutAsync(MatchStatsRecorder recorder, Match match, CancellationToken ct)
+    public static async Task<Dictionary<int, string?>> TeamAvatarsAsync(
+        AppDbContext db, IEnumerable<(int Id, string CoachId)> teams, CancellationToken ct)
     {
-        if (match.Result == MatchResult.Pending) return;
-        MatchReporting.ApplyToStandings(match.HomeTeam, match.AwayTeam, match.Result, -1);
-        if (!string.IsNullOrEmpty(match.ReplayLog) && match.ReplayHomeSide is not null)
-            await recorder.ApplyAsync(match, match.ReplayHomeSide, match.ReplayLog, match.Result, -1, ct);
+        var list = teams.ToList();
+        var coachIds = list.Select(t => t.CoachId).ToList();
+        var hashByCoach = (await db.Users
+                .Where(u => coachIds.Contains(u.DiscordId) && u.AvatarHash != null)
+                .Select(u => new { u.DiscordId, u.AvatarHash })
+                .ToListAsync(ct))
+            .ToDictionary(u => u.DiscordId, u => u.AvatarHash!);
+        return list.ToDictionary(
+            t => t.Id,
+            t => hashByCoach.TryGetValue(t.CoachId, out var hash)
+                ? $"https://cdn.discordapp.com/avatars/{t.CoachId}/{hash}.png"
+                : (string?)null);
     }
 
     /// <summary>

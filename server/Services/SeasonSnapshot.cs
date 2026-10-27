@@ -17,7 +17,7 @@ public static class SeasonSnapshot
         if (league is null) return null;
 
         var teams = await db.Teams.Where(t => t.LeagueId == leagueId)
-            .Select(t => new { t.Id, t.CoachId, t.CoachName }).ToListAsync(ct);
+            .Select(t => new { t.Id, t.CoachId, t.CoachName, t.PlayoffSeed }).ToListAsync(ct);
 
         var picks = await db.Picks
             .Where(p => p.Team.LeagueId == leagueId)
@@ -35,7 +35,7 @@ public static class SeasonSnapshot
             {
                 m.Id, m.Week, m.ScheduledFor, m.HomeTeamId, m.AwayTeamId,
                 result = m.Result.ToString(), m.HomeScore, m.AwayScore,
-                m.ReplayUrl, m.ReplayLog, m.ReplayHomeSide, m.HomeTeamExport, m.AwayTeamExport,
+                m.ReplayUrl, m.ReplayLog, m.ReplayHomeSide, m.HomeTeamExport, m.AwayTeamExport, m.PlayoffRound, m.PlayoffSlot,
             }).ToListAsync(ct);
 
         return new

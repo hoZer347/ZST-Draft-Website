@@ -57,11 +57,12 @@ public static class MatchReporting
         match.ReplayHomeSide = report.HomeSide;
         match.ReportedByCoachId = reporterId;
         match.ReportedAt = DateTimeOffset.UtcNow;
-        ApplyToStandings(match.HomeTeam, match.AwayTeam, match.Result, +1);
+        ApplyToStandings(match, match.Result, +1);
         if (report.Log is not null && report.HomeSide is not null)
             await recorder.ApplyAsync(match, report.HomeSide, report.Log, report.Outcome, +1, ct);
 
         await db.SaveChangesAsync(ct);
+        await Playoffs.SyncAsync(db, match.LeagueId, ct);
         await hub.Clients.All.SendAsync("scheduleChanged", new { leagueId = match.LeagueId }, ct);
     }
 
@@ -73,19 +74,21 @@ public static class MatchReporting
     public static async Task BackOutAsync(MatchStatsRecorder recorder, Match match, CancellationToken ct)
     {
         if (match.Result == MatchResult.Pending) return;
-        ApplyToStandings(match.HomeTeam, match.AwayTeam, match.Result, -1);
+        ApplyToStandings(match, match.Result, -1);
         if (!string.IsNullOrEmpty(match.ReplayLog) && match.ReplayHomeSide is not null)
             await recorder.ApplyAsync(match, match.ReplayHomeSide, match.ReplayLog, match.Result, -1, ct);
     }
 
-    /// <summary>Adds (<paramref name="sign"/> = +1) or backs out (-1) a result's W/L/D.</summary>
-    public static void ApplyToStandings(Team home, Team away, MatchResult result, int sign)
+    /// <summary>Adds (<paramref name="sign"/> = +1) or backs out (-1) a result's W/L/D.
+    /// A playoff game never counts toward the regular-season record.</summary>
+    public static void ApplyToStandings(Match match, MatchResult result, int sign)
     {
+        if (match.PlayoffRound is not null) return;
         switch (result)
         {
-            case MatchResult.HomeWin: home.Wins += sign; away.Losses += sign; break;
-            case MatchResult.AwayWin: away.Wins += sign; home.Losses += sign; break;
-            case MatchResult.Draw: home.Draws += sign; away.Draws += sign; break;
+            case MatchResult.HomeWin: match.HomeTeam.Wins += sign; match.AwayTeam.Losses += sign; break;
+            case MatchResult.AwayWin: match.AwayTeam.Wins += sign; match.HomeTeam.Losses += sign; break;
+            case MatchResult.Draw: match.HomeTeam.Draws += sign; match.AwayTeam.Draws += sign; break;
         }
     }
 }

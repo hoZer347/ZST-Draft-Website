@@ -26,7 +26,7 @@ public class NodeBattleSimulator(IHostEnvironment env, ILogger<NodeBattleSimulat
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     /// <returns>One result per match (same order), or null if the run failed.</returns>
-    public async Task<IReadOnlyList<BattleResult>?> RunAsync(IReadOnlyList<MatchSpec> matches, CancellationToken ct = default)
+    public virtual async Task<IReadOnlyList<BattleResult>?> RunAsync(IReadOnlyList<MatchSpec> matches, CancellationToken ct = default)
     {
         if (matches.Count == 0) return [];
 

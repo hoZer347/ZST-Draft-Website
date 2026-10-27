@@ -193,7 +193,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
+    await SchemaUpgrade.ApplyAsync(db);
     if (app.Environment.IsDevelopment()) await DevSeed.SeedAsync(db);
+    foreach (var leagueId in await db.Leagues.Select(l => l.Id).ToListAsync())
+        await Playoffs.SyncAsync(db, leagueId);
 }
 
 if (!app.Environment.IsDevelopment())
@@ -245,6 +248,7 @@ app.MapAuthApi(CorsPolicy);
 app.MapMobileApi(CorsPolicy);
 app.MapPlayersApi(CorsPolicy);
 app.MapScheduleApi(CorsPolicy);
+app.MapPlayoffsApi(CorsPolicy);
 app.MapDraftStatsApi(CorsPolicy);
 
 if (app.Environment.IsDevelopment())
@@ -262,6 +266,7 @@ if (app.Environment.IsDevelopment())
         // so a simulated season reflects the latest tiers/stats.
         await sync.RefreshAsync(draft.LeagueId, ct);
         var result = await sim.SimulateAsync(draft.Id, ct);
+        await Playoffs.SyncAsync(db, draft.LeagueId, ct);
         return Results.Ok(result);
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
@@ -280,7 +285,20 @@ if (app.Environment.IsDevelopment())
         await sync.RefreshAsync(draft.LeagueId, ct);
         // Real headless Showdown battles by default (?real=false fabricates stats instead).
         var result = await sim.SimulateAsync(draft.Id, teams ?? 8, seed, real ?? true, ct);
+        await Playoffs.SyncAsync(db, draft.LeagueId, ct);
         return Results.Ok(result);
+    }).RequireAuthorization().RequireCors(CorsPolicy);
+
+    // Finish the league as it stands (e.g. a copy of live data): battle every unplayed
+    // regular-season game, then the playoffs, keeping teams, rosters and results.
+    // Admin-only and Development-only.
+    app.MapPost("/dev/play-out-season", async (
+        RandomSeasonSimulator sim, ClaimsPrincipal me, AppDbContext db, CancellationToken ct) =>
+    {
+        if (!await me.IsAdminAsync(db, ct)) return Results.Forbid();
+        var draft = await db.Drafts.OrderBy(d => d.Id).FirstOrDefaultAsync(ct);
+        if (draft is null) return Results.NotFound();
+        return Results.Ok(new { recorded = await sim.PlayOutAsync(draft.Id, ct) });
     }).RequireAuthorization().RequireCors(CorsPolicy);
 
     // Full per-mon scrape of one match's stored replay log, plus the raw log, the

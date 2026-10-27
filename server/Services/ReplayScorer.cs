@@ -195,6 +195,7 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var match = await between.FirstOrDefaultAsync(m => m.Result == MatchResult.Pending, ct)
                     ?? await between.FirstOrDefaultAsync(ct);
         if (match is null) return new(false, "no scheduled match between these teams");
+        if (await Playoffs.IsLockedAsync(db, match, ct)) return new(false, Playoffs.LockedError);
 
         var score = await ScoreLogAsync(match, log, ct);
         if (!score.Ok) return new(false, score.Error);

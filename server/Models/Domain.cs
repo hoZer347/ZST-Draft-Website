@@ -96,6 +96,10 @@ public class Team
     /// </summary>
     public int SkipsRemaining { get; set; } = 5;
 
+    /// <summary>Playoff seed (1 = top), frozen from the standings when the regular
+    /// season finishes. Null for a team that missed the cut, or before seeding.</summary>
+    public int? PlayoffSeed { get; set; }
+
     public List<Pick> Picks { get; set; } = [];
 }
 
@@ -370,6 +374,13 @@ public class Match
     public League League { get; set; } = null!;
 
     public int Week { get; set; }
+
+    /// <summary>Bracket round (1 = first) for a playoff game, null for the regular
+    /// season. Playoff results never touch Wins/Losses/Draws.</summary>
+    public int? PlayoffRound { get; set; }
+
+    /// <summary>The game's position within its playoff round, top of the bracket first.</summary>
+    public int? PlayoffSlot { get; set; }
 
     public int HomeTeamId { get; set; }
     public Team HomeTeam { get; set; } = null!;
