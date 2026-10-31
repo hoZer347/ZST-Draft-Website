@@ -195,6 +195,38 @@ try {
 
     #endregion
 
+    #region Start-Showdown captures each launch
+
+    $extraLogs = 3
+    $showdownLogs = Join-Path ([IO.Path]::GetTempPath()) "showdown-logs-test-$PID"
+    $showdownDir = [IO.Path]::GetTempPath()
+    $node = 'node'
+    Invoke-Expression (Get-AssignmentText $watchdog 'showdownLogKeep')
+    Invoke-Expression (Get-FunctionText $watchdog 'Start-Showdown')
+    function Start-Process { $script:launchArguments = $args; [pscustomobject]@{ Id = $fakeProcessId; HasExited = $false } }
+
+    try {
+        $showdownRun = @(Start-Showdown)
+        Assert-That ($showdownRun.Count -eq 1 -and $showdownRun[0].Id -eq $fakeProcessId) 'Start-Showdown returns only the process'
+        Assert-That (Test-Path $showdownLogs) 'the log folder is created'
+        $logArguments = @($launchArguments | Where-Object { "$_" -like "$showdownLogs*" })
+        Assert-That ($logArguments.Count -eq 2) 'stdout and stderr each go to a file'
+        Assert-That ($logArguments[0] -like '*.out.log' -and $logArguments[1] -like '*.err.log') 'the files are named for their stream'
+
+        $oldLogs = $showdownLogKeep + $extraLogs
+        Remove-Item (Join-Path $showdownLogs '*') -Force
+        foreach ($i in 1..$oldLogs) { Set-Content (Join-Path $showdownLogs ('{0:d4}.out.log' -f $i)) '' }
+        $null = Start-Showdown
+        $kept = @(Get-ChildItem $showdownLogs -Filter '*.log' | Sort-Object Name)
+        Assert-That ($kept.Count -eq $showdownLogKeep) 'old logs are pruned'
+        Assert-That ($kept[-1].Name -eq ('{0:d4}.out.log' -f $oldLogs)) 'the newest logs are kept'
+    } finally {
+        Remove-Item function:Start-Process
+        Remove-Item $showdownLogs -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    #endregion
+
     #region restart-node.ps1 runs unmodified against stubs
 
     $null = New-Item -ItemType Directory -Path $sandbox

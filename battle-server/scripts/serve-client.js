@@ -54,7 +54,7 @@ const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.json', '.svg', '.map', '
 //    came through the draft app (a bookmark, a battle link, a reopened browser) is
 //    still signed in as themselves instead of an anonymous Guest who can't chat.
 //  - AUTOLOGIN runs LAST (appended after the client scripts, once `app` exists)
-//    and drives the login off the captured name.
+//    and keeps the login up for the life of the page. Both live in lib/auto-login.js.
 // The team-seeding logic lives in lib/seed-teams.js (pure + unit-tested). We inline
 // its SOURCE into the page so the browser and the Node tests run the identical code
 //, the file attaches `seedTeams` to window. A second script then reads the URL +
@@ -66,29 +66,13 @@ const ROSTER_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-tea
 // Same deal for the C-tier Tera lock (see AUTO_TERA below and test/roster-tera.test.js).
 const TERA_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-tera.js'), 'utf8');
 
-// The remembered login, inlined into each injected script below so every one of them
-// resolves the coach's name the same way and none depends on another having run:
-// the captured ?name=, else this tab's copy, else the cross-tab localStorage cache.
-const LOGIN_NAME_FN = `
-  function readName(store) { try { return store.getItem('zst_name') || ''; } catch (e) { return ''; } }
-  function loginName() {
-    return window.__zstName || readName(sessionStorage) || readName(localStorage) || '';
-  }`;
+// Same deal for the remembered login (see AUTOLOGIN below and test/auto-login.test.js).
+const LOGIN_LIB = fs.readFileSync(path.join(__dirname, '..', 'lib', 'auto-login.js'), 'utf8');
 
-const CAPTURE_HEAD = `<script>
-(function () {${LOGIN_NAME_FN}
-  var n = '';
-  try { n = new URLSearchParams(location.search).get('name') || ''; } catch (e) {}
-  // Remembered login. Without this a coach is only signed in on the tab the draft app
-  // opened with ?name=; anyone landing on the client directly (a bookmark, a battle
-  // link, a reopened browser) was an anonymous Guest, and a Guest can't chat at all.
-  // An explicit ?name= in THIS tab still wins over the cache.
-  if (!n) n = loginName();
-  if (n) {
-    window.__zstName = n;
-    try { sessionStorage.setItem('zst_name', n); } catch (e) {}
-    try { localStorage.setItem('zst_name', n); } catch (e) {}
-  }
+const CAPTURE_HEAD = `<script>${LOGIN_LIB}</script>
+<script>
+(function () {
+  zstLogin.rememberName(window);
 })();
 </script>
 <script>${SEED_LIB}</script>
@@ -112,39 +96,9 @@ const CAPTURE_HEAD = `<script>
 
 const AUTOLOGIN = `
 <script>
-(function () {${LOGIN_NAME_FN}
+(function () {
   try {
-    var name = loginName();
-    if (!name) return;
-    var clean = name.replace(/[|,;]+/g, '');
-    var wantId = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
-    var tries = 0, lastSend = -999;
-    var iv = setInterval(function () {
-      if (++tries > 480) { clearInterval(iv); return; } // ~120s then give up
-      // Wait for the classic client's app + a received challstr.
-      if (!window.app || !app.user || !app.user.challstr) return;
-      var uid = app.user.get && app.user.get('userid');
-      if (uid === wantId) {
-        // Logged in as the desired name. Force the top-right userbar to re-render
-        // (its 'change' handler can miss the first update if the topbar wasn't
-        // built yet), then stop.
-        if (app.topbar && app.topbar.updateUserbar) app.topbar.updateUserbar();
-        clearInterval(iv);
-        return;
-      }
-      // Keep resending /trn (empty token; our server runs noguestsecurity) every
-      // ~1.5s until the rename lands. The common failure is a coach reopening the
-      // teambuilder while their just-closed tab's same-name session is still
-      // registered server-side: handleRename refuses the merge with |nametaken|
-      // until that stale connection drops, after which the same-IP merge
-      // succeeds. The server runs with nothrottle on, so repeated renames aren't
-      // rate-limited. (This used to cap at 3 sends and gave up while the old
-      // session was still lingering, leaving the coach an unnamed Guest.)
-      if (tries - lastSend >= 6) {
-        app.send('/trn ' + clean + ',0,');
-        lastSend = tries;
-      }
-    }, 250);
+    if (window.__zstName) zstLogin.startAutoLogin(window, window.__zstName);
   } catch (e) { /* never break the client over auto-login */ }
 })();
 </script>`;
@@ -232,12 +186,12 @@ const FORMAT_FILTER = `<script>
 // no tera lock.
 const AUTO_TERA = `<script>${TERA_LIB}</script>
 <script>
-(function () {${LOGIN_NAME_FN}
+(function () {
   var TERA = {};        // speciesid -> drafted Tera type, C-tier picks only
   var loaded = false;   // nothing is stamped until the roster is actually in
 
   function load() {
-    var name = loginName();
+    var name = window.__zstName;
     if (!name) return;
     fetch('/zst-roster?name=' + encodeURIComponent(name)).then(function (r) { return r.json(); }).then(function (d) {
       if (!d || !d.found || !d.mons) return;
@@ -320,7 +274,7 @@ const AUTO_TERA = `<script>${TERA_LIB}</script>
 // mon at battle time regardless of the picker.
 const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
 <script>
-(function () {${LOGIN_NAME_FN}
+(function () {
   var TAG = '[zst-roster]';
   function dbg(msg) { try { console.log(TAG, msg); } catch (e) {} } // console breadcrumbs
   // Two allow-sets, chosen by the team's format in the search hook below:
@@ -337,7 +291,7 @@ const ROSTER_RESTRICT = `<script>${ROSTER_LIB}</script>
     // Whichever one the roster endpoint matches wins.
     var c = [];
     try { if (window.app && app.user && app.user.get) { var u = app.user.get('userid'), n = app.user.get('name'); if (!isGuest(u)) c.push(u); if (!isGuest(n)) c.push(n); } } catch (e) {}
-    var cached = loginName(); if (cached) c.push(cached);
+    if (window.__zstName) c.push(window.__zstName);
     return c.filter(function (x, i) { return x && !isGuest(x) && c.indexOf(x) === i; });
   }
   function fetchRosters() {

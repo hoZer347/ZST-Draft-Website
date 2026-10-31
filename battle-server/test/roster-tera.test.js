@@ -246,23 +246,9 @@ function injectedTeraScript() {
   assert.ok(end > start, 'the AUTO_TERA template literal is still terminated by </script>`;');
   const body = SERVE_CLIENT.slice(start + head.length, end);
   assert.ok(body.includes('${TERA_LIB}'), 'AUTO_TERA inlines lib/roster-tera.js rather than its own copy');
-  // AUTO_TERA also inlines serve-client's shared loginName() helper (LOGIN_NAME_FN);
-  // substitute it the same way so the block runs standalone here.
-  assert.ok(body.includes('${LOGIN_NAME_FN}'), 'AUTO_TERA inlines the shared loginName helper');
   return body
     .replace('${TERA_LIB}', fs.readFileSync(path.join(__dirname, '..', 'lib', 'roster-tera.js'), 'utf8'))
-    .replace('${LOGIN_NAME_FN}', loginNameFn())
     .replace(/<\/?script>/g, '');
-}
-
-// The LOGIN_NAME_FN template literal from serve-client.js, verbatim.
-function loginNameFn() {
-  const head = 'const LOGIN_NAME_FN = `';
-  const start = SERVE_CLIENT.indexOf(head);
-  assert.ok(start > 0, 'serve-client.js still defines LOGIN_NAME_FN');
-  const end = SERVE_CLIENT.indexOf('`;', start + head.length);
-  assert.ok(end > start, 'the LOGIN_NAME_FN template literal is still terminated');
-  return SERVE_CLIENT.slice(start + head.length, end);
 }
 
 // A stand-in for the classic client's TeambuilderRoom: only the methods AUTO_TERA hooks,
@@ -298,7 +284,7 @@ function boot(mons) {
   const sandbox = {
     TeambuilderRoom: makeRoomClass(),
     app: { rooms: {} },
-    sessionStorage: { getItem: () => 'CAMKART100' },
+    __zstName: 'CAMKART100',
     fetch: () => pending.then(() => ({ json: () => Promise.resolve({ found: true, mons: mons }) })),
     setInterval: (fn) => { fn(); return 0; }, // patch() succeeds on the first poll
     clearInterval: () => {},
@@ -368,7 +354,7 @@ test('a failed roster fetch leaves the builder working, just unstamped', async (
   const sandbox = {
     TeambuilderRoom: makeRoomClass(),
     app: { rooms: {} },
-    sessionStorage: { getItem: () => 'CAMKART100' },
+    __zstName: 'CAMKART100',
     fetch: () => Promise.reject(new Error('offline')),
     setInterval: (fn) => { fn(); return 0; },
     clearInterval: () => {}, setTimeout: () => 0, console: console,

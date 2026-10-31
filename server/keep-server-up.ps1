@@ -43,6 +43,9 @@ $cloudflared = 'C:\Program Files (x86)\cloudflared\cloudflared.exe'
 # Self-hosted Showdown server (battle-server), for the teambuilder's custom format.
 $node        = 'C:\Program Files\nodejs\node.exe'
 $showdownDir = 'C:\Users\3hoze\Desktop\Pokemon Draft League\battle-server'
+# One pair per launch: showdown.js's child inherits stdio, so an orphan could lock a fixed name and block the relaunch.
+$showdownLogs    = Join-Path $root 'showdown-logs'
+$showdownLogKeep = 40
 # Unrelated project, same box and same tunnel: the payments page on :8080,
 # public at justfuckingpayme.com. Kept alive here so there is one watchdog.
 $payDir      = 'C:\Users\3hoze\pay-page'
@@ -75,6 +78,17 @@ function Keep-Listening([int]$port, [string]$name, [scriptblock]$launch) {
     $launches[$port] = & $launch
     Log "relaunched $name"
     return $false
+}
+
+function Start-Showdown {
+    $null = New-Item -ItemType Directory -Force -Path $showdownLogs
+    $launchedAt = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $process = Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $showdownLogs "$launchedAt.out.log") `
+        -RedirectStandardError  (Join-Path $showdownLogs "$launchedAt.err.log")
+    Get-ChildItem -Path $showdownLogs -Filter '*.log' | Sort-Object Name -Descending |
+        Select-Object -Skip $showdownLogKeep | Remove-Item -Force -ErrorAction SilentlyContinue
+    $process
 }
 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
@@ -121,9 +135,7 @@ while ($true) {
 
         # Keep the Showdown battle server up (port 8787), checked by listener.
         if (Test-Path $node) {
-            $null = Keep-Listening 8787 'showdown server' {
-                Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru
-            }
+            $null = Keep-Listening 8787 'showdown server' { Start-Showdown }
         }
 
         # Keep the self-hosted Showdown client static server up (port 8791),

@@ -3,6 +3,7 @@ server.out.log
 server.err.log
 server.out.prev.log
 server.err.prev.log
+showdown-logs/
 run/
 # Watchdog runtime state, rewritten every few seconds (see keep-server-up.ps1).
 .watchdog.pid

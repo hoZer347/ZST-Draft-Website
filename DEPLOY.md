@@ -26,7 +26,8 @@ sign-in from the user Startup folder.
 Every ~5s it relaunches anything down: the .NET server, `cloudflared`, both Node
 servers, the pay-page server on :8080 and the personal-site server on :8082. It never kills a live
 process: a Node server that stops answering is logged and left running, and is relaunched
-once it has exited. `restart-node.ps1` clears a hung :8787 or :8791; a hung :8080 or :8082
+once it has exited. Each Showdown launch writes `server/showdown-logs/<start time>.out.log`
+and `.err.log`, and the newest 40 files are kept. `restart-node.ps1` clears a hung :8787 or :8791; a hung :8080 or :8082
 needs killing by hand. Three failed connects in a row count as down. Ports are checked by connecting, because Windows' TCP table has omitted live
 listeners since 2026-10-30. It also enforces an always-awake power
 profile so the draft clock keeps firing while unattended. Manage it by its
