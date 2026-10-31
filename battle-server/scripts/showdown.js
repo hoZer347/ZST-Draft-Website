@@ -110,6 +110,7 @@ console.log(installCustomFormats(psDir)
 //   draft-chat.js   - lets any named coach chat in battle rooms and PMs without a
 //                     registered account (we run no login server).
 //   live-battles.js - answers /livebattles for server/deploy-live.ps1.
+//   lone-join.js    - keeps a coach in their own users list after a refresh.
 function installChatPlugins() {
   const srcDir = path.join(__dirname, '..', 'showdown-config', 'chat-plugins');
   const destDir = path.join(psDir, 'dist', 'server', 'chat-plugins');
