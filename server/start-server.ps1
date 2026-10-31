@@ -5,9 +5,10 @@
 # dies within ~20s. So this script only has to (1) clear a stale pause flag, (2)
 # make sure a watchdog is running, and (3) wait for :5211 to answer.
 #
-# Safe to run twice. A live watchdog is left alone unless it is older than its
-# script, and never gets a second one beside it, because two would race to
-# relaunch the same processes.
+# Safe to run twice. A live watchdog is left alone unless its stamp in .live no
+# longer matches its code, and never gets a second one beside it, because two would
+# race to relaunch the same processes. The tunnel restarts only on deploy-live.ps1's
+# .tunnel-restart-requested flag, which that script drops after its battle check.
 
 $ErrorActionPreference = 'Continue'
 $root  = $PSScriptRoot
@@ -16,6 +17,7 @@ $pidf  = Join-Path $root '.watchdog.pid'
 $alive = Join-Path $root '.watchdog.alive'
 $watch = Join-Path $root 'keep-server-up.ps1'
 . (Join-Path $root 'port-check.ps1')
+. (Join-Path $root 'live-code.ps1')
 
 Write-Host "Draft League: booting the local stack" -ForegroundColor Cyan
 Write-Host "  root: $root"
@@ -46,9 +48,8 @@ if (Test-Path $pidf) {
     $proc = Get-Process -Id $wpid -ErrorAction SilentlyContinue
     # The PID is reused after a reboot, so also require a recent heartbeat.
     if ($proc -and (Test-Path $alive) -and ((Get-Date) - (Get-Item $alive).LastWriteTime).TotalMinutes -lt 2) {
-        # Older than its script means stale code; the pidfile is its start time in any session.
-        $running = $true
-        if ((Get-Item $watch).LastWriteTime -gt (Get-Item $pidf).LastWriteTime) {
+        $running = -not (Test-StampReused 'watchdog')
+        if ($running -and (Get-StaleReason 'watchdog')) {
             try {
                 Stop-Process -Id $wpid -Force -ErrorAction Stop
                 $running = $false
@@ -65,6 +66,18 @@ if (-not $running) {
     Start-Process powershell.exe -WindowStyle Hidden -ArgumentList `
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$watch`""
     Write-Host "  started the watchdog" -ForegroundColor Green
+}
+
+$tunnelRestart = Join-Path $root '.tunnel-restart-requested'
+if (Test-Path $tunnelRestart) {
+    try {
+        Get-Process -Name 'cloudflared' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction Stop
+        Write-Host "  stopped the tunnel for the watchdog to relaunch" -ForegroundColor Yellow
+    } catch {
+        Write-Host "  requested tunnel restart failed: $($_.Exception.Message)" -ForegroundColor Red
+    } finally {
+        Remove-Item $tunnelRestart -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # The watchdog launches on a 5s loop, so give it a couple of cycles plus the

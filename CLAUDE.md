@@ -47,6 +47,17 @@ restart it or old code keeps serving: `powershell -File server/restart-node.ps1 
 off to `DraftLeagueBoot` like `deploy-run.ps1` when the stack is in session 0. Confirm a client-server edit landed:
 `curl -s http://127.0.0.1:8791/teambuilder | grep <new-token>`.
 
+## A server fix is done only once it is live
+
+Report a fix to the watchdog, the tunnel config or the Node servers as done only after
+`powershell -ExecutionPolicy Bypass -File server/deploy-live.ps1` exits 0 and the fix has
+been seen working on the live site. A green test or a commit proves nothing about the
+running processes. The script restarts what is stale, compares each process's start stamp
+and code hash in `server/.live` with the disk, and holds sockets through the tunnel for
+five minutes. It refuses to restart the tunnel or :8787 during a live battle unless given
+`-Force`. Before calling an old failure current, check the dated lines in
+`server/keep-server-up.log`.
+
 ## The Showdown engine lives in the client cache
 
 The league's formats need the `champions` mod, which the npm `pokemon-showdown`

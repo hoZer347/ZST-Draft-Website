@@ -8,3 +8,9 @@ run/
 # Watchdog runtime state, rewritten every few seconds (see keep-server-up.ps1).
 .watchdog.pid
 .watchdog.alive
+
+# Handoff flag for DraftLeagueBoot (see deploy-live.ps1).
+.tunnel-restart-requested
+
+# What each live process was started from (see live-code.ps1).
+.live/

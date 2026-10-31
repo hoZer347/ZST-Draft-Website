@@ -43,7 +43,9 @@ $s = 'C:\Users\3hoze\Desktop\Pokemon Draft League\server\keep-server-up.ps1'
 Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$s`"" -WindowStyle Hidden
 ```
 
-Tunnel config lives in `%USERPROFILE%\.cloudflared\config.yml`.
+Tunnel config lives in `%USERPROFILE%\.cloudflared\config.yml`. It sets `protocol: http2`,
+because QUIC connections dropped about every four minutes on this box and took live
+sockets with them, and logs to `cloudflared.log` beside it.
 
 ## Promoting a new build
 
@@ -59,6 +61,14 @@ powershell -File deploy-run.ps1   # pauses + kills live, copies bin/Debug/net9.0
 The watchdog relaunches from `run/` within ~5s. Config/appsettings-only changes still
 need `deploy-run.ps1` (config lives in `run/` too) but no `dotnet build`. See CLAUDE.md
 for the full handshake and the `.server-paused` caveat.
+
+`deploy-live.ps1` takes the watchdog, `config.yml` and the Node servers live. The watchdog
+stamps each launch in `server/.live` with its pid, start time and code hash. The script
+restarts what no longer matches the disk, fails if anything stays stale, then holds sockets
+through the tunnel for five minutes and fails on a closed socket or a relaunch. A live
+battle stops it before any restart, unless `-Force` is given, and it counts them with
+`/livebattles` from `live-battles.js`. A stamp follows the process the watchdog launched, so
+an old orphan that still holds :8787 passes beside a new launch that never bound.
 
 ## Secrets
 

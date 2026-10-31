@@ -56,12 +56,22 @@ $payEnv      = Join-Path $payDir '.env'
 $siteDir     = 'C:\Users\3hoze\Desktop\Website'
 $siteScript  = Join-Path $siteDir 'serve-site.cjs'
 
-function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
+function Log($m) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
 
 $missLimit = 3
 $launches = @{}
 $misses = @{}
 . (Join-Path $root 'port-check.ps1')
+. (Join-Path $root 'live-code.ps1')
+
+function Start-Stamped([string]$name, [scriptblock]$launch) {
+    $hash = ''
+    try { $hash = Get-CodeHash $name } catch { Log "ERR: could not hash ${name}: $($_.Exception.Message)" }
+    $process = & $launch
+    try { Write-LiveStamp $name $process.Id $hash } catch { Log "ERR: could not stamp ${name}: $($_.Exception.Message)" }
+    $process
+}
+
 function Keep-Listening([int]$port, [string]$name, [scriptblock]$launch) {
     $last = $launches[$port]
     if (Test-Listening $port) {
@@ -95,6 +105,7 @@ $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:ASPNETCORE_URLS        = 'http://localhost:5211'
 
 "$PID" | Out-File -FilePath $pidf -Encoding ascii -NoNewline
+Write-LiveStamp 'watchdog' $PID (Get-CodeHash 'watchdog')
 Log "watchdog start (pid $PID); root=$root exe-exists=$(Test-Path $exe)"
 
 # Enforce an always-awake power profile (AC / plugged-in) so the server keeps
@@ -129,20 +140,24 @@ while ($true) {
         # since the tunnel doesn't lock the build output.
         $cf = Get-Process -Name 'cloudflared' -ErrorAction SilentlyContinue
         if (-not $cf -and (Test-Path $cloudflared)) {
-            Start-Process -FilePath $cloudflared -ArgumentList 'tunnel', 'run', 'loom-tunnel' -WindowStyle Hidden
+            $null = Start-Stamped 'tunnel' {
+                Start-Process -FilePath $cloudflared -ArgumentList 'tunnel', 'run', 'loom-tunnel' -WindowStyle Hidden -PassThru
+            }
             Log "relaunched cloudflared tunnel"
         }
 
         # Keep the Showdown battle server up (port 8787), checked by listener.
         if (Test-Path $node) {
-            $null = Keep-Listening 8787 'showdown server' { Start-Showdown }
+            $null = Keep-Listening 8787 'showdown server' { Start-Stamped '8787' { Start-Showdown } }
         }
 
         # Keep the self-hosted Showdown client static server up (port 8791),
         # served publicly at play.loomhozer.ca.
         if (Test-Path $node) {
             $null = Keep-Listening 8791 'client server' {
-                Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru
+                Start-Stamped '8791' {
+                    Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru
+                }
             }
         }
 

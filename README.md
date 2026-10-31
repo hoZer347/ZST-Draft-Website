@@ -43,8 +43,10 @@ A watchdog, [server/keep-server-up.ps1](server/keep-server-up.ps1), relaunches
 any of these (plus `cloudflared`) within a few seconds if it goes down, so the
 draft clock and the battle server stay up unattended. The live .NET server runs
 a promoted copy at `server/run/DraftLeagueLive.exe`, not the raw build output; a
-new build goes live via [server/deploy-run.ps1](server/deploy-run.ps1). See
-CLAUDE.md for the full rebuild handshake.
+new build goes live via [server/deploy-run.ps1](server/deploy-run.ps1), and the
+watchdog, tunnel config and Node servers via
+[server/deploy-live.ps1](server/deploy-live.ps1). See CLAUDE.md for the full
+rebuild handshake.
 
 `netlify.toml` and the Netlify path in `web/config.js` are legacy: the site used
 to be a static Netlify deploy calling the API cross-origin. It is now served by
@@ -78,8 +80,8 @@ in (the `DraftLeagueBoot` task from `server/install-boot-task.ps1`, so a Windows
 Update restart doesn't leave the sites down), at logon (hidden, from
 `DraftLeagueServerWatchdog.vbs` in the user's Startup folder) and on demand from
 the `Start Draft League Server.cmd` desktop shortcut. Running it while the stack
-is already up is a no-op, it never starts a second watchdog (one older than
-`keep-server-up.ps1` is replaced).
+is already up is a no-op, it never starts a second watchdog (one running older
+code than `keep-server-up.ps1` is replaced).
 
 For live battles and the Teambuilder, also start the battle server:
 
