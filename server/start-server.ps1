@@ -2,11 +2,12 @@
 #
 # Nothing here starts the server directly: the watchdog (keep-server-up.ps1) owns
 # that, plus cloudflared and the two Node servers, and it relaunches anything that
-# dies within ~5s. So this script only has to (1) clear a stale pause flag, (2)
+# dies within ~20s. So this script only has to (1) clear a stale pause flag, (2)
 # make sure a watchdog is running, and (3) wait for :5211 to answer.
 #
-# Safe to run twice. If a watchdog is already alive it is left alone, never a
-# second one, because two watchdogs would race to relaunch the same processes.
+# Safe to run twice. A live watchdog is left alone unless it is older than its
+# script, and never gets a second one beside it, because two would race to
+# relaunch the same processes.
 
 $ErrorActionPreference = 'Continue'
 $root  = $PSScriptRoot
@@ -14,6 +15,7 @@ $pause = Join-Path $root '.server-paused'
 $pidf  = Join-Path $root '.watchdog.pid'
 $alive = Join-Path $root '.watchdog.alive'
 $watch = Join-Path $root 'keep-server-up.ps1'
+. (Join-Path $root 'port-check.ps1')
 
 Write-Host "Draft League: booting the local stack" -ForegroundColor Cyan
 Write-Host "  root: $root"
@@ -25,6 +27,17 @@ if (Test-Path $pause) {
     Write-Host "  cleared a stale .server-paused flag" -ForegroundColor Yellow
 }
 
+# restart-node.ps1 hands its restart here the same way.
+$nodeRestart = Join-Path $root '.node-restart-requested'
+if (Test-Path $nodeRestart) {
+    try {
+        & (Join-Path $root 'restart-node.ps1') -Port ([int[]]((Get-Content $nodeRestart -Raw).Trim() -split ','))
+        Remove-Item $nodeRestart -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "  requested Node restart failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
 # Is a watchdog already up? Identify it by its own PID file, never by string
 # matching command lines (this script's name would match itself).
 $running = $false
@@ -33,8 +46,18 @@ if (Test-Path $pidf) {
     $proc = Get-Process -Id $wpid -ErrorAction SilentlyContinue
     # The PID is reused after a reboot, so also require a recent heartbeat.
     if ($proc -and (Test-Path $alive) -and ((Get-Date) - (Get-Item $alive).LastWriteTime).TotalMinutes -lt 2) {
+        # Older than its script means stale code; the pidfile is its start time in any session.
         $running = $true
-        Write-Host "  watchdog already running (pid $wpid)" -ForegroundColor Green
+        if ((Get-Item $watch).LastWriteTime -gt (Get-Item $pidf).LastWriteTime) {
+            try {
+                Stop-Process -Id $wpid -Force -ErrorAction Stop
+                $running = $false
+                Write-Host "  stopped a stale watchdog (pid $wpid)" -ForegroundColor Yellow
+            } catch {
+                Write-Host "  stale watchdog (pid $wpid) is out of reach; Start-ScheduledTask DraftLeagueBoot replaces it" -ForegroundColor Yellow
+            }
+        }
+        if ($running) { Write-Host "  watchdog already running (pid $wpid)" -ForegroundColor Green }
     }
 }
 
@@ -61,8 +84,7 @@ foreach ($i in 1..40) {
 Write-Host ''
 
 function Port($port, $label) {
-    $up = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($up) { Write-Host "  [up]   $label (:$port)" -ForegroundColor Green }
+    if (Test-Listening $port) { Write-Host "  [up]   $label (:$port)" -ForegroundColor Green }
     else     { Write-Host "  [down] $label (:$port)" -ForegroundColor Red }
 }
 

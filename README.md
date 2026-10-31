@@ -78,7 +78,8 @@ in (the `DraftLeagueBoot` task from `server/install-boot-task.ps1`, so a Windows
 Update restart doesn't leave the sites down), at logon (hidden, from
 `DraftLeagueServerWatchdog.vbs` in the user's Startup folder) and on demand from
 the `Start Draft League Server.cmd` desktop shortcut. Running it while the stack
-is already up is a no-op, it never starts a second watchdog.
+is already up is a no-op, it never starts a second watchdog (one older than
+`keep-server-up.ps1` is replaced).
 
 For live battles and the Teambuilder, also start the battle server:
 
@@ -245,7 +246,7 @@ never be committed to this public repo), is in [AUTH_SETUP.md](AUTH_SETUP.md).
 Three suites, all runnable offline:
 
 ```powershell
-cd server.Tests   ; dotnet test        # xUnit: draft engine, scoring, replay scraper, endpoints
+cd server.Tests   ; dotnet test        # xUnit: draft engine, scoring, replay scraper, endpoints, watchdog
 cd web            ; npm test           # node:test: pool/MVP logic, sprite fallback, teambuilder, auth
 cd battle-server  ; npm test           # node:test: team packing, formats, custom megas, sim battles
 ```

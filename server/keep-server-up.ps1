@@ -55,6 +55,28 @@ $siteScript  = Join-Path $siteDir 'serve-site.cjs'
 
 function Log($m) { "$(Get-Date -Format 'HH:mm:ss') $m" | Out-File -FilePath $logf -Append -Encoding utf8 }
 
+$missLimit = 3
+$launches = @{}
+$misses = @{}
+. (Join-Path $root 'port-check.ps1')
+function Keep-Listening([int]$port, [string]$name, [scriptblock]$launch) {
+    $last = $launches[$port]
+    if (Test-Listening $port) {
+        $misses[$port] = 0
+        return $true
+    }
+    $misses[$port] = [int]$misses[$port] + 1
+    if ($misses[$port] -lt $missLimit) { return $false }
+    if ($last -and -not $last.HasExited) {
+        if ($misses[$port] -eq $missLimit) { Log "$name (pid $($last.Id)) is alive but not answering on :$port, left running" }
+        return $false
+    }
+    $misses[$port] = 0
+    $launches[$port] = & $launch
+    Log "relaunched $name"
+    return $false
+}
+
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:ASPNETCORE_URLS        = 'http://localhost:5211'
 
@@ -98,18 +120,18 @@ while ($true) {
         }
 
         # Keep the Showdown battle server up (port 8787), checked by listener.
-        $sd = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue
-        if (-not $sd -and (Test-Path $node)) {
-            Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
-            Log "relaunched showdown server"
+        if (Test-Path $node) {
+            $null = Keep-Listening 8787 'showdown server' {
+                Start-Process -FilePath $node -ArgumentList 'scripts\showdown.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru
+            }
         }
 
         # Keep the self-hosted Showdown client static server up (port 8791),
         # served publicly at play.loomhozer.ca.
-        $cl = Get-NetTCPConnection -LocalPort 8791 -State Listen -ErrorAction SilentlyContinue
-        if (-not $cl -and (Test-Path $node)) {
-            Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden
-            Log "relaunched client server"
+        if (Test-Path $node) {
+            $null = Keep-Listening 8791 'client server' {
+                Start-Process -FilePath $node -ArgumentList 'scripts\serve-client.js' -WorkingDirectory $showdownDir -WindowStyle Hidden -PassThru
+            }
         }
 
         # Keep the pay-page server up (port 8080), a separate project served
@@ -118,23 +140,23 @@ while ($true) {
         # Its subscription scheduler is why this matters: if the process dies
         # overnight, recurring charges silently stop firing and nobody gets an
         # error saying so.
-        $pay = Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue
-        if (-not $pay -and (Test-Path $node) -and (Test-Path $payEnv)) {
-            Start-Process -FilePath $node -ArgumentList "--env-file=$payEnv", 'server/index.js' `
-                -WorkingDirectory $payDir -WindowStyle Hidden `
-                -RedirectStandardOutput (Join-Path $payDir 'server.out.log') `
-                -RedirectStandardError  (Join-Path $payDir 'server.err.log')
-            Log "relaunched pay-page server"
+        if ((Test-Path $node) -and (Test-Path $payEnv)) {
+            $null = Keep-Listening 8080 'pay-page server' {
+                Start-Process -FilePath $node -ArgumentList "--env-file=$payEnv", 'server/index.js' `
+                    -WorkingDirectory $payDir -WindowStyle Hidden -PassThru `
+                    -RedirectStandardOutput (Join-Path $payDir 'server.out.log') `
+                    -RedirectStandardError  (Join-Path $payDir 'server.err.log')
+            }
         }
         # Keep the personal-site static server up (port 8082), a separate
         # project served through the same tunnel at loomhozer.ca.
-        $site = Get-NetTCPConnection -LocalPort 8082 -State Listen -ErrorAction SilentlyContinue
-        if (-not $site -and (Test-Path $node) -and (Test-Path $siteScript)) {
-            Start-Process -FilePath $node -ArgumentList 'serve-site.cjs' `
-                -WorkingDirectory $siteDir -WindowStyle Hidden `
-                -RedirectStandardOutput (Join-Path $siteDir 'server.out.log') `
-                -RedirectStandardError  (Join-Path $siteDir 'server.err.log')
-            Log "relaunched site server"
+        if ((Test-Path $node) -and (Test-Path $siteScript)) {
+            $null = Keep-Listening 8082 'site server' {
+                Start-Process -FilePath $node -ArgumentList 'serve-site.cjs' `
+                    -WorkingDirectory $siteDir -WindowStyle Hidden -PassThru `
+                    -RedirectStandardOutput (Join-Path $siteDir 'server.out.log') `
+                    -RedirectStandardError  (Join-Path $siteDir 'server.err.log')
+            }
         }
     } catch {
         Log "ERR: $($_.Exception.Message)"

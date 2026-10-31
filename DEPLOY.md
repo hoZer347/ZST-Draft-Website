@@ -24,7 +24,11 @@ Showdown targets by hostname (localhost, `*.loomhozer.ca`, else legacy).
 `DraftLeagueBoot` scheduled task (install with `server/install-boot-task.ps1`) and at
 sign-in from the user Startup folder.
 Every ~5s it relaunches anything down: the .NET server, `cloudflared`, both Node
-servers, the pay-page server on :8080 and the personal-site server on :8082. It also enforces an always-awake power
+servers, the pay-page server on :8080 and the personal-site server on :8082. It never kills a live
+process: a Node server that stops answering is logged and left running, and is relaunched
+once it has exited. `restart-node.ps1` clears a hung :8787 or :8791; a hung :8080 or :8082
+needs killing by hand. Three failed connects in a row count as down. Ports are checked by connecting, because Windows' TCP table has omitted live
+listeners since 2026-10-30. It also enforces an always-awake power
 profile so the draft clock keeps firing while unattended. Manage it by its
 `.watchdog.pid` / `.watchdog.alive` files, never by matching command lines (a match
 would kill the watchdog itself).

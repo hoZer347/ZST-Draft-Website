@@ -16,8 +16,8 @@ exception: it holds operational habits, not user-facing docs.
 
 The .NET API + web app runs at **http://localhost:5211** (the Cloudflare tunnels
 `dev.loomhozer.ca` / `zst.loomhozer.ca` point there). The watchdog
-`server/keep-server-up.ps1` relaunches it (plus cloudflared and the Showdown servers)
-within ~5s of any going down.
+`server/keep-server-up.ps1` relaunches it and cloudflared within ~5s of going
+down, and the Showdown servers within ~20s.
 
 **After any change, restart the server and leave it up; never end a turn with :5211
 down.** Health check: `curl -s -o /dev/null -w "%{http_code}" http://localhost:5211/`
@@ -42,9 +42,9 @@ The Node servers in `battle-server/` load their code once at start: the Showdown
 battle server (`scripts/showdown.js`, :8787) and the client static server
 (`scripts/serve-client.js`, :8791, serving the Teambuilder at `play.loomhozer.ca` /
 `127.0.0.1:8791`). After editing any `battle-server/scripts/*.js` or a lib it requires,
-kill the process and let the watchdog relaunch it, or old code keeps serving:
-`Stop-Process -Id (Get-NetTCPConnection -LocalPort 8791 -State Listen).OwningProcess -Force`
-(same for 8787). Confirm a client-server edit landed:
+restart it or old code keeps serving: `powershell -File server/restart-node.ps1 8791`
+(or `8787`, or `8791,8787`). It kills the process for the watchdog to relaunch, handing
+off to `DraftLeagueBoot` like `deploy-run.ps1` when the stack is in session 0. Confirm a client-server edit landed:
 `curl -s http://127.0.0.1:8791/teambuilder | grep <new-token>`.
 
 ## The Showdown engine lives in the client cache
@@ -83,8 +83,9 @@ ASPNETCORE_ENVIRONMENT=Development ConnectionStrings__Default="Data Source=verif
 
 Running the exe directly tests your latest code without promoting it live. Dev auth:
 `POST /dev/token/<discordId>?admin=true`, use the `accessToken` as a Bearer. A fresh
-`verify.db` seeds a NotStarted draft. Tear down by port (the name matches live):
-`Stop-Process -Id (Get-NetTCPConnection -LocalPort 5199 -State Listen).OwningProcess -Force`
+`verify.db` seeds a NotStarted draft. Tear down by its `--urls` (not by port, since
+Windows' TCP table omits listeners):
+`Get-CimInstance Win32_Process -Filter "Name='DraftLeague.Web.exe'" | Where-Object CommandLine -like '*localhost:5199*' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`
 then `rm -f verify.db*`.
 
 ## Web assets

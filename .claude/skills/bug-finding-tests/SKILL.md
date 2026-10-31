@@ -162,7 +162,7 @@ Keep the instance up until the replays have been submitted for review (they rend
 it). Then:
 
 ```bash
-powershell -Command "Get-NetTCPConnection -LocalPort 5199 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force }"
+powershell -Command "Get-CimInstance Win32_Process -Filter \"Name='DraftLeague.Web.exe'\" | Where-Object CommandLine -like '*localhost:5199*' | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }"
 rm -f "c:/Users/3hoze/Desktop/Pokemon Draft League/server/verify.db"*
 ```
 
