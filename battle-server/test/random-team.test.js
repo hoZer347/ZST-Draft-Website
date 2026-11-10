@@ -7,7 +7,7 @@ const path = require('node:path');
 // The same engine lib/random-team.js uses: RESTRICTION_FORMAT is a champions-mod
 // format, which the npm package's dex has never heard of.
 const { Teams, Dex, TeamValidator, toID } = require('../lib/engine').requireEngine();
-const { buildRandomTeam, buildTeamWithTera, randomSet, movePool, legalizeSet,
+const { buildRandomTeam, buildTeamWithTera, randomSet, movePool, learnsetFor, legalizeSet,
   validateTeam, validatorForSets, RESTRICTIONS, RESTRICTION_FORMAT } = require('../lib/random-team');
 
 // randomSet builds the fully-random-but-legal sets the demo/sim teams are made of.
@@ -327,4 +327,53 @@ test('a custom mega mega-evolves in a sim battle, with C-tier tera alongside', {
   const log = JSON.parse(res.stdout)[0].log;
   assert.ok(/\|-mega\|[^\n]*Malamar/.test(log), `custom Malamar should mega-evolve; log had no Malamar mega`);
   assert.ok(/\|-terastallize\|[^\n]*Pikachu\|Water/.test(log), 'C-tier Pikachu should still tera to Water');
+});
+
+const poolOf = (name) => movePool(Dex.species.get(name));
+
+test('Rotom-Frost keeps Blizzard and inherits Rotom\'s moves', () => {
+  const frost = poolOf('Rotom-Frost');
+  const base = poolOf('Rotom');
+  assert.ok(frost.includes('blizzard'), 'Blizzard stays');
+  for (const m of ['thunderbolt', 'shadowball', 'voltswitch'])
+    assert.ok(base.includes(m) && frost.includes(m), `${m} is in Rotom-Frost's pool`);
+  assert.ok(frost.length >= base.length, `${frost.length} >= ${base.length}`);
+});
+
+test('every Rotom appliance has its signature move plus Rotom\'s pool', () => {
+  const base = poolOf('Rotom');
+  for (const [name, move] of [
+    ['Rotom-Heat', 'overheat'],
+    ['Rotom-Wash', 'hydropump'],
+    ['Rotom-Frost', 'blizzard'],
+    ['Rotom-Fan', 'airslash'],
+    ['Rotom-Mow', 'leafstorm'],
+  ]) {
+    const pool = poolOf(name);
+    assert.ok(pool.includes(move), `${name} has ${move}`);
+    for (const m of base) assert.ok(pool.includes(m), `${name} has Rotom's ${m}`);
+  }
+});
+
+test('Necrozma-Dusk-Mane includes Necrozma\'s moves', () => {
+  const pool = poolOf('Necrozma-Dusk-Mane');
+  const base = poolOf('Necrozma');
+  assert.ok(base.length > 1);
+  for (const m of base) assert.ok(pool.includes(m), `Necrozma-Dusk-Mane has ${m}`);
+});
+
+test('inheriting from changesFrom does not widen Arcanine-Hisui or Kyurem-Black', () => {
+  assert.ok(!poolOf('Arcanine-Hisui').includes('dragonbreath'), 'Arcanine-Hisui still cannot learn Dragon Breath');
+  const own = learnsetFor(Dex.species.get('Kyurem-Black'));
+  const kyuremOnly = Object.keys(learnsetFor(Dex.species.get('Kyurem')))
+    .filter((m) => !(m in own) && poolOf('Kyurem').includes(m));
+  assert.ok(kyuremOnly.length > 0, 'Kyurem has a move Kyurem-Black\'s own learnset lacks');
+  const black = poolOf('Kyurem-Black');
+  for (const m of kyuremOnly) assert.ok(!black.includes(m), `Kyurem-Black stays without Kyurem's ${m}`);
+  for (const m of black) assert.ok(m in own, `${m} is in Kyurem-Black's own learnset`);
+});
+
+test('a Rotom-Frost set has four moves', () => {
+  for (let i = 0; i < 20; i++)
+    assert.equal(randomSet('rotomfrost').moves.length, 4);
 });

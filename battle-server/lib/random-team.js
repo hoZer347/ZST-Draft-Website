@@ -133,8 +133,10 @@ function learnsetFor(species) {
 
 // Every move the species can learn, walking its prevo chain (regional prevos included)
 // and applying the own-else-base rule per link, so a fully-evolved mon draws on its
-// whole line's pool without borrowing a sibling forme's moves. Filtered to moves usable
-// in gen 9 and not format-restricted.
+// whole line's pool without borrowing a sibling forme's moves. A forme with no prevo
+// continues to the forme it changes from (Rotom-Frost -> Rotom), except Kyurem's, as
+// Showdown's learnsetParent does. Filtered to moves usable in gen 9 and not
+// format-restricted.
 function movePool(species) {
   const moves = new Set();
   const seen = new Set();
@@ -143,7 +145,9 @@ function movePool(species) {
     seen.add(cur.id);
     const ls = learnsetFor(cur);
     if (ls) for (const m in ls) moves.add(m);
-    cur = cur.prevo ? Dex.species.get(cur.prevo) : null;
+    if (cur.prevo) cur = Dex.species.get(cur.prevo);
+    else if (cur.changesFrom && cur.baseSpecies !== 'Kyurem') cur = Dex.species.get(cur.changesFrom);
+    else cur = null;
   }
   return [...moves].filter((m) => {
     // Judge the move by the National Dex too: "Past" in the champions dex only means
