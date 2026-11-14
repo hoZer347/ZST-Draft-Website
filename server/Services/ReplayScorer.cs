@@ -97,9 +97,19 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         var p1 = parsed.Brought.GetValueOrDefault("p1") ?? [];
         var p2 = parsed.Brought.GetValueOrDefault("p2") ?? [];
 
-        // Try both side→team assignments and keep whichever fits the rosters best.
-        var straight = p1.Count(homeIds.Contains) + p2.Count(awayIds.Contains); // p1=home
-        var swapped = p1.Count(awayIds.Contains) + p2.Count(homeIds.Contains);   // p1=away
+        // Try both side→team assignments and keep whichever fits the rosters best. An
+        // assignment only counts when each side's team drafted a clear majority of
+        // that side's mons, so a stray battle sharing a couple of mons never passes.
+        var size1 = SideSize(parsed, "p1");
+        var size2 = SideSize(parsed, "p2");
+        var straightHome = p1.Count(homeIds.Contains);
+        var straightAway = p2.Count(awayIds.Contains);
+        var swappedAway = p1.Count(awayIds.Contains);
+        var swappedHome = p2.Count(homeIds.Contains);
+        var straight = IsMajority(straightHome, size1) && IsMajority(straightAway, size2)
+            ? straightHome + straightAway : 0; // p1=home
+        var swapped = IsMajority(swappedAway, size1) && IsMajority(swappedHome, size2)
+            ? swappedAway + swappedHome : 0;   // p1=away
         if (straight == 0 && swapped == 0)
             return new(false, "Couldn't match the replay's teams to this matchup, is it the right battle?");
 
@@ -110,10 +120,8 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         // Survivors = roster size (from |teamsize|) minus faints. Uses the true mon
         // count, NOT the de-duped Brought set, so a mon shown under two names (a forme
         // hidden in team preview, e.g. Urshifu-Rapid-Strike) never inflates the score.
-        var homeBrought = parsed.Sizes.GetValueOrDefault(homeSide, parsed.Brought.GetValueOrDefault(homeSide)?.Count ?? 0);
-        var awayBrought = parsed.Sizes.GetValueOrDefault(awaySide, parsed.Brought.GetValueOrDefault(awaySide)?.Count ?? 0);
-        var homeScore = Math.Max(0, homeBrought - parsed.Faints.GetValueOrDefault(homeSide));
-        var awayScore = Math.Max(0, awayBrought - parsed.Faints.GetValueOrDefault(awaySide));
+        var homeScore = Math.Max(0, SideSize(parsed, homeSide) - parsed.Faints.GetValueOrDefault(homeSide));
+        var awayScore = Math.Max(0, SideSize(parsed, awaySide) - parsed.Faints.GetValueOrDefault(awaySide));
 
         if (parsed.Tie)
             return new(true, Outcome: MatchResult.Draw, HomeScore: homeScore, AwayScore: awayScore,
@@ -168,16 +176,18 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         }
         owner.Remove("");
 
-        int? TeamOf(HashSet<string> mons)
+        int? TeamOf(HashSet<string> mons, int size)
         {
             var tally = new Dictionary<int, int>();
             foreach (var m in mons)
                 if (owner.TryGetValue(m, out var tid)) tally[tid] = tally.GetValueOrDefault(tid) + 1;
-            return tally.Count == 0 ? null : tally.OrderByDescending(kv => kv.Value).First().Key;
+            if (tally.Count == 0) return null;
+            var best = tally.OrderByDescending(kv => kv.Value).First();
+            return IsMajority(best.Value, size) ? best.Key : null;
         }
 
-        var t1 = TeamOf(p1);
-        var t2 = TeamOf(p2);
+        var t1 = TeamOf(p1, SideSize(parsed, "p1"));
+        var t2 = TeamOf(p2, SideSize(parsed, "p2"));
         if (t1 is null || t2 is null || t1 == t2)
             return new(false, "couldn't map both sides to distinct drafted teams");
 
@@ -202,6 +212,12 @@ public class ReplayScorer(AppDbContext db, HttpClient http, ILogger<ReplayScorer
         return new(true, MatchId: match.Id, Outcome: score.Outcome, HomeScore: score.HomeScore,
             AwayScore: score.AwayScore, HomeSide: score.HomeSide, Log: score.Log);
     }
+
+    /// <summary>A side's real mon count: |teamsize|, else the de-duped Brought count.</summary>
+    private static int SideSize(Parsed parsed, string side) =>
+        parsed.Sizes.GetValueOrDefault(side, parsed.Brought.GetValueOrDefault(side)?.Count ?? 0);
+
+    private static bool IsMajority(int owned, int size) => size > 0 && owned * 2 > size;
 
     private async Task<HashSet<string>> RosterIdsAsync(int teamId, CancellationToken ct)
     {

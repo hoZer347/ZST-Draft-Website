@@ -60,6 +60,164 @@ public class ShowdownReportTests : DraftScenarioBase
     private const string BobBuildV1 = "Gengar @ Life Orb\nAbility: Cursed Body\n- Shadow Ball";
     private const string BobBuildV2 = "Gengar @ Focus Sash\nAbility: Cursed Body\n- Sludge Bomb";
 
+    private const string StrayLog = """
+        |gametype|doubles
+        |player|p1|DraftTester|2|
+        |player|p2|DraftNetLive|266|
+        |gen|9
+        |tier|[Gen 9 Champions] NatDex ZST Sim
+        |poke|p1|Garchomp, L50, F|
+        |poke|p1|Whimsicott, L50, M|
+        |poke|p1|Incineroar, L50, F|
+        |poke|p1|Rotom-Wash, L50|
+        |poke|p1|Amoonguss, L50, F|
+        |poke|p1|Dragonite, L50, M|
+        |poke|p2|Bastiodon, L50, M|
+        |poke|p2|Drakloak, L50, M|
+        |poke|p2|Meltan, L50|
+        |poke|p2|Simisear, L50, F|
+        |poke|p2|Pikachu-Kalos, L50, M|
+        |poke|p2|Skrelp, L50, F|
+        |teamsize|p1|6
+        |teamsize|p2|6
+        |start
+        |switch|p1a: Rotom|Rotom-Wash, L50|157/157
+        |switch|p1b: Incineroar|Incineroar, L50, F|202/202
+        |switch|p2a: Simisear|Simisear, L50, F|162/162
+        |switch|p2b: Bastiodon|Bastiodon, L50, M|144/144
+        |turn|1
+        |move|p1a: Rotom|Protect|p1a: Rotom
+        |move|p1b: Incineroar|Fake Out|p2a: Simisear
+        |-damage|p2a: Simisear|128/162
+        |-damage|p1b: Incineroar|177/202|[from] item: Jaboca Berry|[of] p2a: Simisear
+        |move|p2b: Bastiodon|Earthquake|p1b: Incineroar|[spread] p2a,p1b
+        |-damage|p2a: Simisear|80/162
+        |-damage|p1b: Incineroar|141/202
+        |turn|2
+        |switch|p1b: Amoonguss|Amoonguss, L50, F|221/221
+        |move|p2a: Simisear|Superpower|p1b: Amoonguss
+        |-damage|p1b: Amoonguss|200/221
+        |move|p1a: Rotom|Thunder Wave|p2b: Bastiodon
+        |turn|3
+        |-heal|p1b: Amoonguss|221/221|[from] ability: Regenerator|[silent]
+        |switch|p1b: Dragonite|Dragonite, L50, M|198/198
+        |move|p2a: Simisear|Fire Punch|p1b: Dragonite
+        |-damage|p1b: Dragonite|192/198
+        |move|p1a: Rotom|Thunder Wave|p2b: Bastiodon
+        |move|p2b: Bastiodon|Earth Power|p1a: Rotom
+        |turn|4
+        |switch|p1a: Garchomp|Garchomp, L50, F|215/215
+        |move|p1b: Dragonite|Extreme Speed|p2b: Bastiodon
+        |-damage|p2b: Bastiodon|136/144 par
+        |move|p2a: Simisear|Shadow Claw|p1b: Dragonite
+        |-damage|p1b: Dragonite|175/198
+        |move|p2b: Bastiodon|Earth Power|p1a: Garchomp
+        |-damage|p1a: Garchomp|193/215
+        |turn|5
+        |switch|p1b: Amoonguss|Amoonguss, L50, F|221/221
+        |move|p2a: Simisear|Shadow Claw|p1a: Garchomp
+        |-damage|p1a: Garchomp|177/215
+        |-damage|p2a: Simisear|60/162|[from] ability: Rough Skin|[of] p1a: Garchomp
+        |move|p1a: Garchomp|Earthquake|p2a: Simisear|[spread] p1b,p2a,p2b
+        |-damage|p1b: Amoonguss|121/221
+        |-damage|p2a: Simisear|0 fnt
+        |-damage|p2b: Bastiodon|0 fnt
+        |faint|p2a: Simisear
+        |faint|p2b: Bastiodon
+        |switch|p2a: Drakloak|Drakloak, L50, M|165/165
+        |switch|p2b: Skrelp|Skrelp, L50, F|126/126
+        |turn|6
+        |switch|p1a: Incineroar|Incineroar, L50, F|141/202
+        |move|p2a: Drakloak|Steel Wing|p1a: Incineroar
+        |-damage|p1a: Incineroar|129/202
+        |move|p2b: Skrelp|Aqua Tail|p1a: Incineroar
+        |-damage|p1a: Incineroar|49/202
+        |move|p1b: Amoonguss|Toxic|p2b: Skrelp
+        |turn|7
+        |-heal|p1b: Amoonguss|194/221|[from] ability: Regenerator|[silent]
+        |switch|p1b: Rotom|Rotom-Wash, L50|157/157
+        |move|p1a: Incineroar|Fake Out|p2a: Drakloak
+        |move|p2a: Drakloak|Fire Blast|p1b: Rotom
+        |-damage|p1b: Rotom|144/157
+        |move|p2b: Skrelp|Aqua Tail|p1a: Incineroar
+        |-damage|p1a: Incineroar|0 fnt
+        |faint|p1a: Incineroar
+        |switch|p1a: Whimsicott|Whimsicott, L50, M|167/167
+        |turn|8
+        |move|p1a: Whimsicott|Encore|p2b: Skrelp
+        |move|p2a: Drakloak|Steel Wing|p1a: Whimsicott
+        |-damage|p1a: Whimsicott|119/167
+        |move|p1b: Rotom|Hydro Pump|p2a: Drakloak
+        |-damage|p2a: Drakloak|122/165
+        |move|p2b: Skrelp|Aqua Tail|p1b: Rotom|[miss]
+        |turn|9
+        |switch|p1b: Dragonite|Dragonite, L50, M|175/198
+        |move|p1a: Whimsicott|Encore||[still]
+        |move|p2a: Drakloak|Steel Wing|p1a: Whimsicott
+        |-damage|p1a: Whimsicott|71/167
+        |move|p2b: Skrelp|Aqua Tail|p1b: Dragonite
+        |-damage|p1b: Dragonite|157/198
+        |turn|10
+        |move|p1a: Whimsicott|Encore||[still]
+        |move|p2a: Drakloak|Steel Wing|p1a: Whimsicott
+        |-damage|p1a: Whimsicott|23/167
+        |move|p1b: Dragonite|Outrage|p2a: Drakloak
+        |-damage|p2a: Drakloak|0 fnt
+        |faint|p2a: Drakloak
+        |move|p2b: Skrelp|Aqua Tail|p1b: Dragonite
+        |-damage|p1b: Dragonite|117/198
+        |switch|p2a: Meltan|Meltan, L50|129/129
+        |turn|11
+        |move|p1a: Whimsicott|Tailwind|p1a: Whimsicott
+        |move|p1b: Dragonite|Outrage|p2b: Skrelp|[from] lockedmove
+        |-damage|p2b: Skrelp|0 fnt
+        |faint|p2b: Skrelp
+        |move|p2a: Meltan|Flash Cannon|p1a: Whimsicott
+        |-damage|p1a: Whimsicott|0 fnt
+        |faint|p1a: Whimsicott
+        |switch|p1a: Rotom|Rotom-Wash, L50|144/157
+        |switch|p2b: Pikachu|Pikachu-Kalos, L50, M|112/112
+        |turn|12
+        |move|p1a: Rotom|Thunderbolt|p2a: Meltan
+        |-damage|p2a: Meltan|0 fnt
+        |faint|p2a: Meltan
+        |move|p1b: Dragonite|Outrage|p2b: Pikachu|[from] lockedmove
+        |-damage|p2b: Pikachu|0 fnt
+        |faint|p2b: Pikachu
+        |win|DraftTester
+        """;
+
+    private static readonly string[] StrayHomeMons = ["Whimsicott", "Dragonite", "Tyranitar", "Ferrothorn", "Clefable", "Gholdengo"];
+    private static readonly string[] StrayAwayMons = ["Bastiodon", "Kingambit", "Corviknight", "Toxapex", "Hatterene", "Lucario"];
+
+    private const string LeagueGameLog = """
+        |player|p1|Alice|1|
+        |player|p2|Bob|2|
+        |tier|[Gen 9 Champions] NatDex ZST Sim
+        |poke|p1|Whimsicott, L50|
+        |poke|p1|Dragonite, L50|
+        |poke|p1|Tyranitar, L50|
+        |poke|p1|Ferrothorn, L50|
+        |poke|p1|Clefable, L50|
+        |poke|p1|Gholdengo, L50|
+        |poke|p2|Bastiodon, L50|
+        |poke|p2|Kingambit, L50|
+        |poke|p2|Corviknight, L50|
+        |poke|p2|Toxapex, L50|
+        |poke|p2|Hatterene, L50|
+        |poke|p2|Lucario, L50|
+        |teamsize|p1|6
+        |teamsize|p2|6
+        |start
+        |switch|p1a: Tyranitar|Tyranitar, L50|100/100
+        |switch|p2a: Lucario|Lucario, L50|100/100
+        |turn|1
+        |move|p2a: Lucario|Close Combat|p1a: Tyranitar
+        |-damage|p1a: Tyranitar|0 fnt
+        |faint|p1a: Tyranitar
+        |win|Bob
+        """;
+
     private HttpClient ReportClient(bool withSecret = true)
     {
         var client = Factory.CreateClient();
@@ -70,13 +228,13 @@ public class ShowdownReportTests : DraftScenarioBase
     private Task<HttpResponseMessage> ReportAsync(string log, string? p1 = null, string? p2 = null) =>
         ReportClient().PostAsJsonAsync("/api/showdown/report", new { log, p1Export = p1, p2Export = p2 });
 
-    private async Task<SeasonSeed.Seeded> SeedAsync()
+    private async Task<SeasonSeed.Seeded> SeedAsync(string[]? homeMons = null, string[]? awayMons = null)
     {
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var seed = await SeasonSeed.SeasonAsync(db,
-            ("alice", "Alice"), ["Pikachu", "Snorlax"],
-            ("bob", "Bob"), ["Gengar", "Blissey"]);
+            ("alice", "Alice"), homeMons ?? ["Pikachu", "Snorlax"],
+            ("bob", "Bob"), awayMons ?? ["Gengar", "Blissey"]);
 
         // An unplayed game elsewhere keeps the regular season open, so a re-battle
         // redoes Alice v Bob instead of landing in a playoff final between them.
@@ -441,5 +599,48 @@ public class ShowdownReportTests : DraftScenarioBase
         Assert.Equal(0, home.Losses);
         var pika = await db.PokemonStats.SingleAsync(s => s.PickId == seed.Picks["pikachu"].Id);
         Assert.Equal(1, pika.GamesPlayed);
+    }
+
+    [Fact]
+    public async Task A_stray_battle_sharing_a_few_mons_leaves_the_recorded_match_alone()
+    {
+        var seed = await SeedAsync(StrayHomeMons, StrayAwayMons);
+        var league = await ReportAsync(LeagueGameLog);
+        Assert.True((await league.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("recorded").GetBoolean());
+
+        async Task<string> SnapshotAsync()
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var match = await db.Matches.AsNoTracking().SingleAsync(m => m.Id == seed.Match.Id);
+            var teams = await db.Teams.AsNoTracking()
+                .Where(t => t.Id == seed.Home.Id || t.Id == seed.Away.Id).OrderBy(t => t.Id)
+                .Select(t => new { t.Id, t.Wins, t.Losses }).ToListAsync();
+            var stats = await db.PokemonStats.AsNoTracking().OrderBy(s => s.PickId).ToListAsync();
+            return JsonSerializer.Serialize(new
+            {
+                match.Result, match.HomeScore, match.AwayScore, match.ReplayLog, match.ReplayHomeSide, match.ReplayUrl,
+                teams, stats,
+            });
+        }
+
+        var before = await SnapshotAsync();
+        Assert.Contains("|win|Bob", before);
+
+        var stray = await ReportAsync(StrayLog);
+        stray.EnsureSuccessStatusCode();
+        Assert.False((await stray.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("recorded").GetBoolean());
+        Assert.Equal(before, await SnapshotAsync());
+    }
+
+    [Fact]
+    public async Task Scoring_a_stray_battle_against_a_match_sharing_a_few_mons_fails()
+    {
+        var seed = await SeedAsync(StrayHomeMons, StrayAwayMons);
+
+        using var scope = Factory.Services.CreateScope();
+        var match = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Matches.SingleAsync(m => m.Id == seed.Match.Id);
+        var result = await scope.ServiceProvider.GetRequiredService<ReplayScorer>().ScoreLogAsync(match, StrayLog);
+        Assert.False(result.Ok);
     }
 }
