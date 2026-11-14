@@ -19,11 +19,11 @@
   const played = (g) => g.result !== 'Pending';
 
   // What a viewer sees of the bracket without spoiling anything, keyed by seriesKey.
-  // A played game stays hidden until isOpen(matchId). A series lists its games only
-  // up to its first hidden one, since a later game's existence gives the earlier
-  // result away; its score counts revealed games, and its winner shows once every
-  // game is revealed. A team that advanced from a series not yet settled that way is
-  // hidden in the next round, and so are that series' games.
+  // A played game's result stays hidden until isOpen(matchId). A series lists all its
+  // games (their replays included) while neither team is hidden; its score counts
+  // revealed games, and its winner shows once every played game is revealed. A team
+  // that advanced from a series not yet settled that way is hidden in the next round,
+  // and so are that series' games.
   function visibleBracket(rounds, isOpen) {
     const views = new Map();
     let prev = [];
@@ -34,12 +34,7 @@
           && (p.series.home?.teamId === e.teamId || p.series.away?.teamId === e.teamId));
         const homeHidden = hidden(s.home);
         const awayHidden = hidden(s.away);
-        const games = [];
-        if (!homeHidden && !awayHidden)
-          for (const g of s.games) {
-            games.push(g);
-            if (played(g) && !isOpen(g.matchId)) break;
-          }
+        const games = homeHidden || awayHidden ? [] : [...s.games];
         const revealed = games.filter((g) => played(g) && isOpen(g.matchId));
         const wins = (result) => (revealed.length ? revealed.filter((g) => g.result === result).length : null);
         const settled = !homeHidden && !awayHidden

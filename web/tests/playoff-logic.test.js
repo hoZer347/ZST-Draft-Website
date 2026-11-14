@@ -4,8 +4,9 @@ const assert = require('node:assert/strict');
 const { seriesKey, visibleBracket, pickGame, gameLabel } = require('../playoff-logic.js');
 
 const team = (teamId) => ({ teamId, name: `T${teamId}`, seed: teamId });
+const replay = (matchId) => `https://replay.pokemonshowdown.com/gen9-${matchId}`;
 const game = (matchId, n, result, homeScore = null, awayScore = null) =>
-  ({ matchId, game: n, result, homeScore, awayScore });
+  ({ matchId, game: n, result, homeScore, awayScore, replayUrl: result === 'Pending' ? null : replay(matchId) });
 const opened = (...ids) => (id) => ids.includes(id);
 const none = opened();
 
@@ -40,27 +41,36 @@ const rounds = [
 const allOpen = () => true;
 const view = (isOpen, round, index) => visibleBracket(rounds, isOpen).get(seriesKey(round, index));
 
-test('with nothing revealed a series shows its teams and replays but no score or winner', () => {
+test('with nothing revealed a decided series lists every played game and its replay, but no score or winner', () => {
   const v = view(none, 1, 1);
   assert.deepEqual([v.home, v.away], [team(3), team(6)]);
-  assert.deepEqual([v.homeWins, v.awayWins, v.winnerTeamId], [null, null, null]);
-  assert.deepEqual(v.games.map((g) => g.game), [1]);
+  assert.deepEqual(v.games.map((g) => [g.game, g.replayUrl]), [[1, replay(11)], [2, replay(12)]]);
+  assert.deepEqual(v.games.map((g) => gameLabel(g, none(g.matchId))), ['G1', 'G2']);
+  assert.deepEqual([v.homeWins, v.awayWins, v.winnerTeamId, v.settled], [null, null, null, false]);
 });
 
-test('later games appear one at a time as the earlier ones are revealed', () => {
-  assert.deepEqual(view(none, 1, 3).games.map((g) => g.game), [1]);
-  assert.deepEqual(view(opened(21), 1, 3).games.map((g) => g.game), [1, 2]);
-  assert.deepEqual(view(opened(21, 22), 1, 3).games.map((g) => g.game), [1, 2, 3]);
+test('revealing games one at a time fills in the score but not the listing', () => {
+  for (const [isOpen, score] of [[none, [null, null]], [opened(21), [1, 0]], [opened(21, 22), [1, 1]]]) {
+    const v = view(isOpen, 1, 3);
+    assert.deepEqual(v.games.map((g) => g.game), [1, 2, 3]);
+    assert.deepEqual([v.homeWins, v.awayWins, v.winnerTeamId], [...score, null]);
+  }
 });
 
-test('a sweep and a decider look the same until the second game is revealed', () => {
-  assert.deepEqual(view(opened(11), 1, 1).games.map((g) => g.game), [1, 2]);
-  assert.deepEqual(view(opened(21), 1, 3).games.map((g) => g.game), [1, 2]);
+test('a sweep and a decider keep their winner hidden alike after one game is revealed', () => {
+  const sweep = view(opened(11), 1, 1);
+  const decider = view(opened(21), 1, 3);
+  assert.deepEqual([sweep.homeWins, sweep.awayWins, sweep.winnerTeamId, sweep.settled], [1, 0, null, false]);
+  assert.deepEqual([decider.homeWins, decider.awayWins, decider.winnerTeamId, decider.settled], [1, 0, null, false]);
 });
 
-test('the next unplayed game of a live series shows once the played ones are revealed', () => {
-  assert.deepEqual(view(opened(11, 12), 2, 0).games.map((g) => g.game), [1]);
-  assert.deepEqual(view(opened(11, 12, 31), 2, 0).games.map((g) => g.game), [1, 2]);
+test('a live series lists its played games and the next unplayed one, scoring only revealed games', () => {
+  const hidden = view(opened(11, 12), 2, 0);
+  assert.deepEqual(hidden.games.map((g) => [g.game, g.replayUrl]), [[1, replay(31)], [2, null]]);
+  assert.deepEqual([hidden.homeWins, hidden.awayWins, hidden.winnerTeamId], [null, null, null]);
+  const shown = view(opened(11, 12, 31), 2, 0);
+  assert.deepEqual(shown.games.map((g) => g.game), [1, 2]);
+  assert.deepEqual([shown.homeWins, shown.awayWins, shown.winnerTeamId], [0, 1, null]);
 });
 
 test('the score counts revealed games for each side', () => {
@@ -73,10 +83,10 @@ test('the winner shows once every played game is revealed', () => {
   assert.deepEqual([v.homeWins, v.awayWins, v.winnerTeamId, v.settled], [2, 0, 3, true]);
 });
 
-test('a revealed game can still hide an unrevealed one before it', () => {
+test('a revealed game counts without the unrevealed one before it, and settles nothing', () => {
   const v = view(opened(12), 1, 1);
-  assert.deepEqual(v.games.map((g) => g.game), [1]);
-  assert.equal(v.homeWins, null);
+  assert.deepEqual(v.games.map((g) => g.game), [1, 2]);
+  assert.deepEqual([v.homeWins, v.awayWins, v.winnerTeamId, v.settled], [1, 0, null, false]);
 });
 
 test('a bye is settled from the start', () => {
@@ -96,7 +106,7 @@ test('a team from an unsettled series is hidden in the next round, with that ser
 test('settling a series reveals its winner in the next round and that series opens', () => {
   const v = view(opened(11, 12), 2, 0);
   assert.deepEqual(v.away, team(3));
-  assert.deepEqual(v.games.map((g) => g.game), [1]);
+  assert.deepEqual(v.games.map((g) => g.game), [1, 2]);
 });
 
 test('every game revealed shows the whole bracket', () => {
