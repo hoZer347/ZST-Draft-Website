@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { seriesKey, visibleBracket, pickGame, gameLabel } = require('../playoff-logic.js');
+const { seriesKey, visibleBracket, pickGame, gameLabel, hiddenGames } = require('../playoff-logic.js');
 
 const team = (teamId) => ({ teamId, name: `T${teamId}`, seed: teamId });
 const replay = (matchId) => `https://replay.pokemonshowdown.com/gen9-${matchId}`;
@@ -192,4 +192,28 @@ test('a hidden game shows only its number', () => {
 test('an unplayed game, or one without a score, shows only its number', () => {
   assert.equal(gameLabel(game(1, 3, 'Pending'), true), 'G3');
   assert.equal(gameLabel(game(1, 1, 'HomeWin'), true), 'G1');
+});
+
+test('every played game starts hidden, across rounds, and unplayed games are left out', () => {
+  assert.deepEqual(hiddenGames(rounds, none), [11, 12, 21, 22, 23, 31]);
+});
+
+test('games already revealed one by one are not listed again', () => {
+  assert.deepEqual(hiddenGames(rounds, opened(12, 22, 31)), [11, 21, 23]);
+});
+
+test('revealing every hidden game shows the whole bracket as if each were opened by hand', () => {
+  const ids = hiddenGames(rounds, none);
+  const all = visibleBracket(rounds, opened(...ids));
+  assert.deepEqual(hiddenGames(rounds, opened(...ids)), []);
+  assert.equal(all.get(seriesKey(1, 1)).winnerTeamId, 3);
+  assert.equal(all.get(seriesKey(1, 3)).winnerTeamId, 4);
+  const semi = all.get(seriesKey(2, 0));
+  assert.deepEqual([semi.homeWins, semi.awayWins], [0, 1]);
+  assert.deepEqual(all.get(seriesKey(2, 1)).games.map((g) => g.matchId), [41]);
+});
+
+test('no bracket has nothing hidden', () => {
+  assert.deepEqual(hiddenGames([], none), []);
+  assert.deepEqual(hiddenGames(undefined, none), []);
 });

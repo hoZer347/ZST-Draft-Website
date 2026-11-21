@@ -40,6 +40,7 @@ const el = {
   // schedule
   schedScroll: $('sched-scroll'), schedFilterbar: $('sched-filterbar'), schedMine: $('sched-mine'),
   poBracket: $('po-bracket'), poSeries: $('po-series'), poProjected: $('po-projected'),
+  poBar: $('po-bar'), poRevealAll: $('po-reveal-all'),
 };
 
 // ── session ────────────────────────────────────────────────────────────
@@ -2014,6 +2015,12 @@ let playoffsGame = null;
 const schedIsOpen = (id) => schedOpenSet().has(id);
 
 el.poSeries.onclose = () => { playoffsOpen = null; };
+el.poRevealAll.onclick = () => {
+  const open = schedOpenSet();
+  for (const id of hiddenGames(playoffsData?.rounds, schedIsOpen)) open.add(id);
+  schedOpenSave();
+  renderPlayoffs();
+};
 el.poSeries.onclick = (e) => { if (e.target === el.poSeries) el.poSeries.close(); };
 
 async function ensurePlayoffs() {
@@ -2043,6 +2050,7 @@ function renderPlayoffs() {
   const data = playoffsData;
   if (!data) return;
   el.poProjected.hidden = !data.projected;
+  el.poBar.hidden = !hiddenGames(data.rounds, schedIsOpen).length;
   if (!data.rounds.length) {
     el.poBracket.replaceChildren(muted('No playoff bracket yet.'));
     renderSeries();

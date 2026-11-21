@@ -1754,6 +1754,8 @@ body.team-open header { position: fixed; top: 0; left: 0; right: 0; z-index: 60;
    One column per round. Each pair of games shares a bracket line into the next
    round's game, which sits level with the pair's midpoint. */
 .po-projected { margin-bottom: 8px; }
+.po-bar { display: flex; justify-content: center; padding: 0 0 10px; }
+.po-bar .match-replay-btn { font-size: 13px; }
 .po-bracket {
   --po-gap: 28px;
   display: flex;

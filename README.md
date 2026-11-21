@@ -195,7 +195,8 @@ scraped like any other, keeping its replay and both teams' pastes, and counts to
 per-mon stats and KO totals but not the win/loss record. A drawn game counts for
 neither side, so the series gets another game. Results stand once the next round is
 played. Before seeding, the Playoffs tab shows the bracket the current standings
-would make, marked Projected.
+would make, marked Projected. Playoff games share the Schedule tab's reveal set,
+and "Show all results" opens every hidden one at once.
 
 **The Champions mod.** Every league format runs on Pokemon Champions (Regulation
 M-B), so megas, including the ones vanilla Showdown never shipped, are native to

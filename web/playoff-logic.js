@@ -65,6 +65,13 @@
       ?? games[0] ?? null;
   }
 
+  // Every played game whose result is still hidden, across the whole bracket.
+  function hiddenGames(rounds, isOpen) {
+    return (rounds ?? []).flatMap((r) => r.slots.flatMap((s) => s.games))
+      .filter((g) => played(g) && !isOpen(g.matchId))
+      .map((g) => g.matchId);
+  }
+
   // One game's chip: "G1 5–0" or "G2 draw" once revealed, just "G3" while unplayed or hidden.
   function gameLabel(g, open) {
     const name = `G${g.game}`;
@@ -73,5 +80,5 @@
     return g.homeScore != null && g.awayScore != null ? `${name} ${g.homeScore}–${g.awayScore}` : name;
   }
 
-  return { seriesKey, visibleBracket, pickGame, gameLabel };
+  return { seriesKey, visibleBracket, pickGame, gameLabel, hiddenGames };
 });
